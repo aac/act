@@ -27,6 +27,8 @@ func main() {
 		os.Exit(runInit(args))
 	case "version":
 		os.Exit(runVersion(args))
+	case "log":
+		os.Exit(runLog(args))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
@@ -38,7 +40,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
@@ -157,6 +159,76 @@ func getGitEmail() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// runLog dispatches `act log <id>`. It resolves the repo root from cwd, then
+// delegates to RunLog. Output rendering branches on --json.
+func runLog(args []string) int {
+	fs := flag.NewFlagSet("log", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "act log: usage: act log <id> [--json]")
+		return 2
+	}
+	idArg := fs.Arg(0)
+
+	root, err := findRepoRoot()
+	if err != nil {
+		emitLogError(*asJSON, map[string]any{
+			"error":   "not_in_git",
+			"message": err.Error(),
+		})
+		return 3
+	}
+
+	out, code := cli.RunLog(root, idArg, *asJSON)
+	if code != 0 {
+		m, _ := toMap(out)
+		emitLogError(*asJSON, m)
+		return code
+	}
+
+	if *asJSON {
+		data, err := json.Marshal(out)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "act log: json marshal: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	res, ok := out.(cli.LogResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act log: unexpected output type %T\n", out)
+		return 1
+	}
+	fmt.Print(cli.FormatLogHuman(res))
+	return 0
+}
+
+// emitLogError renders the error envelope to stderr (human form) or stdout
+// (JSON form).
+func emitLogError(asJSON bool, payload map[string]any) {
+	if asJSON {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "act log: json marshal: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if msg, _ := payload["message"].(string); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	}
+	if e, _ := payload["error"].(string); e != "" {
+		fmt.Fprintln(os.Stderr, e)
+	}
 }
 
 func runVersion(args []string) int {
