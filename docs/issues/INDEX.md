@@ -6,7 +6,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 0: Foundations
 
-- act-8411 [open] Project skeleton and repo layout (deps: -)
+- act-8411 [closed] Project skeleton and repo layout (deps: -)
 - act-9cad [open] Go module and minimal CI (deps: act-8411)
 
 ## Phase 1: Core primitives
