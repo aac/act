@@ -57,7 +57,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 6: MCP surface
 
-- act-380d [open] act mcp server scaffold (deps: act-65e6, act-5651, act-bdc8, act-e1d4, act-beca, act-5bf7, act-0a22, act-5515, act-03f6)
+- act-380d [closed] act mcp server scaffold (deps: act-65e6, act-5651, act-bdc8, act-e1d4, act-beca, act-5bf7, act-0a22, act-5515, act-03f6)
 - act-2f81 [open] MCP composed tools act_next act_finish act_block (deps: act-380d, act-9824, act-40ae)
 
 ## Phase 7: Tests and release

@@ -11,7 +11,7 @@ acceptance_criteria:
   - "When server is started with --read-only, write tools are rejected regardless of per-call read_only"
   - "Exit codes: 0 clean shutdown; 2 bad flag; 3 missing .act/; 4 on skew"
   - "--workdir DIR chdir before serving; required when launched outside the repo"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
