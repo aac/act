@@ -18,7 +18,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 - act-ba09 [open] Op envelope schema and validation (deps: act-b545, act-9cae, act-bd70)
 - act-3bbe [open] Op type payloads and write-time validation (deps: act-ba09)
 - act-6ec9 [open] Op file naming and shard probe (deps: act-ba09, act-1396)
-- act-6991 [open] Shortest-unique-prefix display and resolution (deps: act-bd70, act-1396)
+- act-6991 [closed] Shortest-unique-prefix display and resolution (deps: act-bd70, act-1396)
 
 ## Phase 2: Fold engine
 
