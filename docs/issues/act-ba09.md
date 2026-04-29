@@ -9,7 +9,7 @@ acceptance_criteria:
   - "Envelope round-trip: `Marshal(Unmarshal(b)) == b` for all golden-file fixtures."
   - "`op.Hash(env Envelope) [32]byte` returns `sha256(canonical_json(payload || hlc || node_id))` matching spec §2 step (2)."
   - "Negative test: an envelope JSON with keys reordered (e.g. `op_type` before `op_version`) fails parsing with a position-aware error."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
