@@ -33,7 +33,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 - act-5ca9 [open] Auto-commit and push policy (deps: act-6ec9, act-9824)
 - act-ce9f [open] Hooks runtime contract (deps: act-c9f0, act-5ca9)
-- act-5af9 [open] Op-schema migration (deps: act-3bbe, act-c9f0)
+- act-5af9 [closed] Op-schema migration (deps: act-3bbe, act-c9f0)
 
 ## Phase 4: CLI commands
 

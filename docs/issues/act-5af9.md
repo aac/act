@@ -10,7 +10,7 @@ acceptance_criteria:
   - "Transform registry maps name → pure function (state, op) -> state; a known starter transform is `rename_field` covering the §2.4 example {kind: rename_field, from: 'owner', to: 'assignee'}"
   - "Older binaries hit version_skew on a migrate op produced by a newer binary and refuse to fold (correct behavior; forces upgrade)"
   - "Migrate ops are themselves applied via the registry; replay across binaries produces identical folded state for any input set whose ops are within the binary's known op_versions"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
