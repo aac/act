@@ -13,7 +13,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 - act-b545 [open] Canonical JSON serialization (deps: act-9cad)
 - act-9cae [open] Hybrid Logical Clock implementation (deps: act-9cad)
-- act-1396 [open] On-disk layout and .act/config.json (deps: act-9cad)
+- act-1396 [closed] On-disk layout and .act/config.json (deps: act-9cad)
 - act-bd70 [open] ID generation and nonce protocol (deps: act-b545, act-1396)
 - act-ba09 [open] Op envelope schema and validation (deps: act-b545, act-9cae, act-bd70)
 - act-3bbe [open] Op type payloads and write-time validation (deps: act-ba09)
