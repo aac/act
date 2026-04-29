@@ -1,0 +1,1098 @@
+# act Implementation Spec
+
+Version: 0.1.0 spec, derived from /home/user/act/docs/brief-v4.md.
+
+## Table of contents
+
+1. [Data model and storage](#data-model-and-storage)
+2. [Op-fold and concurrency](#op-fold-and-concurrency)
+3. [Commands and MCP surface](#commands-and-mcp-surface)
+4. [Errors, hooks, migration, bootstrap, compaction, tests](#errors-hooks-migration-bootstrap-compaction-tests)
+
+## Data model and storage
+
+### Fresh-eye comparison
+
+The brief commits to a fresh-eye pass against the minimal `(id, title, body, status, deps, claim)` core. We test each candidate field on a 3-task workflow:
+
+> **W1.** Agent A creates issue X ("rewrite parser") with two acceptance criteria.
+> **W2.** Agent B claims X (assignee + status flip), discovers a sub-bug, files Y as a child of X with `blocks` edge, then closes X with a follow-up reference to Y.
+> **W3.** Human runs `act ready` next morning, sees Y at the top, agent C claims and closes Y with `--reason "fixed in commit abc"`.
+
+| Field | Earns keep? | Justification on W1-W3 |
+|---|---|---|
+| `id` | Yes | Required to reference X from Y, to claim, to close. |
+| `title` | Yes | W3 ready-queue rendering needs a label; renames are rare but happen. |
+| `description` | Yes | W1 needs space for the actual work statement; agents read this on claim. |
+| `status` | Yes | Drives `ready` (W3) and claim atomicity (W2). |
+| `priority` | Yes | `ready` orders by it; W3 picks Y because it inherited high priority. |
+| `type` | Yes | `bug` vs `task` changes hook routing and report grouping; cheap enum. |
+| `parent` | Yes | W2 makes Y a child of X; `act ready --under` scopes to a subtree. |
+| `deps` (typed edges) | Yes | W2's `blocks` edge is what makes `ready` correct; `relates`/`supersedes` reuse the same primitive at zero marginal cost. |
+| `assignee` | Yes | Atomic claim writes it; loss detection compares it. |
+| `acceptance_criteria` | Yes | W1 sets them; W2 close requires all checked or `--reason` override. Without this field, "done" is ambiguous. |
+| `created_at` | Yes | Derived from create-op HLC; required for compaction age threshold. |
+| `closed_at` | Yes | Derived from close-op HLC; required for `closed_by_tree` reverse index. |
+| `closed_reason` | Yes | W3 sets it; doctor uses it to distinguish abandoned vs completed. |
+| labels/tags | **Dropped** | W1-W3 never need free-form tagging; `type` + `parent` cover grouping. Reintroduce only if a concrete workflow demands it. |
+| estimate / time-tracking | **Dropped** | Anti-goal in brief. |
+| comments | **Dropped** | Description edits + child issues cover the discussion need. |
+| watchers | **Dropped** | Single-user-with-agents; no notification fan-out. |
+
+### Issue schema (folded state)
+
+```jsonc
+{
+  "id":           "act-a1b2",                  // string, full hex id, "act-" + N hex chars (N >= 4)
+  "title":        "string, 1..200 chars, required",
+  "description":  "string, 0..16384 chars, default \"\"",
+  "status":       "open | in_progress | blocked | closed",   // default "open"
+  "priority":     0,                           // int 0..3 inclusive, default 2 (lower = more urgent)
+  "type":         "task | bug | epic | chore", // default "task"
+  "parent":       "act-... | null",            // default null
+  "deps": [
+    { "id": "act-...", "edge": "blocks | relates | supersedes" }
+  ],
+  "assignee":     "string | null",             // default null; free-form (human handle or agent role)
+  "acceptance_criteria": [
+    { "text": "string, 1..500 chars", "done": false }
+  ],
+  "created_at":   "RFC3339 UTC, from create-op HLC wall",
+  "closed_at":    "RFC3339 UTC | null",
+  "closed_reason":"string | null"
+}
+```
+
+Validation rules:
+- `id` matches `^act-[0-9a-f]{4,40}$`.
+- `priority` outside 0..3 is a hard error at write time.
+- `parent` and every `deps[].id` MUST resolve to an existing (non-tombstoned) issue at fold time; doctor's `dangling-deps` check enforces this on the whole repo.
+- `acceptance_criteria` indices are stable across the issue's lifetime; `remove_accept` shifts later indices down (see op semantics below).
+- A close op against an issue with unmet criteria succeeds only if `closed_reason` is non-empty; doctor flags otherwise.
+
+### ID model
+
+Format: `act-<hex>` where the hex part is the prefix of a 40-char sha256 hex digest.
+
+Full ID derivation at create time:
+
+```
+full_hex   = sha256(canonical_json(create_op_payload) || nonce_bytes).hex()   // 64 chars
+short_hex  = full_hex[0:N]                                                    // N starts at 4
+id         = "act-" + short_hex
+```
+
+- `nonce_bytes` is 16 bytes of crypto-random, embedded in the create-op payload as `"nonce": "<32 hex chars>"`. The nonce is fixed at create time and never changes; it is what guarantees two identical-titled issues created in the same wall second produce different ids.
+- `N` starts at 4. Storage on disk and all references use the full 40-hex form internally; the 4-char `short_hex` is what writers stamp into the directory name and op `issue_id` field.
+- Collision-extension protocol at create time:
+  1. Compute `full_hex`. Set `N = 4`.
+  2. Candidate id = `"act-" + full_hex[0:N]`.
+  3. Acquire `.act/.lock` (advisory file lock). Scan `.act/ops/` for any directory whose name shares the candidate id's hex prefix and whose stored full id differs from `full_hex`.
+  4. If a collision exists, `N += 1` and goto 2. (Practically `N` will not exceed 8 before 2^32 issues exist.)
+  5. Write the create op with `issue_id = "act-" + full_hex[0:N]` and a sidecar `full_id = full_hex` field in the create payload. Release lock.
+- Display: the CLI computes the shortest unique prefix across all currently-known issues per invocation (git-style). Ties are lengthened one hex at a time; the shortest unique form is what `act show`, `act list`, `act ready` print. Internally everything is keyed off the on-disk id (which already encodes the collision-extension result).
+- Prefix resolution on input: a user-supplied prefix matching exactly one stored id resolves; matching zero or two-or-more is an error with a structured `{"error":"ambiguous-id","candidates":[...]}` payload.
+
+### Op envelope
+
+Every op file's top-level object has exactly these keys, in this order:
+
+```jsonc
+{
+  "op_version":     1,
+  "schema_version": 1,
+  "writer_version": "0.1.0",
+  "op_type":        "create",          // see enum below
+  "issue_id":       "act-a1b2",        // full on-disk id, never the display prefix
+  "node_id":        "7f3a91c2",        // 8 hex chars, from .act/config.json
+  "hlc": { "wall": "2026-04-29T14:23:01.000Z", "logical": 0, "node_id": "7f3a91c2" },
+  "payload":        { /* op-type-specific, see below */ }
+}
+```
+
+`op_type` enum (all of v1):
+
+```
+create | update_field | add_dep | remove_dep | add_accept | remove_accept |
+claim  | close        | redact  | import     | migrate    | tombstone
+```
+
+#### Byte-exact JSON serialization rules
+
+Fold determinism requires that two writers given the same logical op produce byte-identical files. The canonical form is:
+
+1. UTF-8, no BOM.
+2. Top-level keys in the exact order listed above (`op_version`, `schema_version`, `writer_version`, `op_type`, `issue_id`, `node_id`, `hlc`, `payload`).
+3. Nested object keys sorted lexicographically by Unicode code point.
+4. Strings: minimal JSON escaping (`\"`, `\\`, `\b`, `\f`, `\n`, `\r`, `\t`, `\u00xx` for other C0/C1; non-ASCII printable code points emitted raw).
+5. Numbers: integers as bare digits; no floats anywhere in the schema.
+6. Whitespace: single space after `:` and `,`, no leading whitespace, no other whitespace. Two-space indent on each nested level. Newline `\n` (LF) after every `,` and after every `{` / `[` that has children. **No trailing newline at end of file.**
+7. Booleans/null lowercase.
+8. Empty arrays and objects emitted as `[]` / `{}` on a single line.
+
+A reference `act fmt-op` subcommand emits this exact form; `act doctor --check op-canonical` re-serializes every op file and fails on any byte mismatch.
+
+### Op type payloads
+
+```jsonc
+// create
+{ "title": "string", "description": "string?", "priority": 2,
+  "type": "task", "parent": "act-...?", "accept": ["criterion", ...]?,
+  "nonce": "32 hex", "full_id": "64 hex" }
+
+// update_field — single-field mutation; field MUST be one of the listed names
+{ "field": "title|description|priority|assignee|status|type|parent",
+  "value": <typed per field> }
+
+// add_dep
+{ "parent_id": "act-...", "edge_type": "blocks|relates|supersedes" }
+
+// remove_dep
+{ "parent_id": "act-..." }                  // removes any edge to that id; idempotent
+
+// add_accept
+{ "criterion": "string, 1..500 chars" }     // appended; index = current len
+
+// remove_accept — exactly one of index/text is required
+{ "index": 0 } | { "text": "exact match string" }
+
+// claim — atomic assignee + status; sugar over two update_fields, but recorded as one op
+{ "assignee": "string" }
+
+// close
+{ "reason": "string?" }                     // sets status=closed, closed_at=hlc.wall, closed_reason
+
+// redact — replaces the named field's rendered value with "<redacted>" from this HLC forward
+{ "field_path": "description | acceptance_criteria[2].text | ...",
+  "new_value": "string?" }                  // optional replacement; default "<redacted>"
+
+// import — records that this issue was materialized from an external op-log line
+{ "source_ref": "issues.jsonl@<sha>", "source_id": "bootstrap-id-1",
+  "mapping_file": ".act/imports/2026-04-29T14:23:01Z.json" }
+
+// migrate — rewrites the interpretation of prior ops at fold time
+{ "from_version": 1, "to_version": 2,
+  "transform": { "kind": "rename_field", "from": "owner", "to": "assignee" } }
+
+// tombstone — issue-level deletion marker
+{ "deleted_at": "RFC3339 UTC" }
+```
+
+### On-disk layout
+
+```
+<repo-root>/
+  .act/
+    config.json                    # see schema below
+    fold-checkpoint.json           # { "tree_hash": "<git-tree-of-.act/ops>", "computed_at": "...", "schema_version": 1 }
+    index.db                       # SQLite, gitignored, derived
+    ops/
+      act-a1b2/
+        2026-04/
+          2026-04-29T14:23:01.000Z-7f3a9c1d-create.json
+          2026-04-29T14:24:15.123Z-9c2bf014-claim.json
+          2026-04-29T15:02:44.901Z-3e1f88a2-update_field.json
+        2026-05/
+          ...
+    snapshots/
+      act-a1b2.json                # canonical folded state at last compaction
+    imports/
+      2026-04-29T14:23:01.000Z.json   # { "source": "...", "mapping": { ... } }
+    hooks/
+      post-create                  # executable
+      post-close                   # executable
+      post-claim                   # executable
+    .lock                          # advisory lock file (POSIX flock / Windows LockFileEx)
+```
+
+`.act/index.db` MUST appear in `.gitignore` (writer ensures this on `act init`). Everything else under `.act/` is committed.
+
+#### `.act/config.json`
+
+```jsonc
+{
+  "schema_version": 1,
+  "node_id":        "7f3a91c2",                 // 8 hex; sha256(machine-id || git user.email)[0:8]
+  "writer_version": "0.1.0",                    // version that ran `act init`
+  "fold_checkpoint": ".act/fold-checkpoint.json",
+  "auto_commit":    true,
+  "auto_push":      false,
+  "hlc_drift_budget_seconds": 300
+}
+```
+
+#### `.act/index.db` schema
+
+Tables (rebuilt from ops; never source of truth):
+
+```
+issues(
+  id TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT, priority INT,
+  type TEXT, parent TEXT, assignee TEXT,
+  created_at TEXT, closed_at TEXT, closed_reason TEXT,
+  closed_by_tree TEXT
+)
+deps(child TEXT, parent TEXT, edge TEXT, PRIMARY KEY(child, parent))
+accept(issue TEXT, idx INT, text TEXT, done INT, PRIMARY KEY(issue, idx))
+fts USING fts5(id UNINDEXED, title, description, content='')
+meta(key TEXT PRIMARY KEY, value TEXT)        -- 'schema_version', 'tree_hash'
+```
+
+Indices: `idx_issues_status_priority`, `idx_issues_parent`, `idx_deps_parent`, `idx_deps_child`. `meta.tree_hash` mirrors `fold-checkpoint.json` for fast staleness check.
+
+### Op file naming
+
+```
+<iso8601>-<hash8>-<op_type>.json
+```
+
+- `<iso8601>` is the HLC wall component, formatted as `YYYY-MM-DDTHH:MM:SS.sssZ` (millisecond precision, always UTC `Z`, fixed width 24 chars). Not local wall clock; the HLC wall is what matters for fold ordering.
+- `<hash8>` is the first 8 hex chars of `sha256(canonical_envelope_bytes)` where `canonical_envelope_bytes` is the file's exact byte content per the serialization rules above. Because the hash is over the full envelope (which contains `node_id` and `hlc`), two writers cannot collide on the same payload.
+- `<op_type>` is the op_type enum value, lowercase, underscores preserved.
+- Collision behavior: if a file with the same `<iso8601>-<hash8>` prefix already exists in the target shard, extend the hash to 12 hex chars and retry; if 12 still collides, extend to 16; document an error past 16 (statistically impossible barring a sha256 break).
+
+The shard directory is `ops/<issue_id>/<YYYY-MM>/` derived from the HLC wall's year-month. A writer never moves a file across shards even if the HLC wall later turns out to disagree with another machine's clock; the path is final at write time.
+
+## Op-fold and concurrency
+
+This section specifies the deterministic state-derivation pipeline for `act`: the
+Hybrid Logical Clock, the op-fold algorithm, per-field merge semantics, the
+atomic claim protocol, the fold checkpoint, and the determinism contract.
+
+### 1. Hybrid Logical Clock (HLC)
+
+#### 1.1 State
+
+Each writer maintains an HLC of three fields:
+
+```
+HLC := { wall: int64_ms_unix_utc, logical: uint32, node_id: hex8 }
+```
+
+`node_id` is fixed per repo, generated at `act init` as
+`sha256(machine-id || git-config user.email)[0:8]`, persisted in
+`.act/config.json`. Writers never mutate `node_id` after init.
+
+#### 1.2 Persistence
+
+`.act/config.json` carries `last_hlc: { wall, logical }`. Every successful op
+write performs an atomic update of `last_hlc` *before* the op file rename
+becomes visible (write-temp + fsync + rename of `config.json` is sequenced
+before staging the op file). On crash mid-write, fold reconstructs the true
+high-water mark from the on-disk ops; `last_hlc` is a hint, not authority.
+
+#### 1.3 Send (local op generation)
+
+```
+send(now_ms, prev):
+  prev_wall, prev_logical = prev.wall, prev.logical
+  wall_new = max(now_ms, prev_wall)
+  if wall_new == prev_wall:
+    logical_new = prev_logical + 1
+  else:
+    logical_new = 0
+  assert logical_new < 2^32
+  return HLC{wall_new, logical_new, node_id}
+```
+
+#### 1.4 Receive (folding an external op)
+
+```
+receive(now_ms, msg_hlc, prev):
+  wall_new = max(now_ms, msg_hlc.wall, prev.wall)
+  if wall_new == prev.wall and wall_new == msg_hlc.wall:
+    logical_new = max(prev.logical, msg_hlc.logical) + 1
+  elif wall_new == prev.wall:
+    logical_new = prev.logical + 1
+  elif wall_new == msg_hlc.wall:
+    logical_new = msg_hlc.logical + 1
+  else:
+    logical_new = 0
+  return HLC{wall_new, logical_new, node_id}
+```
+
+#### 1.5 Plausibility check (write-time)
+
+```
+ref = max(local_wall_now, last_seen_hlc_in_repo.wall)
+if abs(op.hlc.wall - ref) > 5 * 60 * 1000:
+  refuse with E_HLC_IMPLAUSIBLE
+```
+
+`last_seen_hlc_in_repo` is the maximum `hlc.wall` discovered during the most
+recent fold. Fresh containers must perform one fold (or one read of
+`.act/config.json:last_hlc`) before writing.
+
+### 2. Op-fold algorithm
+
+Input: a directory tree at `.act/ops/` (or an equivalent git tree object).
+Output: an in-memory map `issue_id -> issue_state` plus a derived index.
+
+```
+fold(ops_root) -> {issues, index}:
+  # (1) Discover
+  files = glob(ops_root + "/*/????-??/*.json")    # monthly shards
+
+  # (2) Parse and validate
+  parsed = []
+  for f in files:
+    op = json.load(f)
+    require(op.schema_version <= READER_SCHEMA_MAX) else E_SCHEMA_TOO_NEW
+    require(op.writer_version <= READER_WRITER_MAX) else E_UPGRADE_REQUIRED
+    require(known_op_type(op.op_type, op.op_version)) else E_UNKNOWN_OP
+    op.op_hash = sha256(canonical_json(op.payload || op.hlc || op.node_id))
+    parsed.append(op)
+
+  # (3) Sort: HLC ascending, op_hash tiebreaker
+  parsed.sort(key = (op) -> (op.hlc.wall, op.hlc.logical, op.op_hash))
+
+  # (4) Initialize per-issue state lazily on first op for that issue_id
+  issues = {}
+
+  # (5) Apply left-to-right with per-op semantics (see 3)
+  for op in parsed:
+    state = issues.get(op.issue_id) or empty_issue(op.issue_id)
+    issues[op.issue_id] = apply(state, op)
+
+  # (6) Emit
+  return {issues, index: build_index(issues)}
+```
+
+`empty_issue` has all scalar fields nil, sets `deps={}`, `acceptance={}`,
+`tombstoned=false`, and a per-field `last_hlc` map used for LWW.
+
+### 3. Per-field conflict resolution
+
+The `apply(state, op)` function dispatches per `op_type`. Default merge is
+last-writer-wins (LWW) by `(hlc.wall, hlc.logical, op_hash)`. The exceptions
+below are normative.
+
+| Field / op | Rule |
+|---|---|
+| `title`, `description`, `priority`, `type`, `assignee`, `parent` | LWW per field. Each carries its own `last_hlc`; an op with a strictly-greater HLC tuple wins; equal tuples cannot occur (op_hash differs). |
+| `status` | Constrained transition table. `closed` is terminal: an op transitioning out of `closed` is ignored unless its `op_type` is `reopen` (an explicit op kind). Within `{open, in_progress, blocked}` LWW applies. `claim` ops set `(assignee, status=in_progress)` atomically (see 4). |
+| `acceptance_criteria` | Grow-shrink set keyed by criterion hash. `add_accept` is idempotent set-add; `remove_accept` requires a referenced criterion hash and is set-remove. Adds and removes are commutative; on tie at the same hash, the op with greater HLC wins (remove-wins for equal HLC is impossible because op_hashes differ). |
+| `deps` | Grow-shrink set keyed by `(target_id, edge_type)`. `add_dep` is set-add; `remove_dep` is set-remove. Same tie semantics as acceptance. |
+| `closed_at`, `closed_reason` | Set when status becomes `closed`; LWW thereafter, but only writable by ops whose payload also carries `status=closed`. |
+| `redact` | Tombstone-style: marks named fields for redaction. Subsequent fold renders those fields as `"<redacted>"`. Never mutates prior payloads on disk. |
+| `delete` | Issue-level tombstone. After applying, all subsequent reads of the issue return only the tombstone marker; further ops on that `issue_id` are parsed but ignored for state (still counted for compaction stats). |
+
+Every per-field LWW comparison uses the full tuple `(wall, logical, op_hash)`;
+ties on `(wall, logical)` are resolved by lexicographic `op_hash`. `node_id`
+is *not* used for tiebreaking — it is already mixed into `op_hash`.
+
+### 4. Atomic claim protocol
+
+`act update <id> --claim` and the bare `act claim <id>` execute exactly:
+
+```
+1. Generate claim op locally:
+     op = { op_type: "claim", issue_id, payload: {assignee: $user},
+            hlc: send(now, last_hlc), node_id, schema_version, writer_version }
+   Write to .act/ops/<id>/<yyyy-mm>/<iso>-<op_hash[0:4]>-claim.json.
+
+2. git add <op_file>
+   git commit --no-verify -m "act-op: <id> claim"
+
+3. If not --isolated:
+     git pull --rebase <remote> <branch>
+   (If rebase conflicts on .act/ops/** the run aborts with E_REBASE; ops
+    files are append-only so textual conflicts indicate corruption.)
+
+4. Re-fold the issue from the post-rebase tree.
+
+5. Determine winner: among all claim ops visible for this issue with
+   no intervening close/reopen, pick the one with the smallest
+   (hlc.wall, hlc.logical, op_hash). That op's assignee is the winner.
+
+   If winner.op_hash == our_op_hash:
+     if --push: git push
+     emit {"claimed": true, "issue": <id>, "op_hash": <hash>}
+     exit 0
+   else:
+     emit {"claimed": false, "winner": <assignee>,
+           "your_op_hash": <hash>, "winning_op_hash": <hash>}
+     exit 1
+```
+
+Note the winner is the *earliest* claim, not the latest: claim is a race to
+file first, and the HLC tuple determines order globally.
+
+`--wait` retries the full sequence on loss with backoff `1s, 2s, 4s, 8s, ...`
+capped at `--wait-timeout` (default 30s, max 600s). Each retry re-issues a
+fresh claim op with a fresh HLC; prior losing ops remain in history but are
+ignored once a different writer's claim has won and is unrebutted by a close.
+
+### 5. Fold checkpoint
+
+`.act/fold-checkpoint.json` is a derived cache:
+
+```json
+{
+  "schema_version": 1,
+  "tree_hash": "<git-tree-sha-of-.act/ops>",
+  "issues": {
+    "act-a1b2...": {
+      "subtree_hash": "<git-tree-sha-of-.act/ops/act-a1b2>",
+      "fold_hash": "<sha256 of canonical_json(issue_state)>"
+    }
+  }
+}
+```
+
+Reuse rule:
+
+```
+load_or_fold():
+  cp = read_checkpoint()
+  current = git_tree_hash(".act/ops")
+  if cp.tree_hash == current:
+    return cached_fold(cp)            # full hit; SQLite index reused
+  else:
+    for id in known_issues + new_issues:
+      cur_sub = git_tree_hash(".act/ops/" + id)
+      if cp.issues[id].subtree_hash == cur_sub:
+        keep cached fold for id
+      else:
+        refold id from disk
+    write new checkpoint with refreshed tree_hash and per-id entries
+```
+
+`git_tree_hash(path)` is the literal git tree SHA-1 of the path as committed
+(or, for unstaged changes, computed via `git ls-files -s` + `git mktree`).
+This makes subtree hashes invariant under squash/rebase, matching the
+property the doctor relies on for closed-by-tree verification.
+
+### 6. Determinism contract
+
+For any set of op files `S` (regardless of filesystem order, regardless of
+when each file was created, regardless of which machine wrote which op):
+
+> `fold(S)` produces byte-identical canonical-JSON output for every issue
+> and for `act ready`, `act list`, `act show`, and `act log` results.
+
+SQLite file bytes are explicitly **not** reproducible (page layout, free
+list, rowid allocation are unspecified). Query results derived from SQLite
+are. CI enforces:
+
+1. **Permutation test.** Generate random op sets of size 1..200, shuffle into
+   100 random orderings, fold each, assert all 100 fold outputs are
+   byte-identical.
+2. **Cross-platform test.** Same op set folded on macOS-arm, Linux-amd64,
+   Windows produces byte-identical JSON.
+3. **Checkpoint-vs-cold test.** `fold(S)` from a cold cache equals
+   `fold(S)` from a stale checkpoint that recomputes only changed subtrees.
+4. **Replay test.** `act log <id>` followed by re-importing those ops into
+   an empty repo (with HLC reassignment via the importer) produces an issue
+   whose post-import canonical state matches the source modulo id-mapping.
+5. **HLC monotonicity test.** Across 10k random op sequences, no fold ever
+   observes `last_hlc` decrease for a given `(issue_id, field)`.
+
+A failure of any of these is a release blocker; `act doctor --check
+fold-determinism` exposes (1) and (3) for local invocation.
+
+## Commands and MCP surface
+
+This section specifies every v1 CLI command, the universal flag set, exit codes, JSON output schemas, side effects, edge cases, and the MCP tool surface that wraps them. Commands marked agent-relevant default to JSON output when invoked with `--json`; without `--json` they emit a stable but not-load-bearing human-readable form. Every write command shares the auto-commit/push flag set defined under "Universal flags".
+
+### Universal flags (write commands)
+
+These flags are accepted by every command that produces a new op (`create`, `update`, `close`, `dep add`, `init`):
+
+- `--no-commit` — write the op file and stage it; do not run `git commit`. Useful for batching agents.
+- `--push` — after the op-commit, run `git push` to the configured remote. Implies a successful local commit.
+- `--isolated` — local-only mode. Skips remote fetch (relevant for `--claim`'s pull-rebase step) and refuses `--push`. Mutually exclusive with `--push`.
+- `--verify` — run host git hooks during the op-commit. Default is `--no-verify` (op commits touch only `.act/ops/**`).
+
+Precedence rules:
+1. `--no-commit` + `--push` is a usage error (exit 2): cannot push what wasn't committed.
+2. `--isolated` + `--push` is a usage error (exit 2): isolated forbids network.
+3. `--verify` + `--no-commit` is silently a no-op (no commit happens, hooks irrelevant).
+4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set.
+
+### Universal exit codes
+
+- `0` — success.
+- `1` — logical failure: claim loss, doctor finding, cycle refused, dependency dangling, etc. The command ran correctly but the answer is "no."
+- `2` — usage error: bad flag combination, unknown flag, missing required argument, ambiguous id prefix.
+- `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
+- `4` — version skew: any op carries `writer_version > self.writer_version` ("upgrade required"). Always non-recoverable from the binary's side.
+
+All non-zero exits emit `{"error": {"code": <int>, "kind": "<slug>", "message": "..."}}` on stdout when `--json` is set; on stderr in human mode.
+
+### Pre-import id resolution
+
+Every command accepting an `<id>` argument resolves the input through this pipeline, in order, and uses the first hit:
+
+1. **Import maps**: scan `.act/imports/*.json` (sorted by filename, descending) for the input as a key in any `mapping` object. If found, replace with the mapped post-import id and continue.
+2. **Exact full id**: if the input matches a known full id, use it.
+3. **Prefix match**: treat the input as a prefix and find issues whose full id starts with it. Zero matches → exit 3 ("not found"). One match → use it. Multiple matches → exit 2 with `{"error": {"kind": "ambiguous_id", "candidates": ["act-a1b2", "act-a1b9", ...]}}`.
+
+Resolution happens before any op is written, so a write command never partially applies due to a bad id.
+
+---
+
+### `act init`
+
+**Synopsis:** `act init [--force]`
+
+**Behavior:** Creates `.act/{ops,snapshots,hooks,imports}/`, an empty `index.db`, and `config.json` carrying a freshly generated `node_id = sha256(machine-id || git-config user.email)[0:8]`, `schema_version`, `writer_version`, and an empty `fold-checkpoint` placeholder.
+
+**Flags:**
+- `--force` (bool, default false) — proceed even if `.act/` already exists; merges missing subdirs and rewrites `config.json` only if absent. Never overwrites existing ops or snapshots.
+
+**Exit codes:** 0 on success; 2 if `.act/` exists and `--force` not given; 3 if `cwd` is not inside a git working tree.
+
+**JSON output (`--json` always emitted on init):**
+```json
+{"ok": true, "act_dir": "/abs/path/.act", "node_id": "7f3a91c2",
+ "writer_version": "0.1.0", "schema_version": 1}
+```
+
+**Side effects:** Creates directories and files under `.act/`. Does NOT create a commit; `init` is the one write that defers commit to the user's first real op.
+
+**Edge cases:** bare git repo → exit 3 (no working tree); submodule vs superproject scopes to the nearest `.git`; `--force` on a `.act/` with existing ops leaves ops untouched and only patches missing dirs.
+
+---
+
+### `act create <title>`
+
+**Synopsis:** `act create <title> [-p N] [--parent ID] [--accept "criteria"]... [--type T] [--description "text"] [--json]` plus universal flags.
+
+**Flags:**
+- `-p, --priority N` (int 0..3, default 2). 0 is highest.
+- `--parent ID` (string, optional). Resolved via id-resolution pipeline.
+- `--accept "criteria"` (string, repeatable). Each invocation appends one acceptance-criterion string.
+- `--type T` (enum task|bug|epic|chore, default task).
+- `--description "text"` (string, default "").
+- `--json` (bool, default false for humans, true under MCP).
+
+**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new full issue id `act-<16-hex>`, writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `post-create` hook, then op-commits unless `--no-commit`.
+
+**JSON output:**
+```json
+{"ok": true, "id": "act-a1b2c3d4e5f60718", "prefix": "act-a1b2",
+ "op_id": "7f3a...", "committed": true, "pushed": false}
+```
+
+**Exit codes:** 0; 1 if hook rejects; 2 on bad flags or unknown parent; 3 if `.act/` missing; 4 on writer-version skew encountered during the implicit fold.
+
+**Edge cases:** `--parent` to a closed/redacted issue is allowed with a stderr warning; empty title or title >256 bytes → exit 2; hash collision with an existing id retries the nonce up to 8 times before exit 1.
+
+---
+
+### `act list`
+
+**Synopsis:** `act list [--status X] [--assignee Y] [--type T] [--json] [--limit N] [--sort field]`
+
+**Flags:**
+- `--status X` (csv string, e.g. `open,in_progress`). Default: all non-closed.
+- `--assignee Y` (string, exact match). Default: any.
+- `--type T` (enum). Default: any.
+- `--json` (bool).
+- `--limit N` (int, default 200).
+- `--sort field` (enum priority|created_at|closed_at|id, optionally suffixed `:asc`/`:desc`). Default sort order: priority asc, then created_at desc. Tie-breaker: id asc.
+
+**Behavior:** Reads from `.act/index.db` after a fold-checkpoint validation. Index is rebuilt automatically if the tree-hash mismatches.
+
+**JSON output:**
+```json
+{"ok": true, "count": 12, "issues": [
+  {"id":"act-a1b2c3d4e5f60718","prefix":"act-a1b2","title":"...",
+   "status":"open","priority":1,"type":"task","assignee":"agent-1",
+   "parent":null,"created_at":"2026-04-29T14:23:01Z"}
+]}
+```
+
+**Exit codes:** 0; 2 on bad flag; 3 if `.act/` missing; 4 on version skew during rebuild.
+
+**Edge cases:** empty result returns `count: 0` and exit 0; `--limit 0` or unknown sort field → exit 2.
+
+---
+
+### `act show <id>`
+
+**Synopsis:** `act show <id> [--json] [--include-ops]`
+
+**Flags:**
+- `--json` (bool).
+- `--include-ops` (bool, default false). Inlines the full op stream alongside the folded snapshot.
+
+**Behavior:** Resolves id (errors with exit 2 on prefix ambiguity), folds the issue, prints snapshot.
+
+**JSON output:**
+```json
+{"ok": true, "issue": {
+  "id":"act-a1b2c3d4e5f60718","title":"...","description":"...",
+  "status":"open","priority":1,"type":"task","parent":null,
+  "deps":[{"id":"act-9c2b...","type":"blocks"}],
+  "assignee":"agent-1","acceptance_criteria":["..."],
+  "created_at":"...","closed_at":null,"closed_reason":null,
+  "ops_count": 4
+}, "ops": [/* present iff --include-ops */]}
+```
+
+**Exit codes:** 0; 2 on ambiguous prefix or unknown flag; 3 if id not found or `.act/` missing; 4 on writer-version skew.
+
+---
+
+### `act update <id>`
+
+**Synopsis:** `act update <id> [--status X] [--priority N] [--assignee Y] [--description T] [--accept "..."] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+
+**Flags:**
+- `--status X` (enum open|in_progress|blocked|closed). `closed` requires `act close` instead — exit 2.
+- `--priority N` (int 0..3).
+- `--assignee Y` (string; empty string clears).
+- `--description T` (string).
+- `--accept "..."` (repeatable; each appends one criterion).
+- `--dep-rm ID` (repeatable). Removes a dep edge; resolves id.
+- `--claim` (bool). Atomic claim protocol: write `claim` op, `git pull --rebase` (skipped under `--isolated`), refold, report win/loss. On win, optionally push if `--push`.
+- `--wait` (bool, only with `--claim`). On loss, poll until the issue becomes claimable again or status becomes terminal.
+- `--wait-timeout SECS` (int, default 60). Bound on `--wait`.
+- `--json` (bool).
+
+Each non-`--claim` field flag generates one op (so `--status blocked --priority 0` writes two ops in one commit).
+
+**JSON output (claim win):**
+```json
+{"ok": true, "claimed": true, "id":"act-a1b2c3d4e5f60718",
+ "winner":"7f3a91c2","ops_written":["claim","set-priority"]}
+```
+**JSON output (claim loss):**
+```json
+{"ok": false, "claimed": false, "id":"act-a1b2c3d4e5f60718",
+ "winner":"9c2bdead","reason":"lost-race"}
+```
+Exit codes for `--claim`: `0` win, `1` loss or other logical error, `2` usage. Other update modes follow universal exit codes.
+
+**Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
+
+---
+
+### `act close <id>`
+
+**Synopsis:** `act close <id> [--reason TEXT] [--json]` plus universal flags.
+
+**Flags:**
+- `--reason TEXT` (string, default ""). Stored as `closed_reason`.
+- `--json` (bool).
+
+**Behavior:** Writes a `close` op carrying `closed_at` and `closed_reason`; computes and stores the `closed_by_tree` reverse index (git tree hash of `.act/ops/<id>/`); runs `post-close` hook; commits with message `act-op: <id> close`.
+
+**JSON output:**
+```json
+{"ok": true, "id":"act-a1b2c3d4e5f60718", "closed_at":"...",
+ "closed_reason":"shipped", "committed":true, "pushed":false}
+```
+
+**Exit codes:** 0; 1 if already closed (idempotent close re-emits no op and exits 0; only true conflict returns 1); 2 on bad flags; 3 missing `.act/`; 4 on skew.
+
+**Edge cases:** closing an issue with open children is allowed and surfaced by `doctor orphan-close`; reason >4KB → exit 2.
+
+---
+
+### `act dep add <child> <parent>`
+
+**Synopsis:** `act dep add <child> <parent> [--type T] [--json]` plus universal flags.
+
+**Flags:**
+- `--type T` (enum blocks|relates|supersedes, default blocks).
+- `--json` (bool).
+
+**Behavior:** Resolves both ids, refuses if it would create a cycle in the `blocks` subgraph (cycle detection runs over the full folded graph). Writes a `dep-add` op.
+
+**JSON output:**
+```json
+{"ok": true, "child":"act-a1b2...", "parent":"act-9c2b...",
+ "type":"blocks", "committed":true}
+```
+
+**Exit codes:** 0; 1 on cycle (`{"error":{"kind":"cycle","path":[...]}}`); 2 on bad flags; 3 on missing id.
+
+**Edge cases:** self-edge → exit 2; duplicate edge is idempotent (no op, exit 0); `relates`/`supersedes` are not cycle-checked.
+
+---
+
+### `act ready`
+
+**Synopsis:** `act ready [--under <id>] [--json] [--limit N]`
+
+**Flags:**
+- `--under <id>` (string, optional). Restrict output to descendants (via `parent` edges) of this id.
+- `--json` (bool).
+- `--limit N` (int, default 50).
+
+**Algorithm:** Fold all issues; an issue is **ready** iff `status == open` AND no incoming `blocks` dep points at it from an open/in_progress issue. Sort by priority asc, created_at desc, id asc.
+
+**JSON output:**
+```json
+{"ok": true, "count": 3, "issues": [{"id":"...","prefix":"...","title":"...","priority":0,"type":"task"}]}
+```
+
+**Exit codes:** 0; 2 bad flags; 3 missing `.act/`; 4 on skew.
+
+---
+
+### `act search <query>`
+
+**Synopsis:** `act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]`
+
+**Flags:**
+- `--in` (enum, default `all`). Restrict FTS5 column scope.
+- `--status X` (csv).
+- `--limit N` (int, default 50).
+- `--json` (bool).
+
+**Behavior:** SQLite FTS5 query; index rebuilt-on-demand if stale.
+
+**JSON output:**
+```json
+{"ok": true, "count": 5, "results":[
+  {"id":"...","prefix":"...","title":"...","snippet":"...","rank":-3.41}
+]}
+```
+
+**Exit codes:** 0; 2 on bad query syntax (FTS5 parse error surfaced as usage); 3 missing index; 4 on skew.
+
+---
+
+### `act log <id>`
+
+**Synopsis:** `act log <id> [--json]`
+
+**Behavior:** Resolves id; emits the chronological op stream (HLC-sorted) for the issue. Includes `op_id`, `op_type`, `payload`, `hlc`, `node_id`, `writer_version`, and the file path.
+
+**JSON output:**
+```json
+{"ok": true, "id":"act-a1b2c3d4e5f60718", "ops":[
+  {"op_id":"7f3a...","op_type":"create","hlc":"...","node_id":"...",
+   "writer_version":"0.1.0","payload":{...},"path":".act/ops/act-a1b2.../..."}
+]}
+```
+
+**Exit codes:** 0; 2 on ambiguous prefix; 3 on unknown id; 4 on skew.
+
+---
+
+### `act doctor`
+
+**Synopsis:** `act doctor [--check NAME] [--fix] [--json] [--compact]`
+
+**Flags:**
+- `--check NAME` (repeatable). Default: run all.
+- `--fix` (bool). Auto-remediate where safe (per check, below).
+- `--json` (bool).
+- `--compact` (bool). Manual escape hatch to compact eligible issues.
+
+**Checks and `--fix` behavior:**
+
+| Check | Algorithm | `--fix` effect |
+|---|---|---|
+| `orphan-close` | Find issues with `closed_at` set but no commit message containing `(act-<prefix>)` AND no diff in `.act/ops/<id>/` at close time. | Read-only; surfaces finding. |
+| `orphan-ops` | Op files referencing an `issue_id` that has no `create` op. | Read-only. |
+| `dangling-deps` | Dep edges pointing at unknown ids (post-resolution). | Read-only. |
+| `time-travel` | Adjacent ops with HLC going backward more than the 5-minute drift bound. | Read-only. |
+| `cycle` | Cycle in the `blocks` subgraph. | Read-only. |
+| `unknown-op-version` | Any op with `writer_version > self`. | Cannot fix; exits 4. |
+| `index-divergence` | Recompute index into a tmp SQLite from ops/snapshots; row-by-row diff against `.act/index.db` (recomputed = oracle). | Replaces `.act/index.db` with the recomputed db. |
+| `index-schema` | Compare index schema version to expected. | Drops and rebuilds `.act/index.db`. |
+
+**JSON output:**
+```json
+{"ok": true|false, "checks":[
+  {"name":"cycle","status":"pass|fail","findings":[...],"fixed":false}
+], "summary":{"pass":7,"fail":1}}
+```
+
+**Exit codes:** 0 on all-pass; 1 if any check fails (and `--fix` did not remediate); 4 on unknown-op-version; 2 on bad flags.
+
+---
+
+### `act mcp`
+
+**Synopsis:** `act mcp [--read-only] [--workdir DIR]`
+
+**Flags:**
+- `--read-only` (bool). Server-level: refuses any write tool call regardless of per-call `read_only`.
+- `--workdir DIR` (string). Chdir before serving; required when launched outside the repo.
+
+**Behavior:** Stdio MCP server, no network. Tool surface specified below.
+
+**Exit codes:** 0 on clean shutdown; 2 bad flag; 3 missing `.act/`; 4 on skew.
+
+---
+
+### `act version`
+
+**Synopsis:** `act version [--check-repo] [--json]`
+
+**Flags:**
+- `--check-repo` (bool). Walk all op files to find `max(writer_version)`; compare to `self.writer_version`. Exits 4 if `self < max`.
+- `--json` (bool).
+
+**JSON output:**
+```json
+{"ok": true, "binary_version":"0.1.0", "writer_version":"0.1.0",
+ "schema_version":1, "repo_max_writer_version":"0.1.0"}
+```
+
+**Exit codes:** 0; 4 on skew (with `--check-repo`); 3 on missing `.act/` (with `--check-repo` only).
+
+---
+
+### MCP tool surface
+
+The server exposes one tool per CLI command, named `act_<verb>` (`act_init`, `act_create`, `act_list`, `act_show`, `act_update`, `act_close`, `act_dep_add`, `act_ready`, `act_search`, `act_log`, `act_doctor`, `act_version`), plus three composed tools. All tools accept a `read_only: bool` field; the server rejects any write tool when started with `--read-only` regardless of this field. Transport is stdio. JSON Schema (concise) for each:
+
+**Per-command tools.** Each `act_<verb>` accepts an object whose fields mirror the CLI flags (kebab-case becomes snake_case). Output is the command's `--json` body. Errors surface as MCP tool errors carrying `{code, kind, message}`.
+
+**Composed tool: `act_next`**
+
+Input:
+```json
+{"type":"object","properties":{
+  "under":{"type":"string"},
+  "read_only":{"type":"boolean"}
+}}
+```
+Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming.
+
+Output:
+```json
+{"oneOf":[
+  {"properties":{"claimed":{"const":true},"issue":{"$ref":"#/issue"}}},
+  {"properties":{"claimed":{"const":false},"candidates":{"type":"array"}}}
+]}
+```
+
+**Composed tool: `act_finish`**
+
+Input: `{"id":"string","reason":{"type":"string"}}`. Behavior: `act close --reason ...`; commit message includes the prefix marker `(act-XXXX)` so `act doctor orphan-close` can grep it. Output: same as `act close`.
+
+**Composed tool: `act_block`**
+
+Input: `{"id":"string","blocked_by":"string","reason":{"type":"string"}}`. Behavior: write `set-status=blocked` op, then `dep-add` with `type=blocks` from `id` to `blocked_by`. Output:
+```json
+{"ok":true,"id":"...","blocked_by":"...","ops_written":["set-status","dep-add"]}
+```
+
+All composed tools mark themselves as the recommended path in their tool descriptions, surfacing `act_ready`/`act_update --claim`/`act_close`/`act_dep_add` as escape hatches.
+
+## Errors, hooks, migration, bootstrap, compaction, tests
+
+This section closes the remaining surfaces: structured error taxonomy, hook execution contract, bootstrap importer, op-schema migration, opportunistic compaction, edge-case behaviors, and the test plan. Together with the prior sections it makes the v1 surface implementable from one document.
+
+### 1. Error handling
+
+Every `act` command exits with a small, stable error code string. Under `--json`, errors are emitted on stdout as a single object; without `--json`, a one-line human message goes to stderr and stdout stays empty. JSON shape is uniform:
+
+```
+{"error": "<code>", "message": "<human>", "details": {...}}
+```
+
+`details` is optional and per-class. Exit codes are stable; new classes get new codes, never re-used.
+
+| code                       | exit | human message format                                                       | details keys                                  |
+|----------------------------|------|----------------------------------------------------------------------------|-----------------------------------------------|
+| `not_in_git`               | 2    | `not in a git repository (run from inside a git worktree)`                 | `cwd`                                         |
+| `act_not_initialized`      | 2    | `.act/ not found in <root>; run 'act init'`                                | `repo_root`                                   |
+| `issue_not_found`          | 3    | `no issue matching '<query>'`                                              | `query`                                       |
+| `id_ambiguous`             | 3    | `prefix '<p>' is ambiguous: <id1>, <id2>, ...`                             | `prefix`, `candidates[]`                      |
+| `version_skew`             | 4    | `op writer_version <N> exceeds binary max <M>; upgrade act`                | `op_writer_version`, `binary_max`, `op_path`  |
+| `claim_lost`               | 5    | `claim lost; winner=<node_id> at hlc=<hlc>`                                | `winner_node_id`, `winner_hlc`, `issue_id`    |
+| `cycle_detected`           | 6    | `dep would create cycle: <a> -> ... -> <a>`                                | `path[]`                                      |
+| `dep_not_found`            | 6    | `dep target '<id>' not found`                                              | `target`                                      |
+| `hook_failed`              | 7    | `hook '<name>' exited <rc>; op unstaged`                                   | `hook`, `exit_code`, `stderr_tail`            |
+| `op_invalid`               | 8    | `op rejected: <reason>`                                                    | `reason`, `op_path`                           |
+| `hlc_drift`                | 8    | `hlc drift exceeds 5m: op=<hlc> ref=<ref>`                                 | `op_hlc`, `ref_hlc`, `delta_seconds`          |
+| `index_corrupt`            | 9    | `index.db corrupt or schema-mismatched; rerun 'act doctor --rebuild'`      | `reason`                                      |
+| `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
+| `compaction_locked`        | 0    | `compaction already in progress; skipping` (warning, exit 0)               | `lock_path`                                   |
+| `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
+
+Rules:
+- Every command MUST return exactly one error class on failure; no compound errors.
+- `details` MUST be deterministic given inputs (no timestamps, no PIDs) so test goldens are stable.
+- Human messages are single-line, no ANSI, no trailing period, lowercase first word except proper identifiers.
+- `--json` errors go to stdout because agents parse stdout; stderr stays empty under `--json`.
+
+### 2. Hooks contract
+
+Discovery: only three filenames are loaded.
+
+```
+.act/hooks/post-create
+.act/hooks/post-close
+.act/hooks/post-claim
+```
+
+Any other filename in `.act/hooks/` is ignored. Future phases (`pre-commit-op`, `post-fold`, `post-compact`) are reserved names — `act` MUST refuse to load them in v1 with no warning, so a future binary can adopt them without breaking older repos.
+
+Execution:
+1. Op file is written and `git add`-staged.
+2. `act` resolves the hook by op-type (`create`/`close`/`claim`) and stats it. If absent or not executable, the hook is skipped silently.
+3. Hook is spawned synchronously with cwd = repo root.
+4. Stdin: the op JSON, exactly one line, no trailing newline. Closing stdin signals EOF.
+5. Env vars set: `ACT_OP_ID`, `ACT_OP_TYPE`, `ACT_ISSUE_ID`, `ACT_HOOK_PHASE=pre-commit-op`. No other `ACT_*` vars are set; future vars are additive.
+6. Stdout and stderr are fully captured (bounded to 64KB each; overflow truncates and tags `details.truncated=true`). On success they are discarded; on failure stderr_tail (last 4KB) is included in the `hook_failed` error.
+7. Timeout: 5s wall-clock. On timeout `act` sends SIGTERM, waits 1s grace, then SIGKILL. Either way the hook is treated as failed.
+8. Non-zero exit: `act` runs `git restore --staged <op-path>`, deletes the op file, and emits `hook_failed`. No commit is created. Caller exits with code 7.
+
+Hooks NEVER run on: `act fold` (read-only), replay/recovery, `act import`, fresh `git clone` (the ops already exist in history; the writer that produced them already ran their hook). The invariant is "hooks fire exactly once per logical op, on the writer that originated it".
+
+### 3. Bootstrap importer
+
+Input: a single JSONL file (default `_generated/projects/act/issues.jsonl`). Each line is one op envelope:
+
+```
+{"op_version": 1, "schema_version": 1, "op_type": "create",
+ "issue_id": "bootstrap-7", "payload": {...}, "hlc": "...", "node_id": "..."}
+```
+
+Steps (in order, all-or-nothing):
+1. **Validate.** Read the file; for each line, parse JSON, check required keys, check `op_type` is in the known set, check `payload` shape against the op-type schema. Any failure → `import_invalid_jsonl` with the offending line number. No side effects yet.
+2. **Replay.** For each validated line, write a fresh local op via the normal write path: importer issues a new HLC (monotonic from local clock), uses the local `node_id` from `.act/config.json`, and produces a new act-style id (`act-<8hex>`). The bootstrap `issue_id` is recorded in a mapping table; subsequent ops in the same input that reference the bootstrap id are rewritten to the new local id before being written.
+3. **Mapping.** Write `.act/imports/<iso-utc>.json`:
+   ```
+   {"source": "issues.jsonl@<sha256-of-input>",
+    "mapping": {"bootstrap-7": "act-9c2b...", ...},
+    "imported_at_hlc": "<hlc>"}
+   ```
+4. **Single commit.** All imported op files plus the mapping file are committed in one `git commit` with message `act-import: <source-sha-short> <count> ops`. Hooks do NOT fire (rule from §2).
+
+Idempotency: before step 2, the importer scans `.act/imports/*.json` for any file whose `source` sha matches the input. If found, the importer exits 0 with `{"imported": 0, "reason": "already_imported"}`. Re-running with the same input is a strict no-op.
+
+Resolution: `act show <id>` and `act log <id>` accept either a bootstrap id or a local act id. Lookup walks `.act/imports/*.json` mappings in lexicographic order; first hit wins. Bootstrap ids are never re-used across imports.
+
+Unknown `op_type` in the input is rejected at step 1 with `import_invalid_jsonl`. There is no quarantine path; the operator fixes the JSONL and re-runs.
+
+### 4. Op-schema migration
+
+Two version axes live in every op payload:
+- `op_version` — increments when an op-type's payload shape changes.
+- `schema_version` — increments when the issue state schema (the folded shape) changes.
+- `writer_version` — the binary that produced the op; reader gate.
+
+Reader gate: on read, if `op.writer_version > binary.max_known_writer_version`, the binary refuses with `version_skew`. This is a hard failure, not a warning; it forces upgrade rather than silent miscomputation.
+
+Fold dispatch: the fold loop calls
+
+```
+state = apply_op(state, op, op.op_version)
+```
+
+`apply_op` is a registry keyed by `(op_type, op_version)`. Each entry is a pure function. Adding a new op_version means adding a new registry entry; old entries stay forever so historical ops keep folding identically.
+
+Migration ops: `act migrate` is the only command that writes a `migrate` op. Its payload:
+
+```
+{"op_type": "migrate",
+ "from": {"op_version": 1, "schema_version": 1},
+ "to":   {"op_version": 2, "schema_version": 2},
+ "transform": "<named-transform-id>",
+ "applies_to_issue": "<id>",
+ "writer_version": "<binary-semver>"}
+```
+
+One `migrate` op per affected issue (not one global). The transform is referenced by name, not embedded as code; the binary that wrote the migrate op is the authority for what that name means at that `writer_version`. Replays on newer binaries follow the registry. Older binaries hit `version_skew` and refuse — correct behavior.
+
+`act migrate --dry-run` lists affected issues and the transform that would apply, JSON output, no writes.
+
+### 5. Compaction
+
+Trigger conditions (any writer detects on its way out of a successful op):
+- Issue has > 50 ops in `.act/ops/<id>/`, OR
+- > 30 days since the last `compact` op for the issue (or no `compact` op ever and the issue is > 30 days old).
+
+Procedure:
+1. **Acquire lock.** `flock` on `.act/.compact.lock` (created if absent), non-blocking. Failure → emit `compaction_locked` warning to stderr (exit 0) and return; the next writer will retry.
+2. **Re-fold.** Build the issue state from current ops on disk.
+3. **Snapshot file.** Write `.act/snapshots/<id>.json`:
+   ```
+   {"id": "<id>",
+    "state": {...folded fields...},
+    "subsumed_ops": [".act/ops/<id>/2026-04/...json", ...],
+    "as_of_hlc": "<hlc>",
+    "tree_hash": "<git-tree-hash-of-ops-dir-at-snapshot-time>"}
+   ```
+4. **Optional prune.** If the issue is closed and `closed_at` is > 30 days ago, delete the subsumed op files. Otherwise leave them; the snapshot is an accelerator, not a replacement.
+5. **Compact op.** Write a `compact` op at `.act/ops/<id>/<yyyy-mm>/...-compact.json`:
+   ```
+   {"op_type": "compact",
+    "snapshot_path": ".act/snapshots/<id>.json",
+    "snapshot_tree_hash": "<sha>",
+    "subsumed_count": N}
+   ```
+6. **Commit.** One commit: snapshot file + compact op (+ deletions if step 4 ran). Message: `act-op: <id> compact`. `--no-verify` like other op commits.
+7. **Release lock.** `flock` released on process exit; explicit unlock on success.
+
+Concurrency: contention skips silently. Two writers will not both compact the same issue in the same second; the loser's trigger will re-fire on its next op.
+
+Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_hash` matches the current tree-hash of the ops dir up through `as_of_hlc`, the fold seeds from the snapshot and applies only ops with `hlc > as_of_hlc`. Hash mismatch falls back to full fold and logs an `index-divergence` finding for `act doctor`.
+
+### 6. Edge cases
+
+- **Empty repo on `act init`.** Creates `.act/` with `config.json` (node_id, version), empty `ops/`, empty `snapshots/`, empty `hooks/`, empty `imports/`. Stages and commits in one commit: `act-init: <node_id>`. No-op if `.act/` already exists; exit 0 with `{"initialized": false}`.
+- **`.act/ops/` missing on first run after init.** Treated as zero ops; fold returns empty state. No error.
+- **Importer encounters unknown `op_type`.** Step-1 validation fails → `import_invalid_jsonl`. The whole import is aborted before any op file is written.
+- **Two terminals on the same machine claim the same issue.** Both write distinct claim-op files (filenames include op-payload hash and node_id, so the two ops have different filenames even with identical wall-clock seconds because of payload nonce). Fold orders by HLC then op-hash; one wins, the other observes `claim_lost`.
+- **`act close` on an already-closed issue.** Idempotent. The op is still written (audit trail), but fold sees status already `closed` and the post-state is unchanged. Exit 0 with `{"changed": false}`.
+- **Concurrent `act create` of the same title.** IDs derive from `(payload + nonce)`, never from title. Two creates produce two distinct ids; no conflict, no error. Operators sort it out via dep edges later.
+- **Redact of an already-redacted field.** Idempotent. A second redact op is written; fold output unchanged. Exit 0 with `{"changed": false}`.
+- **Prefix collision at create time.** The new id is checked against all existing ids. If the chosen 4-hex prefix already maps to a different id, `act` extends the displayed prefix length one hex at a time until unique, and stores the longer form in the per-session prefix map. The full id is unchanged.
+- **Squash-and-push refused on `version_skew`.** When `act` would squash a contiguous `act-op:` range and any op in the range has `writer_version > binary.max_known_writer_version`, it refuses with `version_skew` and prints: `upgrade act to >= <op_writer_version> before pushing; affected commits: <list>`. No partial squash.
+- **`act doctor --check unknown-op-version`** emits a finding per offending op with the same details payload, so the operator can correlate before attempting a push.
+
+### 7. Test plan
+
+Test code lives under `internal/.../*_test.go` (or equivalent if the Bun spike flips the language). Goldens live under `testdata/golden/`. Fuzz corpora under `testdata/fuzz/`. CI runs all tiers on every PR.
+
+#### 7.1 Property tests
+
+- **`prop_fold_permutation_invariance`** — Generator produces a set of commutative-disjoint ops (different issues OR different fields on the same issue). For every permutation of the set, fold produces identical state JSON. Asserted via byte-equality after canonical JSON serialization.
+- **`prop_hlc_monotonicity`** — For any sequence of ops emitted by a single node within one process, the HLC strictly increases. Generator produces synthetic local-clock skews including backward jumps; the property holds across them.
+
+#### 7.2 Golden tests
+
+One file per `(op_type, op_version)` pair under `testdata/golden/<op_type>/<version>/<case>.json`. Each case has `prior_state.json`, `op.json`, `expected_state.json`. The test loads prior, applies op, compares expected. Required cases: `create`, `update-status`, `update-priority`, `update-assignee`, `update-description`, `update-accept`, `claim`, `close`, `dep-add`, `dep-rm`, `redact`, `migrate`, `compact`. Adding a new op_version requires adding a new golden directory; CI fails if the directory is missing.
+
+#### 7.3 Fuzz
+
+- **`fuzz_fold_determinism`** — Random op-sequence generator with shrinking. For each generated sequence, fold twice (cold and warm) and assert byte-identical canonical JSON. Shrinker minimizes failing sequence length on regression. Corpus is committed; new findings are added back to the corpus.
+
+#### 7.4 Concurrency tests
+
+- **`concurrent_claim_two_writers`** — Two child processes each run `act update --claim <id>` against the same issue with a shared remote bare repo. Exactly one exits 0 with `{"claimed": true}`; the other exits 5 with `claim_lost` and a winner field. Asserted across 100 iterations to catch flakes.
+- **`concurrent_distinct_ops`** — Two writers update different fields (priority and description). Both ops survive after `git pull --rebase`; final state contains both updates. No error from either writer.
+- **`rebase_contention`** — Three writers update the same field (priority) concurrently. After all rebases settle, fold output is deterministic across runs (HLC + op-hash tiebreaker). Asserted by running the scenario 50 times and comparing final-state hashes.
+
+#### 7.5 MCP end-to-end
+
+A fake stdio MCP client process spawns `act mcp` and drives `act_next`, `act_finish`, `act_block`. Asserts:
+- Tool list response contains the three composed tools plus the 1:1 surface.
+- `act_next` returns `{"claimed": true, "issue": {...}}` on a fresh ready queue.
+- `act_next` on a contended queue returns `{"claimed": false, "candidates": [...]}` after the bounded-retry budget.
+- `act_finish` writes a close op and returns `{"closed": true, "id": ...}`.
+- `act_block` writes status=blocked and a dep edge atomically.
+
+#### 7.6 Doctor coverage
+
+For each check (`orphan-close`, `orphan-ops`, `dangling-deps`, `time-travel`, `cycle`, `unknown-op-version`, `index-divergence`, `index-schema`):
+- **Positive test** — synthesize the broken state on disk, run the check, assert exactly one finding with the expected code and details.
+- **Negative test** — start from a clean seeded repo, run the check, assert zero findings.
+
+#### 7.7 Importer
+
+- **`import_idempotent`** — Run importer twice on the same JSONL; second run exits with `{"imported": 0, "reason": "already_imported"}` and produces no new commits.
+- **`import_malformed_jsonl`** — Inject a bad line (missing `op_type`); importer exits with `import_invalid_jsonl` and the affected line number; no op files written, no commit.
+- **`import_mapping_determinism`** — Given fixed input bytes and a fixed local node_id + clock, the mapping file is byte-identical across runs (after wiping and re-running). Asserted via sha256 of the mapping file.
+
+#### 7.8 CI matrix
+
+Three containerized environments, one job each:
+- **CC laptop** — Linux container approximating Claude Code on a laptop; runs install + smoke workflow (init, create, claim, close, list --json) and asserts JSON shapes via `jq` schema checks.
+- **CC on the Web** — Container matching the web sandbox; same smoke workflow.
+- **Cowork** — Container with the Cowork plugin manifest; drives `act mcp` over stdio and runs the MCP E2E.
+
+All three jobs must pass. Each job posts a single PASS/FAIL summary to the run; an agent reads them and decides whether to advance the build pipeline. Human signs off only on the final tag.
