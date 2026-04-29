@@ -37,7 +37,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 4: CLI commands
 
-- act-b0b9 [open] act init command (deps: act-1396, act-9cae)
+- act-b0b9 [closed] act init command (deps: act-1396, act-9cae)
 - act-65e6 [open] act create command (deps: act-bd70, act-3bbe, act-5ca9, act-912f, act-ce9f)
 - act-5bf7 [open] act list command (deps: act-912f, act-6991)
 - act-beca [open] act show command (deps: act-912f, act-6991)

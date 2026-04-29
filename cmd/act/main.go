@@ -7,6 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/aac/act/internal/cli"
 )
@@ -20,21 +23,140 @@ func main() {
 	args := os.Args[2:]
 
 	switch sub {
+	case "init":
+		os.Exit(runInit(args))
 	case "version":
 		os.Exit(runVersion(args))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
 	default:
-		fmt.Fprintf(os.Stderr, "act: unknown subcommand %q\n", sub)
-		usage()
+		fmt.Fprintf(os.Stderr, "act %s: not implemented yet\n", sub)
 		os.Exit(2)
 	}
 }
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: version")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version")
+}
+
+// runInit dispatches `act init`. It resolves the repo root from cwd, gathers
+// machine-id + git email for node_id derivation, then delegates to RunInit.
+func runInit(args []string) int {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	force := fs.Bool("force", false, "reinitialize even if .act/ already exists")
+	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	root, err := findRepoRoot()
+	if err != nil {
+		// Surface as the same shape RunInit would emit so JSON consumers
+		// see a single uniform error envelope.
+		emitInit(*asJSON, map[string]any{
+			"error":   "not_in_git",
+			"message": err.Error(),
+		}, false)
+		return 3
+	}
+
+	out, code := cli.RunInit(root, *force, getMachineID(), getGitEmail(), nil)
+	emitInit(*asJSON, out, code == 0)
+	return code
+}
+
+// emitInit writes either a JSON document or a human-friendly summary depending
+// on asJSON. For success, prints the canonical "Initialized" line; for errors,
+// prints the message text on stderr.
+func emitInit(asJSON bool, payload any, success bool) {
+	if asJSON {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "act init: json marshal: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+	m, ok := toMap(payload)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "%v\n", payload)
+		return
+	}
+	if success {
+		fmt.Printf("Initialized .act/ at %s with node_id %s\n", m["act_dir"], m["node_id"])
+		return
+	}
+	if msg, _ := m["message"].(string); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%v\n", payload)
+}
+
+// toMap round-trips an arbitrary struct through JSON to recover a string-keyed
+// map; isolates main.go from cli's unexported output types.
+func toMap(v any) (map[string]any, bool) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, false
+	}
+	return m, true
+}
+
+// findRepoRoot walks upward from the current working directory looking for a
+// `.git` entry (file or directory). The first hit's directory is the repo root.
+func findRepoRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getcwd: %w", err)
+	}
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no .git/ found in %s or any parent", cwd)
+		}
+		dir = parent
+	}
+}
+
+// getMachineID returns a stable per-host identifier. Order:
+// 1. /etc/machine-id (Linux/systemd).
+// 2. os.Hostname() if reachable.
+// 3. A constant fallback so node_id derivation never fails.
+func getMachineID() string {
+	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
+		s := strings.TrimSpace(string(data))
+		if s != "" {
+			return s
+		}
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "act-unknown-machine"
+}
+
+// getGitEmail shells out to `git config user.email`. Empty string is returned
+// when git is missing, the config is unset, or anything else goes wrong; the
+// node_id derivation tolerates an empty email.
+func getGitEmail() string {
+	cmd := exec.Command("git", "config", "user.email")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func runVersion(args []string) int {

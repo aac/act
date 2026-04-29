@@ -7,7 +7,7 @@ acceptance_criteria:
   - "`act init` against an existing `.act/` without `--force` exits 2; with `--force` it merges missing subdirs and rewrites `config.json` only if absent, never touching existing ops or snapshots."
   - "JSON output always emitted: `{\"ok\": true, \"act_dir\": \"/abs/path/.act\", \"node_id\": \"<8hex>\", \"writer_version\": \"<v>\", \"schema_version\": <int>}`."
   - "init does NOT create a git commit; the first real op-commit is deferred to a subsequent write."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
