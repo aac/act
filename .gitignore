@@ -4,6 +4,11 @@ act.exe
 
 # Go build artifacts
 /vendor/
+dist/
+coverage.out
+
+# Runtime index (rebuilt from op log)
+.act/index.db
 
 # OS junk
 .DS_Store
