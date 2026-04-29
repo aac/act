@@ -24,6 +24,25 @@ func main() {
 	sub := os.Args[1]
 	args := os.Args[2:]
 
+	// Handle the nested `act dep <verb>` family before the flat-subcommand
+	// switch. Currently only `dep add` is implemented; future verbs (rm,
+	// list) plug in here.
+	if sub == "dep" {
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "act dep: usage: act dep <add> [args]")
+			os.Exit(2)
+		}
+		verb := os.Args[2]
+		rest := os.Args[3:]
+		switch verb {
+		case "add":
+			os.Exit(runDepAdd(rest))
+		default:
+			fmt.Fprintf(os.Stderr, "act dep %s: not implemented yet\n", verb)
+			os.Exit(2)
+		}
+	}
+
 	switch sub {
 	case "init":
 		os.Exit(runInit(args))
@@ -54,7 +73,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, dep add")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers

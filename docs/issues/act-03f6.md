@@ -7,7 +7,7 @@ acceptance_criteria:
   - "Cycle refusal exits 1 with `{\"error\":{\"kind\":\"cycle\",\"path\":[...]}}`; self-edge exits 2."
   - "Duplicate-edge dedup key is `(child, parent, type)` per §5.C.5; exact match is idempotent (no op, exit 0); same pair with different `--type` produces a new op."
   - "JSON output: `{\"ok\": true, \"child\": \"...\", \"parent\": \"...\", \"type\": \"blocks|relates|supersedes\", \"committed\": <bool>}`."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
