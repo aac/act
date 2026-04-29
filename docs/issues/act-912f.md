@@ -10,7 +10,7 @@ acceptance_criteria:
   - "index.db is gitignored; act-init writes the .gitignore entry per §2.5"
   - "fts5 content table is populated with id (UNINDEXED), title, description for full-text search; act search (act-0a22) consumes this table"
   - "Index corruption (sqlite OPEN error or schema_version mismatch on meta) emits index_corrupt error code (exit 9) suggesting `act doctor --rebuild`"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
