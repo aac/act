@@ -35,6 +35,10 @@ func main() {
 		os.Exit(runList(args))
 	case "search":
 		os.Exit(runSearch(args))
+	case "ready":
+		os.Exit(runReady(args))
+	case "create":
+		os.Exit(runCreate(args))
 	case "migrate":
 		os.Exit(runMigrate(args))
 	case "-h", "--help", "help":
@@ -48,7 +52,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
@@ -478,4 +482,84 @@ func runVersion(args []string) int {
 		fmt.Fprintf(os.Stderr, "act version: %s\n", errStr)
 	}
 	return code
+}
+
+// runShow dispatches `act show`. Positional `<id>` plus `--json` and
+// `--include-ops` flags. Output rendering branches on --json: JSON renders
+// the rendered-state map (or tombstone short-shape); the human path uses
+// cli.FormatShowHuman.
+func runShow(args []string) int {
+	fs := flag.NewFlagSet("show", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	includeOps := fs.Bool("include-ops", false, "inline the HLC-sorted op stream alongside the snapshot")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "act show: usage: act show <id> [--json] [--include-ops]")
+		return 2
+	}
+	idArg := fs.Arg(0)
+
+	root, err := findRepoRoot()
+	if err != nil {
+		emitShowError(*asJSON, map[string]any{
+			"error":   "not_in_git",
+			"message": err.Error(),
+		})
+		return 3
+	}
+
+	out, code := cli.RunShow(root, cli.ShowOptions{
+		ID:         idArg,
+		AsJSON:     *asJSON,
+		IncludeOps: *includeOps,
+	})
+	if code != 0 {
+		m, _ := toMap(out)
+		emitShowError(*asJSON, m)
+		return code
+	}
+
+	if *asJSON {
+		var payload any
+		switch v := out.(type) {
+		case cli.ShowResult:
+			payload = v.ShowJSON()
+		case cli.ShowTombstoned:
+			payload = v
+		default:
+			payload = v
+		}
+		data, jerr := json.Marshal(payload)
+		if jerr != nil {
+			fmt.Fprintf(os.Stderr, "act show: json marshal: %v\n", jerr)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	fmt.Print(cli.FormatShowHuman(out))
+	return 0
+}
+
+// emitShowError mirrors emitLogError for the show subcommand.
+func emitShowError(asJSON bool, payload map[string]any) {
+	if asJSON {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "act show: json marshal: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if msg, _ := payload["message"].(string); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	}
+	if e, _ := payload["error"].(string); e != "" {
+		fmt.Fprintln(os.Stderr, e)
+	}
 }
