@@ -128,6 +128,93 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	return nil
 }
 
+// WriteOpsAndAutoCommit writes a batch of op files and commits all of them
+// in a single git commit, per spec §5.D.2. Used by composed tools (act_block)
+// that require multi-op atomicity:
+//
+//  1. Validate flag combinations.
+//  2. For each (env, body) pair: write the op file via op.ProbeAndWrite.
+//  3. Stage every newly-written op file.
+//  4. Commit once with the supplied message.
+//  5. On any failure between (2) and (4), unstage and delete every staged
+//     op file so the worktree returns to its pre-attempt state. The
+//     underlying error is surfaced unchanged.
+//
+// Unlike WriteOpAndAutoCommit, this helper does NOT run hooks: composed
+// multi-op flows are expected to be opaque to per-op-type hooks. Callers
+// that need hook invocation should compose the single-op helper instead.
+//
+// envs and bodies must have the same length and be non-empty. gops may be
+// nil iff opts.NoCommit is true. The commit message is supplied by the
+// caller; act_block uses `act-block: <short>` per spec §"MCP composed".
+func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.LayoutPaths, gops *gitops.GitOps, opts WriteOpts, commitMessage string) error {
+	if len(envs) == 0 {
+		return fmt.Errorf("cli: WriteOpsAndAutoCommit: no ops supplied")
+	}
+	if len(envs) != len(bodies) {
+		return fmt.Errorf("cli: WriteOpsAndAutoCommit: envs/bodies length mismatch (%d vs %d)", len(envs), len(bodies))
+	}
+	if opts.NoCommit && opts.Push {
+		return fmt.Errorf("%w: --no-commit and --push are mutually exclusive", ErrInvalidFlags)
+	}
+	if opts.Isolated && opts.Push {
+		return fmt.Errorf("%w: --isolated and --push are mutually exclusive", ErrInvalidFlags)
+	}
+	if !opts.NoCommit && gops == nil {
+		return fmt.Errorf("cli: gitops is required unless --no-commit is set")
+	}
+	if !opts.NoCommit && commitMessage == "" {
+		return fmt.Errorf("cli: WriteOpsAndAutoCommit: empty commit message")
+	}
+
+	// Step 2: write all op files. Track each path so we can roll back on
+	// failure.
+	fsLock := func() (func(), error) { return func() {}, nil }
+	written := make([]string, 0, len(envs))
+	rollback := func() {
+		for _, p := range written {
+			if gops != nil {
+				_ = unstage(gops, p)
+			}
+			_ = os.Remove(p)
+		}
+	}
+	for i, env := range envs {
+		opPath, _, err := op.ProbeAndWrite(paths.Ops, env, bodies[i], fsLock)
+		if err != nil {
+			rollback()
+			return fmt.Errorf("cli: write op %d/%d: %w", i+1, len(envs), err)
+		}
+		written = append(written, opPath)
+	}
+
+	if opts.NoCommit {
+		return nil
+	}
+
+	// Step 3: stage every op file.
+	for _, p := range written {
+		if err := gops.StageOpFile(p); err != nil {
+			rollback()
+			return fmt.Errorf("cli: stage: %w", err)
+		}
+	}
+
+	// Step 4: single commit.
+	if err := gops.Commit(commitMessage); err != nil {
+		rollback()
+		return fmt.Errorf("cli: commit: %w", err)
+	}
+
+	// Step 5: optional push (after successful commit).
+	if opts.Push {
+		if err := gops.Push(); err != nil {
+			return fmt.Errorf("cli: push: %w", err)
+		}
+	}
+	return nil
+}
+
 // unstage runs `git restore --staged <opPath>` via the gitops runner. The
 // operation is best-effort; failures are returned but typical callers
 // ignore the result because the original commit error is the user-facing

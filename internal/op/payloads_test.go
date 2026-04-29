@@ -104,11 +104,38 @@ func TestUpdateFieldPayload_Validate_OK(t *testing.T) {
 	}
 }
 
-func TestUpdateFieldPayload_Validate_StatusRejected(t *testing.T) {
+// status=open and status=blocked are now allowed via update_field.
+// Only status=closed and status=in_progress are forbidden (§5.A.4).
+func TestUpdateFieldPayload_Validate_StatusOpenAllowed(t *testing.T) {
 	p := UpdateFieldPayload{Field: "status", Value: json.RawMessage(`"open"`)}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("status=open should be allowed: %v", err)
+	}
+}
+
+func TestUpdateFieldPayload_Validate_StatusBlockedAllowed(t *testing.T) {
+	p := UpdateFieldPayload{Field: "status", Value: json.RawMessage(`"blocked"`)}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("status=blocked should be allowed: %v", err)
+	}
+}
+
+func TestUpdateFieldPayload_Validate_StatusClosedRejected(t *testing.T) {
+	p := UpdateFieldPayload{Field: "status", Value: json.RawMessage(`"closed"`)}
 	err := p.Validate()
 	if err == nil {
-		t.Fatal("want error for status field")
+		t.Fatal("want error for status=closed via update_field")
+	}
+	if !strings.Contains(err.Error(), "status") {
+		t.Fatalf("want error mentioning status, got %v", err)
+	}
+}
+
+func TestUpdateFieldPayload_Validate_StatusInProgressRejected(t *testing.T) {
+	p := UpdateFieldPayload{Field: "status", Value: json.RawMessage(`"in_progress"`)}
+	err := p.Validate()
+	if err == nil {
+		t.Fatal("want error for status=in_progress via update_field")
 	}
 	if !strings.Contains(err.Error(), "status") {
 		t.Fatalf("want error mentioning status, got %v", err)
@@ -393,11 +420,11 @@ func TestValidatePayload_BadJSON(t *testing.T) {
 	}
 }
 
-func TestValidatePayload_StatusViaUpdateFieldRejected(t *testing.T) {
-	raw := []byte(`{"field":"status","value":"open"}`)
+func TestValidatePayload_StatusClosedViaUpdateFieldRejected(t *testing.T) {
+	raw := []byte(`{"field":"status","value":"closed"}`)
 	err := ValidatePayload("update_field", raw)
 	if err == nil {
-		t.Fatal("want error: status MUST go through claim/close")
+		t.Fatal("want error: status=closed MUST go through close")
 	}
 	if !strings.Contains(err.Error(), "status") {
 		t.Fatalf("want error mentioning status, got %v", err)
