@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hlc"
+	"github.com/aac/act/internal/hooks"
 	"github.com/aac/act/internal/op"
 )
 
@@ -120,6 +122,83 @@ func TestWriteOpInvalidFlags(t *testing.T) {
 		if err := WriteOpAndAutoCommit(env, body, paths, g, opts); !errors.Is(err, ErrInvalidFlags) {
 			t.Errorf("opts=%+v: want ErrInvalidFlags, got %v", opts, err)
 		}
+	}
+}
+
+// TestWriteOpAndAutoCommitHookSuccess verifies the hook is executed
+// pre-commit and the op is committed when the hook exits 0.
+func TestWriteOpAndAutoCommitHookSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook scripts not supported on windows")
+	}
+	dir, paths := makeWriteRepo(t)
+	g := gitops.NewGitOps(dir)
+	env, body := fixedEnvelope(t)
+
+	hookPath := filepath.Join(paths.Hooks, "post-claim")
+	marker := filepath.Join(dir, "hook-fired")
+	script := "#!/bin/sh\ntouch " + marker + "\nexit 0\n"
+	if err := os.WriteFile(hookPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write hook: %v", err)
+	}
+
+	if err := WriteOpAndAutoCommit(env, body, paths, g, WriteOpts{}); err != nil {
+		t.Fatalf("WriteOpAndAutoCommit: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("hook did not fire: %v", err)
+	}
+	subj := strings.TrimSpace(runOut(t, dir, "git", "log", "-1", "--format=%s"))
+	if !strings.HasPrefix(subj, "act-op: ") {
+		t.Errorf("expected commit; got %q", subj)
+	}
+}
+
+// TestWriteOpAndAutoCommitHookFailure verifies a non-zero hook exit
+// results in HookFailedError, the staged op is unstaged, the op file is
+// deleted, and no commit lands.
+func TestWriteOpAndAutoCommitHookFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell hook scripts not supported on windows")
+	}
+	dir, paths := makeWriteRepo(t)
+	g := gitops.NewGitOps(dir)
+	env, body := fixedEnvelope(t)
+	headBefore := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "HEAD"))
+
+	hookPath := filepath.Join(paths.Hooks, "post-claim")
+	script := "#!/bin/sh\nprintf 'boom' 1>&2\nexit 1\n"
+	if err := os.WriteFile(hookPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write hook: %v", err)
+	}
+
+	err := WriteOpAndAutoCommit(env, body, paths, g, WriteOpts{})
+	var herr *hooks.HookFailedError
+	if !errors.As(err, &herr) {
+		t.Fatalf("err = %v; want *hooks.HookFailedError", err)
+	}
+	if herr.Code != 1 {
+		t.Errorf("Code = %d; want 1", herr.Code)
+	}
+	if herr.StderrTail != "boom" {
+		t.Errorf("StderrTail = %q; want %q", herr.StderrTail, "boom")
+	}
+	// No commit must have been created.
+	headAfter := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "HEAD"))
+	if headBefore != headAfter {
+		t.Errorf("HEAD moved %s -> %s; expected unchanged", headBefore, headAfter)
+	}
+	// Op file deleted.
+	matches, _ := filepath.Glob(filepath.Join(paths.Ops, env.IssueID, "*", "*.json"))
+	if len(matches) != 0 {
+		t.Errorf("expected op file removed; found %v", matches)
+	}
+	// Staging area must not contain the op file. (Other untracked
+	// `.act/` artifacts from InitDirs are unrelated to the hook
+	// failure; we look for staged adds specifically.)
+	staged := strings.TrimSpace(runOut(t, dir, "git", "diff", "--cached", "--name-only"))
+	if staged != "" {
+		t.Errorf("staging area not clean after hook failure: %q", staged)
 	}
 }
 

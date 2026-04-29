@@ -3,11 +3,18 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/gitops"
+	"github.com/aac/act/internal/hooks"
 	"github.com/aac/act/internal/op"
 )
+
+// hookTimeout is the wall-clock limit applied to a single hook
+// invocation, per spec §"Hooks contract" step 7.
+const hookTimeout = 5 * time.Second
 
 // WriteOpts encodes the universal-flag knobs that apply to every write
 // command (per spec §4 + the act-5ca9 acceptance criteria). Its fields are
@@ -69,6 +76,29 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	// Step 3: stage + commit.
 	if err := gops.StageOpFile(opPath); err != nil {
 		return fmt.Errorf("cli: stage: %w", err)
+	}
+	// Step 3a: run the matching hook (if any). Hooks fire pre-commit
+	// per spec §"Hooks contract"; on failure we unstage and delete the
+	// op file so the working tree returns to its pre-attempt state and
+	// bubble up the HookFailedError unchanged.
+	if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
+		opID, herr := env.Hash()
+		if herr != nil {
+			_ = unstage(gops, opPath)
+			return fmt.Errorf("cli: hash op for hook: %w", herr)
+		}
+		hctx := hooks.HookContext{
+			OpID:    opID,
+			OpType:  env.OpType,
+			IssueID: env.IssueID,
+			Phase:   hooks.PhasePreCommitOp,
+			OpJSON:  body,
+		}
+		if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
+			_ = unstage(gops, opPath)
+			_ = os.Remove(opPath)
+			return err
+		}
 	}
 	idShort := env.IssueID
 	if len(idShort) > 4 {
