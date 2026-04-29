@@ -8,7 +8,7 @@ acceptance_criteria:
   - "update_field with field='status' and value in {closed, in_progress} is rejected at write-time elsewhere (act-3bbe); apply layer rejects unknown field names by leaving state unchanged and recording a fold-time warning"
   - "tombstone sets state.tombstoned=true; subsequent ops on the same issue_id are parsed but skipped at the dispatch level (state unchanged after tombstone)"
   - "Adding a new op_version means adding a new registry entry; old entries remain so historical ops fold identically (verified by a golden test that pins op_version=1 forever)"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
