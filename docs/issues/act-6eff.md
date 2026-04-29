@@ -11,7 +11,7 @@ acceptance_criteria:
   - "Hooks do NOT fire on import (per §2)"
   - "Re-running on input with a previously-seen sha exits 0 with {imported: 0, reason: 'already_imported'}"
   - "act show / act log accept either the bootstrap id or the local act id; lookup walks .act/imports/*.json in lex order, first hit wins"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
