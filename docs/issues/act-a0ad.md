@@ -11,7 +11,7 @@ acceptance_criteria:
   - "Fold seeds from snapshot when snapshot tree_hash matches current ops-dir tree-hash up through as_of_hlc; otherwise full fold + index-divergence finding"
   - "Concurrent compaction loser observes contention silently and re-fires next op"
   - "compaction_locked under --json is emitted as a stdout warning, not an error envelope (per §5.D.4)"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

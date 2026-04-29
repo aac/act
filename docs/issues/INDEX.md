@@ -53,7 +53,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 - act-40ae [open] Doctor checks (deps: act-912f, act-9824, act-296e, act-5ca9)
 - act-6eff [open] Bootstrap importer (deps: act-65e6, act-5651, act-bdc8, act-03f6)
-- act-a0ad [open] Compaction (deps: act-a1f6, act-c9f0, act-5ca9)
+- act-a0ad [closed] Compaction (deps: act-a1f6, act-c9f0, act-5ca9)
 
 ## Phase 6: MCP surface
 
