@@ -9,7 +9,7 @@ acceptance_criteria:
   - "Default commit message format is exactly `act-op: <issue_id_short> <op_type>` where issue_id_short is the prefix of the issue id matching the shortest-unique-prefix at write time (or full 16 hex for new ids)"
   - "Reads `.act/config.json` for auto_commit and auto_push booleans; flags override config; --no-commit overrides auto_commit=true"
   - "On commit failure, the staged op file is unstaged via `git restore --staged <op_path>` and the op file is left on disk (writer surfaces the git error to caller; exit 8 with op_invalid)"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

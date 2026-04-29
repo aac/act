@@ -31,7 +31,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 3: Auto-commit, hooks, schema migration
 
-- act-5ca9 [open] Auto-commit and push policy (deps: act-6ec9, act-9824)
+- act-5ca9 [closed] Auto-commit and push policy (deps: act-6ec9, act-9824)
 - act-ce9f [open] Hooks runtime contract (deps: act-c9f0, act-5ca9)
 - act-5af9 [closed] Op-schema migration (deps: act-3bbe, act-c9f0)
 
