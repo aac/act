@@ -62,6 +62,8 @@ func main() {
 		os.Exit(runCreate(args))
 	case "close":
 		os.Exit(runClose(args))
+	case "update":
+		os.Exit(runUpdate(args))
 	case "doctor":
 		os.Exit(runDoctor(args))
 	case "migrate":
@@ -77,7 +79,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, dep add, doctor")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, update, dep add, doctor")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
