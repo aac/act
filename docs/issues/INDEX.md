@@ -27,7 +27,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 - act-296e [closed] Per-field LWW with status/accept/deps exceptions (deps: act-c9f0)
 - act-9824 [closed] Atomic claim protocol (deps: act-296e)
 - act-a1f6 [closed] Fold checkpoint (deps: act-296e)
-- act-912f [open] SQLite index schema and rebuild (deps: act-296e, act-a1f6)
+- act-912f [closed] SQLite index schema and rebuild (deps: act-296e, act-a1f6)
 
 ## Phase 3: Auto-commit, hooks, schema migration
 
