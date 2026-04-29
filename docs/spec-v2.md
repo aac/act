@@ -1156,5 +1156,5 @@ The `act_next` claim-loss backoff jitter MUST be uniform random in `[0.75x, 1.25
 ### 5.D.4 `compaction_locked` is a stdout warning under `--json`; error envelope reserved for non-zero exits
 Under `--json`, `compaction_locked` MUST be emitted on stdout as `{"ok": true, "warning": "compaction_locked", "details": {...}}`. The `error` envelope is reserved for non-zero exits. The error-table row for `compaction_locked` belongs in a separate "warnings" subsection.
 
-### 5.D.5 MCP test 7.5 budget is `[2.0s, 3.0s]` with exactly 3 claim attempts via injected clock
-MCP E2E test 7.5 MUST assert that total elapsed time falls in `[2.0s, 3.0s]` and that exactly 3 claim attempts were made. Observation MUST occur via a deterministic clock injected into the server.
+### 5.D.5 MCP test 7.5 budget reconciled with jitter math; exactly 3 claim attempts via injected clock
+The base delay sum is `100ms + 400ms + 1.6s = 2.1s`; with per-attempt uniform jitter `[0.75x, 1.25x]` the achievable sleep range is `[1.575s, 2.625s]`. MCP E2E test 7.5 MUST inject a deterministic clock AND a deterministic jitter source so the test asserts exact, reproducible values: jitter sources MUST be seeded to produce `(1.0x, 1.0x, 1.0x)` (no jitter) and total elapsed sleep MUST equal `2.1s ± 50ms`. Per-attempt work time (fold + git ops) is excluded from the budget by using the injected clock to advance only on sleep; exactly 3 claim attempts MUST be observed.
