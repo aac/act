@@ -338,6 +338,17 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		}, 1
 	}
 
+	// Refresh the live SQLite index for the child issue so doctor's
+	// index-divergence check passes immediately after a successful
+	// dep add. The earlier idx handle is already closed by the deferred
+	// close above; RefreshIndexForIssue opens a fresh handle.
+	if err := RefreshIndexForIssue(paths, childFull); err != nil {
+		return DepAddErrorOutput{
+			Error:   "index_update_failed",
+			Message: err.Error(),
+		}, 1
+	}
+
 	// Step 7: success envelope. committed mirrors !NoCommit.
 	return DepAddResult{
 		OK:        true,

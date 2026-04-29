@@ -438,6 +438,16 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
+	// Refresh the live SQLite index so doctor's index-divergence check
+	// passes immediately after a successful update. The op log on disk
+	// remains the source of truth; the index is a derived cache.
+	if err := RefreshIndexForIssue(paths, full); err != nil {
+		return UpdateErrorOutput{
+			Error:   "index_update_failed",
+			Message: err.Error(),
+		}, 1
+	}
+
 	return UpdateResult{
 		ID:         full,
 		OpsWritten: len(envelopes),
@@ -494,6 +504,15 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		}, 1
 	}
 	if res.Claimed {
+		// Refresh the live SQLite index so doctor's index-divergence check
+		// passes immediately after a successful claim. Loss path skips the
+		// refresh because no op was written.
+		if rerr := RefreshIndexForIssue(paths, res.IssueID); rerr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_update_failed",
+				Message: rerr.Error(),
+			}, 1
+		}
 		return UpdateClaimResult{
 			OK:         true,
 			Claimed:    true,

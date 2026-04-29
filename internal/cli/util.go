@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hooks"
+	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
 
@@ -211,6 +213,35 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 		if err := gops.Push(); err != nil {
 			return fmt.Errorf("cli: push: %w", err)
 		}
+	}
+	return nil
+}
+
+// RefreshIndexForIssue refolds a single issue from on-disk ops and upserts
+// the resulting state into the live SQLite index at paths.IndexDB. Call this
+// after a successful op write so the index stays in sync with the op log
+// without requiring a doctor --fix rebuild. Errors are surfaced verbatim;
+// callers typically ignore them (since the op log is the source of truth)
+// but may choose to log them for observability.
+//
+// If the index file does not yet exist or the schema has not been applied,
+// this helper opens, applies, and closes a handle on each call. The cost is
+// dominated by the per-issue fold, which is bounded by the issue's op count.
+func RefreshIndexForIssue(paths config.LayoutPaths, issueID string) error {
+	state, err := fold.FoldIssue(paths.Ops, issueID, fold.ApplyDispatch)
+	if err != nil {
+		return fmt.Errorf("cli: refresh index: fold %s: %w", issueID, err)
+	}
+	idx, err := index.Open(paths.IndexDB)
+	if err != nil {
+		return fmt.Errorf("cli: refresh index: open: %w", err)
+	}
+	defer func() { _ = idx.Close() }()
+	if err := idx.ApplySchema(); err != nil {
+		return fmt.Errorf("cli: refresh index: apply schema: %w", err)
+	}
+	if err := idx.Upsert(state); err != nil {
+		return fmt.Errorf("cli: refresh index: upsert %s: %w", issueID, err)
 	}
 	return nil
 }

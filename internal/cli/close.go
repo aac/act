@@ -326,6 +326,18 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}
 	}
 
+	// Refresh the live SQLite index so it reflects the post-close state
+	// without requiring a doctor --fix rebuild. The op log on disk is the
+	// source of truth; a refresh failure here is non-fatal but is surfaced
+	// as a write failure since the contract is that index-divergence is
+	// zero after a successful close.
+	if err := RefreshIndexForIssue(paths, full); err != nil {
+		return CloseErrorOutput{
+			Error:   "index_update_failed",
+			Message: err.Error(),
+		}, 1
+	}
+
 	return CloseResult{
 		ID:         full,
 		ShortID:    short,

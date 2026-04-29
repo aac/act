@@ -304,6 +304,16 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
+	// Refresh the live SQLite index so doctor's index-divergence check
+	// passes immediately after a successful create. The op log on disk is
+	// the source of truth; the index is a derived cache.
+	if err := RefreshIndexForIssue(paths, issueID); err != nil {
+		return CreateErrorOutput{
+			Error:   "index_update_failed",
+			Message: err.Error(),
+		}, 1
+	}
+
 	// Step 8: success envelope. The short id mirrors the on-disk prefix
 	// of the issue id (the first 4 hex chars after `act-`).
 	short := issueID
