@@ -10,7 +10,7 @@ acceptance_criteria:
   - "ISO formatter `FormatWall(ms) string` emits `YYYY-MM-DDTHH:MM:SS.sssZ` (24 chars exact, millisecond precision, always `Z`)."
   - "Comparator `Less(a, b HLC) bool` orders lexicographically by `(wall, logical)`; equal `(wall, logical)` returns false (tiebreak is op_hash, handled by callers)."
   - "Property test on 10 000 random sequences shows monotonically non-decreasing HLCs out of `Send`/`Receive`."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
