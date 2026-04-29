@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/aac/act/internal/cli"
+	_ "github.com/aac/act/internal/fold" // registers op_version=1 in the op-package dispatch registry
+	"github.com/aac/act/internal/op"
 )
 
 func main() {
@@ -29,6 +31,8 @@ func main() {
 		os.Exit(runVersion(args))
 	case "log":
 		os.Exit(runLog(args))
+	case "migrate":
+		os.Exit(runMigrate(args))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
@@ -229,6 +233,40 @@ func emitLogError(asJSON bool, payload map[string]any) {
 	if e, _ := payload["error"].(string); e != "" {
 		fmt.Fprintln(os.Stderr, e)
 	}
+}
+
+// runMigrate dispatches the hidden `act migrate` subcommand. It is plumbed
+// for forward compatibility with op-schema migrations (see issue act-5af9)
+// but is not advertised in user docs while the registry remains empty.
+//
+// Output is always JSON: either a MigrateOutput payload on success or a
+// MigrateError envelope on failure. Exit codes follow op.RunMigrate.
+func runMigrate(args []string) int {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	from := fs.Int("from", 0, "source op_version (must be > 0)")
+	to := fs.Int("to", 0, "target op_version (must be > from)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	root, err := findRepoRoot()
+	if err != nil {
+		data, _ := json.Marshal(map[string]any{
+			"error":   "not_in_git",
+			"message": err.Error(),
+		})
+		fmt.Println(string(data))
+		return 3
+	}
+
+	out, code := op.RunMigrate(root, *from, *to)
+	data, jerr := json.Marshal(out)
+	if jerr != nil {
+		fmt.Fprintf(os.Stderr, "act migrate: json marshal: %v\n", jerr)
+		return 1
+	}
+	fmt.Println(string(data))
+	return code
 }
 
 func runVersion(args []string) int {
