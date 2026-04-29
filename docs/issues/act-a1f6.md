@@ -9,7 +9,7 @@ acceptance_criteria:
   - "Missing subtrees in the current tree drop the corresponding issue from the new checkpoint (per §5.B.5)"
   - "Checkpoint reuse on a stale checkpoint produces fold output byte-identical to a cold-cache fold (the determinism contract test §3.6.3)"
   - "Crash mid-checkpoint-write leaves either the old checkpoint intact or a temp file ignored by readers; atomic via write-temp + fsync + rename"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
