@@ -12,8 +12,9 @@ acceptance_criteria:
   - "Importer (act-6eff) and compaction (act-a0ad) smoke runs are part of release verification"
   - "Release notes are auto-drafted from the tagged commit range and require human edit before publish"
   - "Failed release leaves no partial artifacts in the published location"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
+closed_at: 2026-04-29T00:00:00Z
 ---
 
 # Cross-platform builds and release pipeline

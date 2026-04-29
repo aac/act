@@ -13,7 +13,11 @@ import (
 )
 
 // BinaryVersion is the human-readable version of the act binary.
-const BinaryVersion = "0.1.0"
+// It is declared as a var (rather than const) so release builds can override
+// it via the linker:
+//
+//	go build -ldflags "-X github.com/aac/act/internal/cli.BinaryVersion=v1.2.3" ...
+var BinaryVersion = "0.1.0"
 
 // WriterVersion is re-exported from op so the CLI has a single source of truth
 // for the writer-version string ops are stamped with.
