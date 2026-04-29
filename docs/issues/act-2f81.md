@@ -12,7 +12,7 @@ acceptance_criteria:
   - "act_block input: {id:string, blocked_by:string, reason?:string}; writes set-status=blocked then dep-add type=blocks atomically (staged writes, single-commit per §5.D.2)"
   - "act_block output: {ok:true, id, blocked_by, ops_written:['set-status','dep-add']}"
   - "All three composed tools mark themselves recommended in tool descriptions; the 1:1 surface is described as escape hatches"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

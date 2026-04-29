@@ -297,6 +297,12 @@ func (s *Server) invoke(name string, args json.RawMessage) (any, bool) {
 		return s.callDoctor(args)
 	case "act_version":
 		return s.callVersion(args)
+	case "act_next":
+		return s.callNext(args)
+	case "act_finish":
+		return s.callFinish(args)
+	case "act_block":
+		return s.callBlock(args)
 	default:
 		return errEnvelope("unknown_tool", fmt.Sprintf("unknown tool %q", name)), true
 	}
@@ -347,7 +353,8 @@ func (s *Server) writeToolError(enc *json.Encoder, id json.RawMessage, kind, msg
 // these are blocked when the server was started with --read-only.
 func isWriteTool(name string) bool {
 	switch name {
-	case "act_init", "act_create", "act_update", "act_close", "act_dep_add":
+	case "act_init", "act_create", "act_update", "act_close", "act_dep_add",
+		"act_next", "act_finish", "act_block":
 		return true
 	}
 	return false
@@ -401,7 +408,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_update",
-			Description: "Update an issue's fields, accept criteria, or claim.",
+			Description: "Escape hatch: update an issue's fields, accept criteria, or claim. Prefer act_next for the claim flow.",
 			InputSchema: schemaObject(map[string]any{
 				"id":           schemaString("Issue id or prefix."),
 				"status":       schemaString("New status (open|in_progress|blocked|closed)."),
@@ -421,7 +428,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_close",
-			Description: "Close an issue.",
+			Description: "Escape hatch: close an issue. Prefer act_finish for the recommended workflow.",
 			InputSchema: schemaObject(map[string]any{
 				"id":        schemaString("Issue id or prefix."),
 				"reason":    schemaString("Optional close reason (≤4096 bytes)."),
@@ -432,7 +439,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_dep_add",
-			Description: "Add a dependency edge from child to parent.",
+			Description: "Escape hatch: add a dependency edge from child to parent. Prefer act_block when adding a blocking edge.",
 			InputSchema: schemaObject(map[string]any{
 				"child":     schemaString("Child issue id or prefix."),
 				"parent":    schemaString("Parent issue id or prefix."),
@@ -444,7 +451,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_ready",
-			Description: "List the ready set: open issues with no unclosed blocking deps.",
+			Description: "Escape hatch: list the ready set: open issues with no unclosed blocking deps. Prefer act_next which combines ready + claim + show.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Restrict to descendants of this issue id/prefix."),
 				"limit": schemaInteger("Maximum issues to return (default 50)."),
@@ -482,6 +489,30 @@ func (s *Server) tools() []toolDescriptor {
 			InputSchema: schemaObject(map[string]any{
 				"check_repo": schemaBool("Walk .act/ops/ and report max writer_version."),
 			}, nil),
+		},
+		{
+			Name:        "act_next",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state. Wraps act_ready + act_update --claim + act_show with bounded retry on claim loss (§5.D.1).",
+			InputSchema: schemaObject(map[string]any{
+				"under": schemaString("Optional id prefix; restrict to descendants."),
+			}, nil),
+		},
+		{
+			Name:        "act_finish",
+			Description: "Recommended: close an issue with the act-XXXX commit-message marker so doctor's orphan-close check can correlate. Wraps act_close.",
+			InputSchema: schemaObject(map[string]any{
+				"id":     schemaString("Issue id or prefix (required)."),
+				"reason": schemaString("Optional close reason."),
+			}, []string{"id"}),
+		},
+		{
+			Name:        "act_block",
+			Description: "Recommended: atomically mark an issue blocked AND record a blocks-edge in a single git commit (§5.D.2). Use this instead of issuing act_update + act_dep_add separately.",
+			InputSchema: schemaObject(map[string]any{
+				"id":         schemaString("Issue to mark blocked (required)."),
+				"blocked_by": schemaString("Issue that blocks (required)."),
+				"reason":     schemaString("Optional reason."),
+			}, []string{"id", "blocked_by"}),
 		},
 	}
 }

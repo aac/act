@@ -131,6 +131,13 @@ type loggedOp struct {
 	fullHash string
 }
 
+// ListIssueIDs is the exported alias for listIssueIDs, used by sibling
+// packages (e.g. internal/mcp) that compose multi-op writes and need to
+// resolve ids against the on-disk universe.
+func ListIssueIDs(opsDir string) ([]string, error) {
+	return listIssueIDs(opsDir)
+}
+
 // listIssueIDs returns the full ids known to the repo by enumerating the
 // per-issue subdirectories under `.act/ops/`. A missing opsDir is reported as
 // an empty list, not an error: the caller distinguishes this from a corrupt

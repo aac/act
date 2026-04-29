@@ -25,7 +25,10 @@ var validIssueTypes = map[string]bool{
 }
 
 // validUpdateFields is the closed set of fields that update_field may target.
-// "status" is intentionally excluded — see claim/close.
+// "status" is included but constrained: the value must NOT be "closed" or
+// "in_progress" per §5.A.4 (those transitions go through close/claim).
+// status=blocked and status=open are reachable via update_field; act_block
+// in particular relies on this.
 var validUpdateFields = map[string]bool{
 	"title":       true,
 	"description": true,
@@ -33,6 +36,14 @@ var validUpdateFields = map[string]bool{
 	"assignee":    true,
 	"type":        true,
 	"parent":      true,
+	"status":      true,
+}
+
+// statusUpdateFieldForbidden enumerates status values that MUST go through
+// claim/close ops rather than update_field, per §5.A.4.
+var statusUpdateFieldForbidden = map[string]bool{
+	"closed":      true,
+	"in_progress": true,
 }
 
 // validEdgeTypes is the closed set of dependency edge types.
@@ -101,14 +112,23 @@ type UpdateFieldPayload struct {
 
 // Validate implements the update_field write-time rules.
 func (p UpdateFieldPayload) Validate() error {
-	if p.Field == "status" {
-		return fmt.Errorf("op: update_field.field %q: status MUST go through claim/close", p.Field)
-	}
 	if !validUpdateFields[p.Field] {
 		return fmt.Errorf("op: update_field.field %q: not in valid set", p.Field)
 	}
 	if len(p.Value) == 0 {
 		return fmt.Errorf("op: update_field.value is empty")
+	}
+	if p.Field == "status" {
+		// §5.A.4: status=closed and status=in_progress MUST go through
+		// the close op and claim op respectively. status=blocked and
+		// status=open are reachable via update_field.
+		var s string
+		if err := json.Unmarshal(p.Value, &s); err != nil {
+			return fmt.Errorf("op: update_field.value (status): %w", err)
+		}
+		if statusUpdateFieldForbidden[s] {
+			return fmt.Errorf("op: update_field status=%s: MUST go through claim/close", s)
+		}
 	}
 	return nil
 }
