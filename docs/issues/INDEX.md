@@ -42,7 +42,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 - act-5bf7 [closed] act list command (deps: act-912f, act-6991)
 - act-beca [closed] act show command (deps: act-912f, act-6991)
 - act-5651 [open] act update command (deps: act-3bbe, act-5ca9, act-912f, act-ce9f)
-- act-bdc8 [open] act close command (deps: act-3bbe, act-5ca9, act-912f, act-ce9f, act-296e)
+- act-bdc8 [closed] act close command (deps: act-3bbe, act-5ca9, act-912f, act-ce9f, act-296e)
 - act-03f6 [closed] act dep add command (deps: act-3bbe, act-5ca9, act-912f)
 - act-e1d4 [closed] act ready command (deps: act-912f, act-6991, act-296e)
 - act-0a22 [closed] act search command (deps: act-912f)
