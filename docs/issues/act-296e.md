@@ -9,7 +9,7 @@ acceptance_criteria:
   - "deps is a grow-shrink set keyed by (target_id, edge_type); add_dep and remove_dep are commutative across nodes"
   - "closed_at and closed_reason are writable only by ops whose payload also carries status=closed; LWW thereafter"
   - "Per-field last_hlc never decreases for a given (issue_id, field) across any input order (HLC monotonicity, §3.6 test 5)"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
