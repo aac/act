@@ -35,6 +35,8 @@ func main() {
 		os.Exit(runList(args))
 	case "search":
 		os.Exit(runSearch(args))
+	case "show":
+		os.Exit(runShow(args))
 	case "ready":
 		os.Exit(runReady(args))
 	case "create":
