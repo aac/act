@@ -8,7 +8,7 @@ acceptance_criteria:
   - "JSON output: `{\"ok\": true, \"id\": \"act-<16hex>\", \"prefix\": \"act-<short>\", \"op_id\": \"<hex>\", \"committed\": <bool>, \"pushed\": <bool>}` plus `warnings: [\"parent_closed\"]` per §5.C.4 when `--parent` resolves to a closed issue."
   - "`post-create` hook runs after the op file is written and before the op-commit; non-zero hook exit returns command exit 1."
   - "Universal write flags (`--no-commit`, `--push`, `--isolated`, `--verify`) are honored; conflict combinations exit 2."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
