@@ -118,3 +118,29 @@ Two real defects were uncovered by the smoke flow that block calling this a clea
 2. **Flags after the positional argument in `act create` are dropped silently**, so the spec's literal `act create "title" -p 1 --json` invocation does not emit JSON. This is a CLI ergonomics regression visible to every user of the documented command form.
 
 Build, unit tests (14/14 packages), gofmt, vet, cross-platform builds (4/4 targets), MCP scaffold (initialize + 15 tools), and concurrency tests (8/8) all pass. The defects above are scoped, reproducible, and have clear remediation paths, but they prevent an unconditional PASS verdict for the verification stage.
+
+## Re-verification (after fix)
+
+**Date:** 2026-04-29
+**Fix commit:** `5f34d61d79f13364c22ec81f97503c1d76333c1b` (`act-64af-followup: fix index update after close`)
+
+### Re-run results
+
+- `CGO_ENABLED=0 go build -o /tmp/act ./cmd/act/` — exit 0.
+- `go test ./...` — all 14 packages pass (cached, no failures).
+- Smoke flow in fresh tempdir (init + create -p 1 + update --claim --isolated + close --reason verified + doctor):
+
+```
+--- init ---     {"ok":true,"act_dir":"/tmp/tmp.GVXE10hGac/.act","node_id":"bc776bfd"}
+--- create ---   {"id":"act-3295","short_id":"act-3295","title":"verify task"}
+--- update ---   {"ok":true,"claimed":true,"id":"act-3295","winner":"bc776bfd","ops_written":["claim"]}
+--- close ---    {"id":"act-3295","short_id":"act-3295","ops_written":1,"committed":true,"reason":"verified"}
+--- doctor ---   {"findings":null,"count":0}
+EXIT=0
+```
+
+`act doctor` now reports `count: 0` (no `index-divergence`) immediately after a normal close. The fix from commit `5f34d61` lands cleanly and resolves the blocker identified in the original verification.
+
+### Updated overall verdict: **PASS**
+
+The medium-severity flag-parsing defect (flags after the positional argument in `act create` are silently dropped) remains a known issue tracked in `docs/followups/act-65e6-followup-flag-parser.md`. It is a CLI ergonomics regression with documented workarounds (place flags before the positional title) and is **not a blocker** for v0.1.0.
