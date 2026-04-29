@@ -9,8 +9,9 @@ acceptance_criteria:
   - "No floats are accepted: `Marshal` returns an error if any number in the input is non-integer."
   - "Round-trip determinism test: for 10 000 random envelopes, `Marshal(Unmarshal(b))` returns bytes equal to `b`."
   - "`act fmt-op` subcommand reads any op file and rewrites it through `Marshal`; run twice in a row, the second invocation produces no diff."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
+closed_at: 2026-04-29T00:00:00Z
 ---
 
 # Canonical JSON serialization
