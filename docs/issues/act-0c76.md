@@ -8,7 +8,7 @@ acceptance_criteria:
   - "Tests use a shared bare repo on the local filesystem and spawn real git/act subprocesses (no in-process simulation)"
   - "Each test cleans its working trees and the bare repo between iterations"
   - "Failures dump op-file listings and HLC sequences to aid debugging"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
