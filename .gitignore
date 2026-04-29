@@ -1,0 +1,15 @@
+# Built binary
+/act
+act.exe
+
+# Go build artifacts
+/vendor/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor state
+.vscode/
+.idea/
+*.swp
