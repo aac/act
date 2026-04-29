@@ -100,6 +100,12 @@ func Open(dbPath string) (*Index, error) {
 // expected DDL contents.
 func (i *Index) Schema() string { return schemaSQL }
 
+// DB exposes the underlying *sql.DB so other packages (e.g. cli/search) can
+// run ad-hoc queries — notably FTS5 MATCH joins — without re-opening the
+// database. Callers must not Close the returned handle; ownership remains
+// with the Index.
+func (i *Index) DB() *sql.DB { return i.db }
+
 // ApplySchema creates tables and indices if missing. It is safe to call on a
 // freshly opened Index or one that already has the schema applied.
 func (i *Index) ApplySchema() error {
