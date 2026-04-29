@@ -10,7 +10,7 @@ acceptance_criteria:
   - "Each job posts a single PASS/FAIL summary to the run for an automated agent to read"
   - "Property tests, golden tests, fuzz corpus replay, and concurrency tests all execute in at least one job (typically CC laptop)"
   - "Pipeline stages: lint → unit/property/golden → fuzz-corpus-replay → concurrency → smoke (matrix)"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
