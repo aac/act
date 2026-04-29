@@ -9,7 +9,7 @@ acceptance_criteria:
   - "`add_dep` validates `edge_type` in `{blocks, relates, supersedes}`; `remove_dep` accepts any `parent_id` and is documented as idempotent."
   - "`remove_accept` validates exactly one of `index` (>=0) or `text` (1..500 chars) is present; both-or-neither errors with `ErrRemoveAcceptShape`."
   - "Round-trip: `Marshal(Unmarshal(raw))` byte-equal for all 12 op types in `testdata/payloads/`."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
