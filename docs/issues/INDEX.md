@@ -64,6 +64,6 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 - act-a64e [closed] Property tests and fuzzer (deps: act-9362, act-296e, act-9cae, act-b545)
 - act-9b55 [closed] Golden tests for fold determinism (deps: act-9362, act-c9f0, act-a1f6)
-- act-0c76 [open] Concurrency and rebase contention tests (deps: act-9824, act-5ca9, act-2f81)
+- act-0c76 [closed] Concurrency and rebase contention tests (deps: act-9824, act-5ca9, act-2f81)
 - act-2e8d [open] CI matrix for three target environments (deps: act-9cad, act-a64e, act-9b55, act-0c76)
 - act-64af [open] Cross-platform builds and release pipeline (deps: act-2e8d, act-2aa3, act-2f81, act-40ae, act-6eff, act-a0ad)
