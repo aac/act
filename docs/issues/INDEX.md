@@ -11,7 +11,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 1: Core primitives
 
-- act-b545 [open] Canonical JSON serialization (deps: act-9cad)
+- act-b545 [closed] Canonical JSON serialization (deps: act-9cad)
 - act-9cae [closed] Hybrid Logical Clock implementation (deps: act-9cad)
 - act-1396 [closed] On-disk layout and .act/config.json (deps: act-9cad)
 - act-bd70 [open] ID generation and nonce protocol (deps: act-b545, act-1396)
