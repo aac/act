@@ -7,7 +7,7 @@ acceptance_criteria:
   - "Without `--check-repo`, `act version` works outside a `.act/` repo and exits 0."
   - "JSON output: `{\"ok\": true, \"binary_version\": \"<v>\", \"writer_version\": \"<v>\", \"schema_version\": <int>, \"repo_max_writer_version\": \"<v>\"|null}`."
   - "`--check-repo` exits 3 if `.act/` is missing; without `--check-repo`, missing `.act/` is not an error."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

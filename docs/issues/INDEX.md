@@ -22,7 +22,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 2: Fold engine
 
-- act-9362 [open] Op-fold algorithm core (deps: act-3bbe, act-9cae, act-6ec9)
+- act-9362 [closed] Op-fold algorithm core (deps: act-3bbe, act-9cae, act-6ec9)
 - act-c9f0 [open] Per-op-type apply functions (deps: act-9362)
 - act-296e [open] Per-field LWW with status/accept/deps exceptions (deps: act-c9f0)
 - act-9824 [open] Atomic claim protocol (deps: act-296e)
@@ -47,7 +47,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 - act-e1d4 [open] act ready command (deps: act-912f, act-6991, act-296e)
 - act-0a22 [open] act search command (deps: act-912f)
 - act-5515 [open] act log command (deps: act-6ec9, act-6991)
-- act-2aa3 [open] act version command (deps: act-9cad)
+- act-2aa3 [closed] act version command (deps: act-9cad)
 
 ## Phase 5: Doctor, bootstrap, compaction
 
