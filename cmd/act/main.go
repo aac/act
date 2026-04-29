@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/aac/act/internal/cli"
 	_ "github.com/aac/act/internal/fold" // registers op_version=1 in the op-package dispatch registry
+	"github.com/aac/act/internal/mcp"
 	"github.com/aac/act/internal/op"
 )
 
@@ -70,6 +72,8 @@ func main() {
 		os.Exit(runMigrate(args))
 	case "import":
 		os.Exit(runImport(args))
+	case "mcp":
+		os.Exit(runMCP(args))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
@@ -81,7 +85,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, update, dep add, doctor, import")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, update, dep add, doctor, import, mcp")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
@@ -591,4 +595,45 @@ func emitShowError(asJSON bool, payload map[string]any) {
 	if e, _ := payload["error"].(string); e != "" {
 		fmt.Fprintln(os.Stderr, e)
 	}
+}
+
+// runMCP dispatches `act mcp`. It launches a stdio MCP server backed by
+// the cli package. Flags:
+//
+//	--read-only       refuse all write tools regardless of per-call args
+//	--workdir DIR     chdir before serving (overrides cwd for repo
+//	                  resolution); required when launched outside a repo.
+//
+// Exit codes follow spec: 0 clean shutdown, 2 bad flag, 3 missing .act/.
+func runMCP(args []string) int {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	readOnly := fs.Bool("read-only", false, "refuse all write tools")
+	workdir := fs.String("workdir", "", "chdir before serving; overrides cwd for repo resolution")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	if *workdir != "" {
+		if err := os.Chdir(*workdir); err != nil {
+			fmt.Fprintf(os.Stderr, "act mcp: chdir %s: %v\n", *workdir, err)
+			return 2
+		}
+	}
+
+	root, err := findRepoRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "act mcp: %v\n", err)
+		return 3
+	}
+	if _, err := os.Stat(filepath.Join(root, ".act")); err != nil {
+		fmt.Fprintf(os.Stderr, "act mcp: missing .act/ at %s: run `act init` first\n", root)
+		return 3
+	}
+
+	srv := mcp.NewServer(root, *readOnly, os.Stdin, os.Stdout)
+	if err := srv.Run(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "act mcp: %v\n", err)
+		return 1
+	}
+	return 0
 }
