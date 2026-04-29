@@ -1,16 +1,16 @@
 .PHONY: build test lint fmt tidy
 
 build:
-	@echo "build: deferred to act-9cad"
+	go build ./...
 
 test:
-	@echo "test: deferred to act-9cad"
+	go test ./...
 
 lint:
-	@echo "lint: deferred to act-9cad"
+	go vet ./...
 
 fmt:
-	@echo "fmt: deferred to act-9cad"
+	gofmt -w .
 
 tidy:
-	@echo "tidy: deferred to act-9cad"
+	go mod tidy

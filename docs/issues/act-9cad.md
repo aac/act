@@ -9,8 +9,9 @@ acceptance_criteria:
   - "GitHub Actions workflow `.github/workflows/ci.yml` runs build + vet + test on `ubuntu-latest` for every PR and push to `main`."
   - "CI uses `actions/setup-go@v5` pinned by SHA and caches the module download directory."
   - "CI fails if `go.mod` or `go.sum` would change after `go mod tidy` (drift check)."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
+closed_at: 2026-04-29T11:37:40Z
 ---
 
 # Go module and minimal CI
