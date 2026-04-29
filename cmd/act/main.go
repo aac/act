@@ -31,6 +31,8 @@ func main() {
 		os.Exit(runVersion(args))
 	case "log":
 		os.Exit(runLog(args))
+	case "search":
+		os.Exit(runSearch(args))
 	case "migrate":
 		os.Exit(runMigrate(args))
 	case "-h", "--help", "help":
@@ -44,7 +46,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, search")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
@@ -221,6 +223,84 @@ func emitLogError(asJSON bool, payload map[string]any) {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "act log: json marshal: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if msg, _ := payload["message"].(string); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	}
+	if e, _ := payload["error"].(string); e != "" {
+		fmt.Fprintln(os.Stderr, e)
+	}
+}
+
+// runSearch dispatches `act search <query>`. The repo root is resolved
+// from cwd; flag parsing follows the universal pattern used by the other
+// read commands.
+func runSearch(args []string) int {
+	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	in := fs.String("in", "all", "FTS5 column scope: title|desc|all")
+	status := fs.String("status", "", "comma-separated status filter")
+	limit := fs.Int("limit", 50, "maximum number of results")
+	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "act search: usage: act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]")
+		return 2
+	}
+	query := fs.Arg(0)
+
+	root, err := findRepoRoot()
+	if err != nil {
+		emitSearchError(*asJSON, map[string]any{
+			"error":   "not_in_git",
+			"message": err.Error(),
+		})
+		return 3
+	}
+
+	out, code := cli.RunSearch(root, query, cli.SearchOptions{
+		In:     *in,
+		Status: *status,
+		Limit:  *limit,
+		AsJSON: *asJSON,
+	})
+	if code != 0 {
+		m, _ := toMap(out)
+		emitSearchError(*asJSON, m)
+		return code
+	}
+
+	if *asJSON {
+		data, jerr := json.Marshal(out)
+		if jerr != nil {
+			fmt.Fprintf(os.Stderr, "act search: json marshal: %v\n", jerr)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	res, ok := out.(cli.SearchResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act search: unexpected output type %T\n", out)
+		return 1
+	}
+	fmt.Print(cli.FormatSearchHuman(res))
+	return 0
+}
+
+// emitSearchError mirrors emitLogError for the search subcommand.
+func emitSearchError(asJSON bool, payload map[string]any) {
+	if asJSON {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "act search: json marshal: %v\n", err)
 			return
 		}
 		fmt.Println(string(data))

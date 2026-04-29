@@ -7,7 +7,7 @@ acceptance_criteria:
   - "`--status` accepts a CSV filter; `--limit` defaults to 50."
   - "JSON output: `{\"ok\": true, \"count\": N, \"results\": [{id, prefix, title, snippet, rank}, ...]}` where `rank` is the FTS5 bm25 score (negative; closer to 0 is better)."
   - "FTS5 parse errors surface as exit 2 (usage); missing index exits 3; writer-version skew exits 4."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
