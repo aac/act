@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt tidy
+.PHONY: build test lint fmt tidy fuzz
 
 build:
 	go build ./...
@@ -14,3 +14,6 @@ fmt:
 
 tidy:
 	go mod tidy
+
+fuzz:
+	go test -fuzz=Fuzz -fuzztime=10s ./internal/fold/

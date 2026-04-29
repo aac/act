@@ -9,7 +9,7 @@ acceptance_criteria:
   - "Fuzz corpus is committed under testdata/fuzz/; new findings are added back to the corpus"
   - "All property tests run in CI on every PR (act-2e8d wires this)"
   - "Generator code is shared between property tests and fuzz so corpus reuses match"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
