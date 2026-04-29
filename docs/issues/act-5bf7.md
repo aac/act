@@ -7,7 +7,7 @@ acceptance_criteria:
   - "`--sort` accepts `priority|created_at|closed_at|id` with optional `:asc`/`:desc`; default sort is priority asc, created_at desc, then id asc as tie-breaker."
   - "JSON output: `{\"ok\": true, \"count\": N, \"issues\": [{id, prefix, title, status, priority, type, assignee, parent, created_at}, ...]}`."
   - "Empty result returns `count: 0` and exit 0; `--limit 0` or unknown sort field exits 2."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

@@ -31,6 +31,8 @@ func main() {
 		os.Exit(runVersion(args))
 	case "log":
 		os.Exit(runLog(args))
+	case "list":
+		os.Exit(runList(args))
 	case "search":
 		os.Exit(runSearch(args))
 	case "migrate":
@@ -46,7 +48,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, search")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
@@ -301,6 +303,87 @@ func emitSearchError(asJSON bool, payload map[string]any) {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "act search: json marshal: %v\n", err)
+			return
+		}
+		fmt.Println(string(data))
+		return
+	}
+	if msg, _ := payload["message"].(string); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+		return
+	}
+	if e, _ := payload["error"].(string); e != "" {
+		fmt.Fprintln(os.Stderr, e)
+	}
+}
+
+// runList dispatches `act list`. Flag set mirrors spec §act list. Output
+// rendering branches on --json: JSON renders the ListResult shape; the human
+// path uses cli.FormatListHuman.
+func runList(args []string) int {
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+	status := fs.String("status", "", "comma-separated status filter (open,in_progress,blocked,closed)")
+	assignee := fs.String("assignee", "", "exact-match assignee filter")
+	typ := fs.String("type", "", "issue type filter (task|bug|epic|chore)")
+	limit := fs.Int("limit", 200, "maximum number of issues to return")
+	sortFlag := fs.String("sort", "", "comma-separated sort keys; prefix with - for desc; default priority,-created_at")
+	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *limit == 0 {
+		fmt.Fprintln(os.Stderr, "act list: --limit 0 is not allowed")
+		return 2
+	}
+
+	root, err := findRepoRoot()
+	if err != nil {
+		emitListError(*asJSON, map[string]any{
+			"error":   "not_in_git",
+			"message": err.Error(),
+		})
+		return 3
+	}
+
+	out, code := cli.RunList(root, cli.ListOptions{
+		Status:   *status,
+		Assignee: *assignee,
+		Type:     *typ,
+		Limit:    *limit,
+		Sort:     *sortFlag,
+		AsJSON:   *asJSON,
+	})
+	if code != 0 {
+		m, _ := toMap(out)
+		emitListError(*asJSON, m)
+		return code
+	}
+
+	if *asJSON {
+		data, jerr := json.Marshal(out)
+		if jerr != nil {
+			fmt.Fprintf(os.Stderr, "act list: json marshal: %v\n", jerr)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	res, ok := out.(cli.ListResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act list: unexpected output type %T\n", out)
+		return 1
+	}
+	fmt.Print(cli.FormatListHuman(res))
+	return 0
+}
+
+// emitListError mirrors emitLogError for the list subcommand.
+func emitListError(asJSON bool, payload map[string]any) {
+	if asJSON {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "act list: json marshal: %v\n", err)
 			return
 		}
 		fmt.Println(string(data))
