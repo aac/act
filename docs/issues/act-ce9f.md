@@ -12,7 +12,7 @@ acceptance_criteria:
   - "Wall-clock timeout 5s; on timeout SIGTERM, 1s grace, then SIGKILL; treated as failure"
   - "On non-zero exit or timeout: run `git restore --staged <op-path>`, delete the op file, emit hook_failed error with stderr_tail = last 4096 bytes UTF-8-trimmed (per §5.D.3); exit 7"
   - "Hooks NEVER run on: act fold (read-only), replay/recovery, act import, fresh git clone — invariant: exactly once per logical op on the originating writer"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
