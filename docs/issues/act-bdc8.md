@@ -7,7 +7,7 @@ acceptance_criteria:
   - "Idempotent: closing an already-closed issue re-emits no op and exits 0; only a true conflict (per §2.3 LWW resolution for status) returns 1."
   - "JSON output: `{\"ok\": true, \"id\": \"...\", \"closed_at\": \"<rfc3339>\", \"closed_reason\": \"...\", \"committed\": <bool>, \"pushed\": <bool>}`."
   - "`--reason` >4KB exits 2; closing an issue with open children is allowed (surfaced separately by `doctor orphan-close`)."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
