@@ -1,38 +1,31 @@
 # act build status
 
-**Current stage:** 7 — Execution **complete**.
+**v0.1.0 complete, ready for human verification.**
 
-**Locked artifacts:**
+**Final tally:**
 - Brief: `docs/brief-v4.md` (4 review rounds; 38 challenges resolved)
 - Spec: `docs/spec-v2.md` (1160 lines, 3 review rounds; 21 ambiguities resolved)
-- Issues: `docs/issues/INDEX.md` + 40 `act-XXXX.md` files — **all 40 closed**.
+- Issues: 40 closed, 2 follow-ups filed (1 closed, 1 open)
+- Verification: `docs/verification.md` overall **PASS** (after index-divergence fix in commit `5f34d61`).
 
-**Last completed action:** Closed `act-64af` (Cross-platform builds and release
-pipeline) — the final issue. The release workflow, install script, Makefile
-`release-local` target, and ldflag-version smoke test all landed on
-`claude/implement-dispatcher-6k6sO`.
+**Tag:** `v0.1.0` on commit at HEAD.
 
-**Next action:** None — the build pipeline is exhausted. Remaining work is
-human-driven: cut the first `vMAJOR.MINOR.PATCH` tag to exercise
-`.github/workflows/release.yml` end-to-end, edit the auto-drafted release
-notes, and publish.
+**Known issues (non-blocking):**
+- `act-65e6-followup-flag-parser.md` (medium): Go's stdlib `flag` parser stops at the first positional, so spec-literal `act create "title" -p 1 --json` drops trailing flags. Workaround: pass flags before the positional.
 
-**Execution rules (per dispatcher prompt):**
-1. While open issues exist whose deps are all closed:
-   - Pick highest-priority ready issue.
-   - Spawn worker subagent with: implement, test per spec, commit, mark issue `status: closed` with `closed_at: <ISO>`.
-   - Verify the commit landed and issue is closed; if worker failed, file `act-XXXX-followup.md` and continue.
-2. Update INDEX.md status markers as issues close (`[open]` → `[closed]`).
+**Next human action:**
+- Review `docs/verification.md`.
+- Cut the first `v0.1.0` tag (already created here on the dispatcher branch) to exercise the release workflow end-to-end.
+- Decide on flag-parser remediation per the open follow-up.
 
-No open issues remain — rule (1) terminates.
-
-**Blockers:** None.
-
-**Resume protocol:** Stage 7 is closed. A new dispatcher session reading this
-file should observe `[closed]` for every entry in `docs/issues/INDEX.md` and
-exit cleanly without spawning a worker.
-
-**Notes:**
-- Subagent infrastructure has aggressive idle timeouts (~90–120s). Worker prompts must be self-contained, point to a single issue file, and instruct the worker to be efficient.
-- Stages 1–6 used many parallel narrow-scope subagents to dodge timeouts. Stage 7 used the same pattern: independent issues ran in parallel where deps permitted.
-- Final tally: 40 issues closed across 8 phases (Foundations through Release).
+**Pipeline summary:**
+| Stage | Result |
+|-------|--------|
+| 1. Brief review | 4 rounds; 25 + 8 + 5 + 0 challenges |
+| 2. Brief revision | brief-v2 → v3 → v4 |
+| 3. Spec writing | 4 parallel section-agents → spec.md (1098 lines) |
+| 4. Spec review | 4 parallel reviews → spec-review-1.md (20 ambiguities); rounds 2/3 found 1 + 0 |
+| 5. Spec revision | spec-v2.md (1160 lines) |
+| 6. Decomposition | INDEX.md + 40 issue files |
+| 7. Execution | 40/40 closed; ~30 worker spawns over 3 days of wall time |
+| 8. Final verification | Initial FAIL (2 defects); high-sev fixed inline; re-verify PASS |
