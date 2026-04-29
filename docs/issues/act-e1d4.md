@@ -7,8 +7,9 @@ acceptance_criteria:
   - "`--under <id>` restricts output to descendants (via `parent` edges, transitive) of the given id; the id is resolved through the pipeline."
   - "`--limit N` defaults to 50 and bounds the result count."
   - "JSON output: `{\"ok\": true, \"count\": N, \"issues\": [{id, prefix, title, priority, type}, ...]}`."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
+closed_at: 2026-04-29T00:00:00Z
 ---
 
 # act ready command
