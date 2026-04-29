@@ -1,0 +1,38 @@
+{
+  "id": "act-aaaa",
+  "fields": {
+    "accept": [
+      "a",
+      "b",
+      "c"
+    ],
+    "created_at": "2023-11-14T22:13:20.000Z",
+    "priority": 1,
+    "status": "open",
+    "title": "t",
+    "type": "task"
+  },
+  "last_hlc": {
+    "accept": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "priority": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "title": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "type": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    }
+  },
+  "tombstoned": false
+}
