@@ -10,8 +10,9 @@ acceptance_criteria:
   - "exit 0 on all-pass; exit 1 if any check fails and --fix did not remediate; exit 2 on bad flags"
   - "JSON output shape matches spec: {ok, checks:[{name,status,findings,fixed}], summary:{pass,fail}}"
   - "--compact flag triggers manual compaction of eligible issues"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
+closed_at: 2026-04-29T00:00:00Z
 ---
 
 # Doctor checks
