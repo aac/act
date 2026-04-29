@@ -9,7 +9,7 @@ acceptance_criteria:
   - "After write, `WriteOp` updates `.act/config.json:last_hlc` via `config.Update`, sequencing config rename BEFORE the op rename becomes visible (op file written into a temp location first)."
   - "Crash-injection test: failure between op-write and config-update leaves the op file present and `last_hlc` stale; fold reconstructs correctly per spec §1.2."
   - "Race test: two writers writing different ops to the same shard never produce overlapping filenames; a third writer with an identical envelope+hash gets the extended-12-hex collision branch."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

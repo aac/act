@@ -128,6 +128,18 @@ type hashInput struct {
 // Hash returns the 8-hex-char op hash, defined as the first 8 hex digits of
 // sha256(canonical_json({hlc, node_id, payload})). Per spec resolution.
 func (e Envelope) Hash() (string, error) {
+	full, err := e.FullHash()
+	if err != nil {
+		return "", err
+	}
+	return full[:8], nil
+}
+
+// FullHash returns the full 64-hex-char sha256 of the canonical hash input
+// (hlc, node_id, payload). Filename collision extension slices longer
+// prefixes from this value (8, 12, 16) per spec §Op file naming; per spec
+// the slicing must NOT re-hash with a different algorithm.
+func (e Envelope) FullHash() (string, error) {
 	intermediate, err := json.Marshal(hashInput{
 		Payload: e.Payload,
 		HLC:     e.HLC,
@@ -145,5 +157,5 @@ func (e Envelope) Hash() (string, error) {
 		return "", fmt.Errorf("op: hash canonicaljson: %w", err)
 	}
 	sum := sha256.Sum256(canon)
-	return hex.EncodeToString(sum[:])[:8], nil
+	return hex.EncodeToString(sum[:]), nil
 }
