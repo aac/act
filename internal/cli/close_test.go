@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
 
@@ -176,5 +178,59 @@ func TestRunClose_ReasonRecorded(t *testing.T) {
 	}
 	if p.Reason != reason {
 		t.Errorf("payload.Reason = %q, want %q", p.Reason, reason)
+	}
+}
+
+// TestRunClose_LiveIndexReflectsClosedStatus is the regression test for
+// act-64af-followup-index-close.md: after `create -> claim -> close`, the
+// live SQLite index must report status=closed without requiring a
+// rebuild. Previously the close path wrote the op + commit but did not
+// upsert the post-fold state into index.db, so doctor's
+// index-divergence check fired an error finding.
+func TestRunClose_LiveIndexReflectsClosedStatus(t *testing.T) {
+	root, id := makeCloseRepoWithIssue(t)
+
+	// Claim the issue (status -> in_progress) so the post-close pivot
+	// surfaces as a real status change in the index.
+	if _, code := RunUpdate(root, UpdateOptions{ID: id, Claim: true, Isolated: true}); code != 0 {
+		t.Fatalf("claim: code = %d", code)
+	}
+	if _, code := RunClose(root, CloseOptions{ID: id, Reason: "verified"}); code != 0 {
+		t.Fatalf("close: code = %d", code)
+	}
+
+	// Open the live index db (read-only via the public Index API) and
+	// confirm the row matches the freshly folded view.
+	paths := config.Layout(root)
+	idx, err := index.Open(paths.IndexDB)
+	if err != nil {
+		t.Fatalf("index.Open: %v", err)
+	}
+	defer func() { _ = idx.Close() }()
+	row, err := idx.Get(id)
+	if err != nil {
+		t.Fatalf("idx.Get(%s): %v", id, err)
+	}
+	if row.Status != "closed" {
+		t.Errorf("live index status = %q, want %q (close did not upsert)", row.Status, "closed")
+	}
+	if row.ClosedReason != "verified" {
+		t.Errorf("live index closed_reason = %q, want %q", row.ClosedReason, "verified")
+	}
+
+	// Belt-and-braces: doctor's index-divergence check must report no
+	// error findings (the doctor command runs on the same on-disk state).
+	dout, dcode := RunDoctor(root, DoctorOptions{Check: "index-divergence"})
+	if dcode != 0 {
+		t.Fatalf("doctor: code = %d, out=%+v", dcode, dout)
+	}
+	res, ok := dout.(DoctorResult)
+	if !ok {
+		t.Fatalf("doctor: type = %T, want DoctorResult", dout)
+	}
+	for _, f := range res.Findings {
+		if f.Severity == "error" {
+			t.Errorf("doctor reported error finding after close: %+v", f)
+		}
 	}
 }

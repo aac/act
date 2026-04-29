@@ -5,8 +5,9 @@ acceptance_criteria:
   - "After a normal `create → update --claim → close` sequence in a fresh repo, `act doctor --json` reports zero findings."
   - "The close op invokes `index.Upsert` (or equivalent) so the live SQLite index reflects status=closed without requiring a doctor --fix rebuild."
   - "A regression test in `internal/cli/close_test.go` (or an integration test) folds the issue, queries the index, and asserts current row matches rebuilt row."
-status: open
+status: closed
 created_at: 2026-04-29T12:00:00Z
+closed_at: 2026-04-29T00:00:00Z
 ---
 
 # Follow-up: act close does not update live SQLite index
