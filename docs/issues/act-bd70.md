@@ -9,7 +9,7 @@ acceptance_criteria:
   - "Concurrency test: 64 parallel goroutines generating ids against the same `.act/ops/` produce 64 distinct `ShortID`s."
   - "Determinism: given the same payload AND nonce, `Generate` returns the same full id (i.e. nonce derivation is the only randomness)."
   - "Negative test: a payload that fails canonical-JSON marshalling propagates the error and produces no id."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
