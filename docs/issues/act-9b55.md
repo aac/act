@@ -9,7 +9,7 @@ acceptance_criteria:
   - "Adding a new op_version requires adding a new golden directory; CI fails if the directory is missing"
   - "A coverage test enumerates the (op_type, op_version) registry from act-c9f0 and fails when any pair lacks a golden directory"
   - "Update mode: a flag (e.g., -update) regenerates expected_state.json files when intentional changes occur"
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 
