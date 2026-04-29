@@ -46,7 +46,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 - act-03f6 [open] act dep add command (deps: act-3bbe, act-5ca9, act-912f)
 - act-e1d4 [open] act ready command (deps: act-912f, act-6991, act-296e)
 - act-0a22 [open] act search command (deps: act-912f)
-- act-5515 [open] act log command (deps: act-6ec9, act-6991)
+- act-5515 [closed] act log command (deps: act-6ec9, act-6991)
 - act-2aa3 [closed] act version command (deps: act-9cad)
 
 ## Phase 5: Doctor, bootstrap, compaction
