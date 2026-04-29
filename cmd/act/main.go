@@ -54,7 +54,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create")
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
