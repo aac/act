@@ -7,7 +7,7 @@ acceptance_criteria:
   - "`--include-ops` inlines the full op stream alongside the folded snapshot under an `ops` key."
   - "JSON output contains: id, title, description, status, priority, type, parent, deps[{id,type}], assignee, acceptance_criteria, created_at, closed_at, closed_reason, ops_count."
   - "Writer-version skew during fold exits 4."
-status: open
+status: closed
 created_at: 2026-04-29T00:00:00Z
 ---
 

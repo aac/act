@@ -1,0 +1,313 @@
+package cli
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/aac/act/internal/hlc"
+	"github.com/aac/act/internal/op"
+)
+
+// makeShowCreateEnv returns a create-op envelope for a show test. The nonce
+// is fixed at zeros so the per-payload hash is deterministic.
+func makeShowCreateEnv(t *testing.T, id string, wallMs int64, logical uint32, title string) op.Envelope {
+	t.Helper()
+	priority := 1
+	pl := op.CreatePayload{
+		Title:    title,
+		Type:     "task",
+		Priority: &priority,
+		Nonce:    "00000000000000000000000000000000",
+	}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
+	return op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "create",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: logical,
+			NodeID:  "0123abcd",
+		},
+		NodeID: "0123abcd",
+	}
+}
+
+// makeShowUpdateEnv returns an update_field op envelope that overrides
+// `title` with newTitle.
+func makeShowUpdateEnv(t *testing.T, id string, wallMs int64, logical uint32, field string, value any) op.Envelope {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal value: %v", err)
+	}
+	pl := op.UpdateFieldPayload{
+		Field: field,
+		Value: raw,
+	}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal update payload: %v", err)
+	}
+	return op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "update_field",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: logical,
+			NodeID:  "0123abcd",
+		},
+		NodeID: "0123abcd",
+	}
+}
+
+// makeShowTombstoneEnv returns a tombstone op envelope.
+func makeShowTombstoneEnv(t *testing.T, id string, wallMs int64, logical uint32) op.Envelope {
+	t.Helper()
+	pl := op.TombstonePayload{DeletedAt: "2026-04-29T00:00:00Z"}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal tombstone payload: %v", err)
+	}
+	return op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "tombstone",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: logical,
+			NodeID:  "0123abcd",
+		},
+		NodeID: "0123abcd",
+	}
+}
+
+// makeShowRedactEnv returns a redact op envelope targeting field_path.
+func makeShowRedactEnv(t *testing.T, id string, wallMs int64, logical uint32, fieldPath string) op.Envelope {
+	t.Helper()
+	pl := op.RedactPayload{FieldPath: fieldPath}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal redact payload: %v", err)
+	}
+	return op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "redact",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: logical,
+			NodeID:  "0123abcd",
+		},
+		NodeID: "0123abcd",
+	}
+}
+
+func TestRunShow_HappyPath(t *testing.T) {
+	root := makeRepoWithAct(t)
+
+	// create then update_field title.
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "first")
+	updateEnv := makeShowUpdateEnv(t, "act-abcd", 1700000010000, 0, "title", "second")
+
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, updateEnv, "2026-04", "update.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowResult", out)
+	}
+	if got := res.Fields["title"]; got != "second" {
+		t.Errorf("title = %v, want second", got)
+	}
+	if got := res.Fields["id"]; got != "act-abcd" {
+		t.Errorf("id = %v, want act-abcd", got)
+	}
+	if _, ok := res.Fields["short_id"].(string); !ok {
+		t.Errorf("short_id missing or wrong type: %v", res.Fields["short_id"])
+	}
+}
+
+func TestRunShow_PrefixResolution(t *testing.T) {
+	root := makeRepoWithAct(t)
+	env := makeShowCreateEnv(t, "act-abcd1234", 1700000000000, 0, "hello")
+	writeOpFile(t, root, env, "2026-04", "create.json")
+
+	// 4-char prefix should resolve.
+	out, code := RunShow(root, ShowOptions{ID: "abcd"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowResult", out)
+	}
+	if got := res.Fields["id"]; got != "act-abcd1234" {
+		t.Errorf("id = %v, want act-abcd1234", got)
+	}
+}
+
+func TestRunShow_AmbiguousPrefix(t *testing.T) {
+	root := makeRepoWithAct(t)
+	a := makeShowCreateEnv(t, "act-abcd1234", 1700000000000, 0, "a")
+	b := makeShowCreateEnv(t, "act-abcd5678", 1700000000001, 0, "b")
+	writeOpFile(t, root, a, "2026-04", "a.json")
+	writeOpFile(t, root, b, "2026-04", "b.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	e, ok := out.(ShowErrorOutput)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowErrorOutput", out)
+	}
+	if e.Error != "id_ambiguous" {
+		t.Errorf("error = %q, want id_ambiguous", e.Error)
+	}
+	if len(e.Candidates) != 2 {
+		t.Fatalf("candidates len = %d, want 2", len(e.Candidates))
+	}
+}
+
+func TestRunShow_UnknownID(t *testing.T) {
+	root := makeRepoWithAct(t)
+	env := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "hello")
+	writeOpFile(t, root, env, "2026-04", "create.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-ffff"})
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	e, ok := out.(ShowErrorOutput)
+	if !ok {
+		t.Fatalf("output type = %T", out)
+	}
+	if e.Error != "issue_not_found" {
+		t.Errorf("error = %q, want issue_not_found", e.Error)
+	}
+}
+
+func TestRunShow_NoActDir(t *testing.T) {
+	root := t.TempDir()
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	e, ok := out.(ShowErrorOutput)
+	if !ok {
+		t.Fatalf("output type = %T", out)
+	}
+	if e.Error != "not_in_git" {
+		t.Errorf("error = %q, want not_in_git", e.Error)
+	}
+}
+
+func TestRunShow_IncludeOps(t *testing.T) {
+	root := makeRepoWithAct(t)
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "first")
+	updateEnv := makeShowUpdateEnv(t, "act-abcd", 1700000010000, 0, "title", "second")
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, updateEnv, "2026-04", "update.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd", IncludeOps: true})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowResult", out)
+	}
+	if !res.IncludeOps {
+		t.Errorf("IncludeOps = false, want true")
+	}
+	if got := len(res.Ops); got != 2 {
+		t.Fatalf("len(Ops) = %d, want 2", got)
+	}
+	// Ops must be HLC-sorted: create wall < update wall.
+	if res.Ops[0].OpType != "create" || res.Ops[1].OpType != "update_field" {
+		t.Errorf("ops order = [%s %s], want [create update_field]", res.Ops[0].OpType, res.Ops[1].OpType)
+	}
+	// JSON shape contains ops.
+	jsm := res.ShowJSON()
+	if _, ok := jsm["ops"]; !ok {
+		t.Errorf("ShowJSON missing ops key")
+	}
+}
+
+func TestRunShow_TombstonedJSON(t *testing.T) {
+	root := makeRepoWithAct(t)
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "doomed")
+	tombEnv := makeShowTombstoneEnv(t, "act-abcd", 1700000010000, 0)
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, tombEnv, "2026-04", "tomb.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd", AsJSON: true})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
+	}
+	tomb, ok := out.(ShowTombstoned)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowTombstoned", out)
+	}
+	if !tomb.Tombstoned {
+		t.Errorf("Tombstoned = false, want true")
+	}
+	if tomb.ID != "act-abcd" {
+		t.Errorf("ID = %q, want act-abcd", tomb.ID)
+	}
+	// Round-trip the JSON to lock the wire shape.
+	data, err := json.Marshal(tomb)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"tombstoned":true`) {
+		t.Errorf("JSON missing tombstoned:true: %s", data)
+	}
+	// Human form prints "[deleted]".
+	human := FormatShowHuman(tomb)
+	if !strings.Contains(human, "[deleted]") {
+		t.Errorf("human form missing [deleted]: %q", human)
+	}
+}
+
+func TestRunShow_RedactedField(t *testing.T) {
+	root := makeRepoWithAct(t)
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "secret-title")
+	redactEnv := makeShowRedactEnv(t, "act-abcd", 1700000010000, 0, "title")
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, redactEnv, "2026-04", "redact.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("output type = %T", out)
+	}
+	if got := res.Fields["title"]; got != "<redacted>" {
+		t.Errorf("title = %v, want <redacted>", got)
+	}
+}
