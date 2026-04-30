@@ -37,7 +37,11 @@ func runCreate(args []string) int {
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
-	if err := fs.Parse(args); err != nil {
+	rearranged, err := rearrangeArgs(args, fs)
+	if err != nil {
+		return 2
+	}
+	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
