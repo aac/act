@@ -5,8 +5,9 @@ acceptance_criteria:
   - "`act create \"title\" -p 1 --json` (flags AFTER positional) parses identically to `act create -p 1 --json \"title\"` (flags BEFORE positional)."
   - "All commands that take both flags and positionals (`create`, `show`, `close`, `dep add`, `update`) accept interleaved flag ordering."
   - "Smoke test in `internal/cli/smoke_test.go` (or a new test) exercises the spec-literal `act create \"title\" -p 1 --json` calling convention and asserts JSON output."
-status: open
+status: closed
 created_at: 2026-04-29T12:00:00Z
+closed_at: 2026-04-30T00:00:00Z
 ---
 
 # Follow-up: flag parser stops at first positional

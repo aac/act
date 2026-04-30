@@ -52,8 +52,15 @@ func TestSmokeWorkflow(t *testing.T) {
 		t.Fatalf("init: empty node_id\n%s", initOut)
 	}
 
-	// Step 2: create. Capture id.
-	createOut, _ := mustRunAct(t, site, 0, "create", "--json", "smoke task")
+	// Step 2: create. Capture id. Spec test plan and §Commands docs
+	// write `act create "title" -p 2 --json` (flags AFTER positional);
+	// the argparse helper rearranges argv so the stdlib `flag` package
+	// sees flags-first. Drive that exact form here so a regression in
+	// the helper surfaces immediately. The JSON envelope (CreateResult)
+	// proves --json was honored; a follow-up `show --json` confirms -p
+	// 2 actually landed on the issue (priority is not echoed by the
+	// create envelope).
+	createOut, _ := mustRunAct(t, site, 0, "create", "smoke task", "-p", "2", "--json")
 	var createRes struct {
 		ID    string `json:"id"`
 		Title string `json:"title"`
@@ -68,6 +75,18 @@ func TestSmokeWorkflow(t *testing.T) {
 		t.Fatalf("create: title = %q want \"smoke task\"", createRes.Title)
 	}
 	id := createRes.ID
+
+	// Confirm -p 2 (flags-after-positional) was actually parsed.
+	prioOut, _ := mustRunAct(t, site, 0, "show", id, "--json")
+	var prioRes struct {
+		Priority int `json:"priority"`
+	}
+	if err := json.Unmarshal([]byte(prioOut), &prioRes); err != nil {
+		t.Fatalf("show priority JSON parse: %v\n%s", err, prioOut)
+	}
+	if prioRes.Priority != 2 {
+		t.Fatalf("show: priority = %d want 2 (flags-after-positional dropped?)\n%s", prioRes.Priority, prioOut)
+	}
 
 	// Step 3: show round-trips id.
 	showOut, _ := mustRunAct(t, site, 0, "show", "--json", id)

@@ -211,7 +211,11 @@ func getGitEmail() string {
 func runLog(args []string) int {
 	fs := flag.NewFlagSet("log", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	if err := fs.Parse(args); err != nil {
+	rearranged, err := rearrangeArgs(args, fs)
+	if err != nil {
+		return 2
+	}
+	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
@@ -285,7 +289,11 @@ func runSearch(args []string) int {
 	status := fs.String("status", "", "comma-separated status filter")
 	limit := fs.Int("limit", 50, "maximum number of results")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	if err := fs.Parse(args); err != nil {
+	rearranged, err := rearrangeArgs(args, fs)
+	if err != nil {
+		return 2
+	}
+	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
@@ -525,7 +533,11 @@ func runShow(args []string) int {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	includeOps := fs.Bool("include-ops", false, "inline the HLC-sorted op stream alongside the snapshot")
-	if err := fs.Parse(args); err != nil {
+	rearranged, err := rearrangeArgs(args, fs)
+	if err != nil {
+		return 2
+	}
+	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {

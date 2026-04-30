@@ -44,7 +44,11 @@ func runUpdate(args []string) int {
 
 	// Track which flags were explicitly set; we need this to distinguish
 	// "user did not pass --status" from "user passed --status open" etc.
-	if err := fs.Parse(args); err != nil {
+	rearranged, err := rearrangeArgs(args, fs)
+	if err != nil {
+		return 2
+	}
+	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
