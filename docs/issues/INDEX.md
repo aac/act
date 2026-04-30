@@ -67,3 +67,16 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 - act-0c76 [closed] Concurrency and rebase contention tests (deps: act-9824, act-5ca9, act-2f81)
 - act-2e8d [closed] CI matrix for three target environments (deps: act-9cad, act-a64e, act-9b55, act-0c76)
 - act-64af [closed] Cross-platform builds and release pipeline (deps: act-2e8d, act-2aa3, act-2f81, act-40ae, act-6eff, act-a0ad)
+
+## Phase 8: Surface gap follow-ups (from docs/surface-gap-analysis.md, 2026-04-30)
+
+- act-g001-gap [open] act show should surface closer identity for audit (deps: -) [critical]
+- act-g002-gap [open] act reopen <id> CLI command (deps: -) [critical]
+- act-g003-gap [open] act create --blocked-by and composed act_file_blocker MCP tool (deps: -) [annoying]
+- act-g004-gap [open] act mine and act ready --mine for self-scoped queries (deps: -) [annoying]
+- act-g005-gap [open] act dep add direction aliases (--blocks, --blocked-by) (deps: -) [annoying]
+- act-g006-gap [open] --description-file flag for act create and act update (deps: -) [annoying]
+- act-g007-gap [open] act_next output should include commit_marker string (deps: -) [annoying]
+- act-g008-gap [open] act redact CLI command (deps: -) [annoying]
+- act-g009-gap [open] act delete <id> CLI command (tombstone op) (deps: -) [annoying]
+- act-g010-gap [open] act log --summary one-line-per-op timeline view (deps: -) [nice-to-have]
