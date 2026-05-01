@@ -7,6 +7,7 @@ acceptance_criteria:
   - "Both commands document the identity-resolution rule explicitly so agents can predict behavior across machines."
   - "Output schema matches `act list` for `act mine` and `act ready` for `act ready --mine` (no new shape)."
 status: open
+milestone: v0.2
 created_at: 2026-04-29T13:00:00Z
 ---
 

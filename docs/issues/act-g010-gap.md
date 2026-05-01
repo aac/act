@@ -7,6 +7,7 @@ acceptance_criteria:
   - "Output is stable enough that `act doctor`-style tooling can scrape it; payload truncation cap is 80 chars."
   - "Without `--summary`, today's full output is unchanged."
 status: open
+milestone: v0.2
 created_at: 2026-04-29T13:00:00Z
 ---
 

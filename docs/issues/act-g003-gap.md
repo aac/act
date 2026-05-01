@@ -8,6 +8,7 @@ acceptance_criteria:
   - "`act_file_blocker` flips the *blocking* issue (the one identified by `blocked_by`) to `status=blocked` if and only if a `--block-parent` flag is set; default is to file-and-link without modifying the parent."
   - "Surface-gap-analysis Workflows A and C are reduced from 2 calls to 1."
 status: open
+milestone: v0.2
 created_at: 2026-04-29T13:00:00Z
 ---
 

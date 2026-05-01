@@ -8,6 +8,7 @@ acceptance_criteria:
   - "Mutually exclusive with `--description`; using both is exit 2."
   - "File size cap matches the schema's 16384-char description limit; oversize is exit 2 with a clear error."
 status: open
+milestone: v0.2
 created_at: 2026-04-29T13:00:00Z
 ---
 

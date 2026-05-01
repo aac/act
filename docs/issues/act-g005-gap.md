@@ -8,6 +8,7 @@ acceptance_criteria:
   - "Help text and docs use 'blocked-by' / 'blocks' rather than 'parent' / 'child' to avoid collision with the `issue.parent` hierarchy field."
   - "Direction is unambiguous from the flag name; no agent needs to consult docs to file the right edge."
 status: open
+milestone: v0.2
 created_at: 2026-04-29T13:00:00Z
 ---
 

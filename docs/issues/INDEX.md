@@ -70,13 +70,15 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 
 ## Phase 8: Surface gap follow-ups (from docs/surface-gap-analysis.md, 2026-04-30)
 
-- act-g001-gap [open] act show should surface closer identity for audit (deps: -) [critical]
-- act-g002-gap [open] act reopen <id> CLI command (deps: -) [critical]
-- act-g003-gap [open] act create --blocked-by and composed act_file_blocker MCP tool (deps: -) [annoying]
-- act-g004-gap [open] act mine and act ready --mine for self-scoped queries (deps: -) [annoying]
-- act-g005-gap [open] act dep add direction aliases (--blocks, --blocked-by) (deps: -) [annoying]
-- act-g006-gap [open] --description-file flag for act create and act update (deps: -) [annoying]
-- act-g007-gap [open] act_next output should include commit_marker string (deps: -) [annoying]
-- act-g008-gap [open] act redact CLI command (deps: -) [annoying]
-- act-g009-gap [open] act delete <id> CLI command (tombstone op) (deps: -) [annoying]
-- act-g010-gap [open] act log --summary one-line-per-op timeline view (deps: -) [nice-to-have]
+Triaged 2026-05-01 (see docs/triage.md).
+
+- act-g001-gap [open] act show should surface closer identity for audit (deps: -) [fix-now]
+- act-g002-gap [open] act reopen <id> CLI command (deps: -) [fix-now]
+- act-g003-gap [open, v0.2] act create --blocked-by and composed act_file_blocker MCP tool (deps: -)
+- act-g004-gap [open, v0.2] act mine and act ready --mine for self-scoped queries (deps: -)
+- act-g005-gap [open, v0.2] act dep add direction aliases (--blocks, --blocked-by) (deps: -)
+- act-g006-gap [open, v0.2] --description-file flag for act create and act update (deps: -)
+- act-g007-gap [open, v0.2] act_next output should include commit_marker string (deps: -)
+- act-g008-gap [open] act redact CLI command (deps: -) [fix-now]
+- act-g009-gap [open] act delete <id> CLI command (tombstone op) (deps: -) [fix-now]
+- act-g010-gap [open, v0.2] act log --summary one-line-per-op timeline view (deps: -)
