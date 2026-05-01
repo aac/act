@@ -7,6 +7,7 @@ acceptance_criteria:
   - "An equivalent `act show <id> --commit-marker` flag emits just the marker string for non-MCP callers."
   - "Doctor's orphan-close check is unchanged; this is purely an ergonomic surface."
 status: open
+milestone: v0.2
 created_at: 2026-04-29T13:00:00Z
 ---
 
