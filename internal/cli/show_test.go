@@ -292,6 +292,125 @@ func TestRunShow_TombstonedJSON(t *testing.T) {
 	}
 }
 
+// makeShowClaimEnv returns a claim op envelope from the given nodeID.
+func makeShowClaimEnv(t *testing.T, id string, wallMs int64, logical uint32, nodeID, assignee string) op.Envelope {
+	t.Helper()
+	pl := op.ClaimPayload{Assignee: assignee}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal claim payload: %v", err)
+	}
+	return op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "claim",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: logical,
+			NodeID:  nodeID,
+		},
+		NodeID: nodeID,
+	}
+}
+
+// makeShowCloseEnv returns a close op envelope from the given nodeID.
+func makeShowCloseEnv(t *testing.T, id string, wallMs int64, logical uint32, nodeID, reason string) op.Envelope {
+	t.Helper()
+	pl := op.ClosePayload{Reason: reason}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal close payload: %v", err)
+	}
+	return op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "close",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: logical,
+			NodeID:  nodeID,
+		},
+		NodeID: nodeID,
+	}
+}
+
+// TestRunShow_ClosedByNode covers act-g001: a closed issue's show output
+// must surface the node_id of the writer that emitted the close op so an
+// auditor can answer "who closed this?" without dropping to act log.
+func TestRunShow_ClosedByNode(t *testing.T) {
+	root := makeRepoWithAct(t)
+
+	const claimer = "1111aaaa"
+	const closer = "2222bbbb"
+
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "to be closed")
+	claimEnv := makeShowClaimEnv(t, "act-abcd", 1700000010000, 0, claimer, "alice")
+	closeEnv := makeShowCloseEnv(t, "act-abcd", 1700000020000, 0, closer, "fixed")
+
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, claimEnv, "2026-04", "claim.json")
+	writeOpFile(t, root, closeEnv, "2026-04", "close.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowResult", out)
+	}
+	if got := res.Fields["status"]; got != "closed" {
+		t.Errorf("status = %v, want closed", got)
+	}
+	if got := res.Fields["closed_by_node"]; got != closer {
+		t.Errorf("closed_by_node = %v, want %s", got, closer)
+	}
+	if got := res.Fields["assignee"]; got != "alice" {
+		t.Errorf("assignee = %v, want alice (last claim drift, but preserved)", got)
+	}
+	// JSON wire shape carries closed_by_node.
+	jsm := res.ShowJSON()
+	if got, ok := jsm["closed_by_node"].(string); !ok || got != closer {
+		t.Errorf("ShowJSON closed_by_node = %v, want %s", jsm["closed_by_node"], closer)
+	}
+	data, err := json.Marshal(jsm)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"closed_by_node":"`+closer+`"`) {
+		t.Errorf("JSON missing closed_by_node=%s: %s", closer, data)
+	}
+}
+
+// TestRunShow_OpenIssueNoClosedByNode covers the negative case: open issues
+// must NOT carry a closed_by_node field (absent rather than empty string).
+func TestRunShow_OpenIssueNoClosedByNode(t *testing.T) {
+	root := makeRepoWithAct(t)
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "open")
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("output type = %T", out)
+	}
+	if _, has := res.Fields["closed_by_node"]; has {
+		t.Errorf("open issue must not carry closed_by_node; got %v", res.Fields["closed_by_node"])
+	}
+	if _, has := res.Fields["closed_at"]; has {
+		t.Errorf("open issue must not carry closed_at; got %v", res.Fields["closed_at"])
+	}
+}
+
 func TestRunShow_RedactedField(t *testing.T) {
 	root := makeRepoWithAct(t)
 	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "secret-title")

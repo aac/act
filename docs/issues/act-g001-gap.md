@@ -7,8 +7,9 @@ acceptance_criteria:
   - "Folded snapshot adds these fields without breaking the existing JSON schema; existing consumers ignore unknown fields."
   - "Doctor `orphan-close` continues to use the same evidentiary chain; this change is read-only on the snapshot path."
   - "Audit walkthrough (Workflow D in surface-gap-analysis.md) is satisfied without invoking `act log`."
-status: open
+status: closed
 created_at: 2026-04-29T13:00:00Z
+closed_at: 2026-05-01T00:00:00Z
 ---
 
 # act show should surface closer identity for audit
