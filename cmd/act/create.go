@@ -26,6 +26,10 @@ func (s *stringSlice) Set(v string) error {
 // (`--no-commit`, `--push`, `--isolated`) and `--json`.
 func runCreate(args []string) int {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
+	// Priority defaults are applied in cli.RunCreate. We use a sentinel
+	// default of 1 so `--help` advertises the right value, then detect
+	// "user actually set the flag" via fs.Visit so that `-p 0` is not
+	// silently coerced to the default (dogfood-report.md finding #1).
 	priority := fs.Int("priority", 1, "issue priority (0..3, default 1)")
 	fs.IntVar(priority, "p", 1, "issue priority (shorthand)")
 	parent := fs.String("parent", "", "parent issue id (full or unique prefix)")
@@ -50,6 +54,20 @@ func runCreate(args []string) int {
 	}
 	title := fs.Arg(0)
 
+	// Detect whether the user supplied -p/--priority so that an explicit
+	// -p 0 is propagated to the payload instead of being treated as unset.
+	var prioritySet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "priority" || f.Name == "p" {
+			prioritySet = true
+		}
+	})
+	var priorityOpt *int
+	if prioritySet {
+		v := *priority
+		priorityOpt = &v
+	}
+
 	root, err := findRepoRoot()
 	if err != nil {
 		emitCreate(*asJSON, map[string]any{
@@ -61,7 +79,7 @@ func runCreate(args []string) int {
 
 	out, code := cli.RunCreate(root, cli.CreateOptions{
 		Title:       title,
-		Priority:    *priority,
+		Priority:    priorityOpt,
 		Type:        *typ,
 		Parent:      *parent,
 		Description: *description,
@@ -104,22 +122,8 @@ func runCreate(args []string) int {
 	return 0
 }
 
-// emitCreate renders an error envelope for the create subcommand.
+// emitCreate renders an error envelope for the create subcommand. Delegates
+// to the shared emitEnvelope helper so the JSON shape is uniform.
 func emitCreate(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act create: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }

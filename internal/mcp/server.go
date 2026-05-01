@@ -377,7 +377,7 @@ func (s *Server) tools() []toolDescriptor {
 			Description: "Create a new issue.",
 			InputSchema: schemaObject(map[string]any{
 				"title":       schemaString("Issue title (required, ≤256 bytes)."),
-				"priority":    schemaInteger("Priority enum (0-4); 0 normalised to 1."),
+				"priority":    schemaInteger("Priority enum (0..3); omitted defaults to 1, an explicit 0 is preserved."),
 				"type":        schemaEnum([]string{"task", "bug", "epic", "chore"}, "Issue type."),
 				"parent":      schemaString("Parent issue id or prefix."),
 				"description": schemaString("Free-text body."),
@@ -587,7 +587,7 @@ func (s *Server) callInit(raw json.RawMessage) (any, bool) {
 func (s *Server) callCreate(raw json.RawMessage) (any, bool) {
 	var args struct {
 		Title       string   `json:"title"`
-		Priority    int      `json:"priority"`
+		Priority    *int     `json:"priority"`
 		Type        string   `json:"type"`
 		Parent      string   `json:"parent"`
 		Description string   `json:"description"`
