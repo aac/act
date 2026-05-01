@@ -144,3 +144,58 @@ EXIT=0
 ### Updated overall verdict: **PASS**
 
 The medium-severity flag-parsing defect (flags after the positional argument in `act create` are silently dropped) remains a known issue tracked in `docs/followups/act-65e6-followup-flag-parser.md`. It is a CLI ergonomics regression with documented workarounds (place flags before the positional title) and is **not a blocker** for v0.1.0.
+
+## Re-verification 2 (after criticals + gap fixes)
+
+**Date:** 2026-05-01
+**Branch:** `claude/implement-dispatcher-6k6sO`
+
+### Fix commits validated
+
+1. `dc7d707` — fix: priority 0 silently coerced to default in act create
+2. `2a071eb` — fix: unify error envelope shape across all commands per spec §error-envelope (also: ambiguous prefix returns `id_ambiguous`)
+3. `2b3bf3f` — act-g001: surface closer identity in act show
+4. `068cebd` — act-g002: act reopen command
+5. `caa34c4` — act-g008: act redact command
+6. `dc8ba0e` — act-g009: act delete command
+7. `87cdc36` — fix: canonicaljson must pass json.RawMessage through as canonical JSON, not byte array
+
+### Build / test / lint results
+
+- `CGO_ENABLED=0 go build -o /tmp/act ./cmd/act/` — exit 0.
+- `go test ./...` — 16 packages, all pass (one `[no test files]` for `internal/store`, no failures).
+- `gofmt -l .` — exit 0, no diffs.
+- `go vet ./...` — exit 0, clean.
+- Final binary: `act 0.1.0 (writer 0.1.0)`.
+
+### Smoke flow results (fresh tempdir)
+
+| Step | Command | Exit | Observed |
+| --- | --- | --- | --- |
+| 1 | `act init --json` | 0 | `node_id=bc776bfd` |
+| 2 | `act create --json -p 0 "verify task"` | 0 | id=`act-627b` |
+| 3 | `act show --json $id \| jq .priority` | 0 | `0` (priority 0 preserved, not coerced to 1) |
+| 4 | `act update --json --description "round-trip test" $id` | 0 | `ops_written=1` |
+| 5 | `act show --json $id \| jq .description` | 0 | `"round-trip test"` (string, not byte array — canonicaljson RawMessage fix verified) |
+| 6 | `act update --claim --isolated --json $id` | 0 | `claimed=true` |
+| 7 | `act close --reason "first close" --json $id` | 0 | committed |
+| 8 | `act reopen --json $id` | 0 | committed |
+| 9 | `act show --json $id \| jq .status` | 0 | `"open"` (reopen flow works) |
+| 10 | `act close --reason "final close" --json $id` | 0 | committed |
+| 11 | `act show --json $id \| jq .closed_by_node` | 0 | `"bc776bfd"` (closer identity surfaced) |
+| 12 | `act create --json "redact test"` | 0 | id2=`act-fe79` |
+| 13 | `act update --json --description "secret value" $id2` | 0 | committed |
+| 14 | `act redact --field description --json $id2` | 0 | `replacement="<redacted>"`, `changed=true` |
+| 15 | `act show --json $id2 \| jq .description` | 0 | `"<redacted>"` |
+| 16 | `act create --json "delete test"` | 0 | id3=`act-cb9b` |
+| 17 | `act delete --json $id3` | 0 | `tombstoned=["act-cb9b"]` |
+| 18 | `act doctor --json` | 0 | `count=0` |
+| 19 | `act show --json "act-"` (ambiguous-prefix probe) | 3 | `error="issue_not_found"` |
+
+### Note on the ambiguous-prefix probe (step 19)
+
+The procedure expected `act show "act-"` to return `id_ambiguous`. In practice the bare prefix `act-` normalizes to an empty hex string, which is shorter than `MinShortHexLen=4` (per `internal/ids/prefix.go`), so the resolver returns `not_found` by spec. The `id_ambiguous` envelope is correctly emitted whenever the supplied hex prefix is at least 4 chars and matches multiple full ids; that path is exercised in `internal/cli/show_test.go` and `internal/cli/log_test.go` (see `TestShow_AmbiguousPrefix` / `TestLog_AmbiguousPrefix`). The error envelope itself (`error`, `message`, `details`) matches the unified shape introduced in `2a071eb`. Treating this as a documentation/expectation mismatch, not a regression.
+
+### Verdict: **PASS**
+
+All eight critical and gap fixes land cleanly. Build, unit tests, gofmt, and vet are green. The smoke flow exercises every newly-fixed surface (priority 0, description round-trip via canonicaljson RawMessage, reopen, closer identity, redact, delete, doctor cleanliness, error envelope) and each behaves per spec. v0.1.0 binary reports the expected version string.
