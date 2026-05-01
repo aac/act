@@ -19,6 +19,7 @@ package canonicaljson
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -27,6 +28,12 @@ import (
 	"strconv"
 	"unicode/utf8"
 )
+
+// rawMessageType is the reflect.Type of json.RawMessage. We special-case this
+// in encode() so that values declared as json.RawMessage are interpreted as
+// already-JSON bytes (and recanonicalized) rather than as a []byte slice
+// rendered as an array of integers.
+var rawMessageType = reflect.TypeOf(json.RawMessage(nil))
 
 // ErrFloatNotAllowed is returned when a non-integer float value is
 // encountered. Floats with integer values (and which are not NaN or Inf) are
@@ -55,6 +62,24 @@ func encode(buf *bytes.Buffer, v reflect.Value) error {
 			return nil
 		}
 		v = v.Elem()
+	}
+
+	// json.RawMessage carries already-JSON bytes. If we let the slice path
+	// below run, reflect would emit each byte as an integer array element,
+	// corrupting the value. Instead, parse the raw JSON into a generic
+	// any and re-marshal it canonically so embedded structures get their
+	// keys lex-sorted too.
+	if v.Type() == rawMessageType {
+		raw := v.Bytes()
+		if len(raw) == 0 {
+			buf.WriteString("null")
+			return nil
+		}
+		var generic any
+		if err := json.Unmarshal(raw, &generic); err != nil {
+			return fmt.Errorf("canonicaljson: invalid json.RawMessage: %w", err)
+		}
+		return encode(buf, reflect.ValueOf(generic))
 	}
 
 	switch v.Kind() {
