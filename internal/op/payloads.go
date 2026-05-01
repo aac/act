@@ -222,6 +222,22 @@ func (p ClosePayload) Validate() error {
 	return nil
 }
 
+// ReopenPayload is the payload for op_type=reopen. Per spec §5.B.4, a
+// reopen op clears `closed_at` and `closed_reason` and resets their
+// `last_hlc` so subsequent updates aren't blocked by stale HLCs from
+// before the close.
+type ReopenPayload struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// Validate implements the reopen write-time rules.
+func (p ReopenPayload) Validate() error {
+	if len(p.Reason) > 500 {
+		return fmt.Errorf("op: reopen.reason length %d > 500", len(p.Reason))
+	}
+	return nil
+}
+
 // RedactPayload is the payload for op_type=redact.
 type RedactPayload struct {
 	FieldPath   string `json:"field_path"`
@@ -355,6 +371,12 @@ func ValidatePayload(opType string, payload []byte) error {
 		var p ClosePayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("op: unmarshal close payload: %w", err)
+		}
+		return p.Validate()
+	case "reopen":
+		var p ReopenPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("op: unmarshal reopen payload: %w", err)
 		}
 		return p.Validate()
 	case "redact":

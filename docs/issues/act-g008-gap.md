@@ -7,7 +7,7 @@ acceptance_criteria:
   - "Idempotent per spec edge case (line 1042): re-redacting the same field returns `{changed: false}` and exit 0."
   - "Standard universal flags apply (`--no-commit`, `--push`, `--isolated`, `--verify`)."
   - "Doctor `orphan-ops` continues to recognize redact ops correctly."
-status: open
+status: closed
 created_at: 2026-04-29T13:00:00Z
 ---
 
