@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/aac/act/internal/cli"
 )
@@ -29,7 +30,7 @@ func runDepAdd(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "act dep add: usage: act dep add <child> <parent> [--type T] [--json]")
+		emitBadFlag(*asJSON, "act dep add: usage: act dep add <child> <parent> [--type T] [--json]")
 		return 2
 	}
 	child := fs.Arg(0)
@@ -54,20 +55,18 @@ func runDepAdd(args []string) int {
 		Isolated: *isolated,
 	})
 	if code != 0 {
-		// Cycle output is structured differently from bad-flag/not-found:
-		// pass it through verbatim so the JSON payload preserves the
-		// `{"error":{"kind":"cycle","path":[...]}}` shape.
+		// Cycle output is normalised through the canonical envelope so it
+		// matches the spec shape `{"error":"cycle","message":"...","details":
+		// {"path":[...]}}`. The legacy nested-error shape is no longer
+		// emitted at the cmd boundary.
 		if cyc, ok := out.(cli.DepAddCycleOutput); ok {
-			if *asJSON {
-				data, jerr := json.Marshal(cyc)
-				if jerr != nil {
-					fmt.Fprintf(os.Stderr, "act dep add: json marshal: %v\n", jerr)
-					return 1
-				}
-				fmt.Println(string(data))
-				return code
-			}
-			fmt.Fprintf(os.Stderr, "act dep add: cycle detected: %v\n", cyc.Error.Path)
+			path := append([]string(nil), cyc.Error.Path...)
+			env := cli.New(
+				cli.ErrCycle,
+				fmt.Sprintf("act dep add: cycle detected: %s", strings.Join(path, " -> ")),
+				map[string]any{"path": path},
+			)
+			cli.Emit(env, *asJSON, os.Stdout, os.Stderr)
 			return code
 		}
 		m, _ := toMap(out)
@@ -94,22 +93,9 @@ func runDepAdd(args []string) int {
 	return 0
 }
 
-// emitDepAdd renders an error envelope for the dep add subcommand.
+// emitDepAdd renders an error envelope for the dep add subcommand. Delegates
+// to the shared emitEnvelope helper so the JSON shape matches the rest of
+// the CLI surface.
 func emitDepAdd(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act dep add: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }

@@ -55,10 +55,15 @@ type CloseAlreadyClosed struct {
 	AlreadyClosed bool   `json:"already_closed"`
 }
 
-// CloseErrorOutput is the structured failure envelope.
+// CloseErrorOutput is the structured failure envelope. Candidates is non-nil
+// only on the id_ambiguous path; it is also mirrored under
+// Details["candidates"] so the on-the-wire JSON envelope matches spec
+// §"Errors" (`details.candidates[]`).
 type CloseErrorOutput struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // closeReasonMaxBytes mirrors spec §"Edge cases": reason >4KB exits 2.
@@ -149,18 +154,26 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			return CloseErrorOutput{
 				Error:   "issue_not_found",
 				Message: fmt.Sprintf("act close: %q: no matching id", opts.ID),
+				Details: map[string]any{"query": opts.ID},
 			}, 3
 		}
 		var amb *ids.ErrAmbiguousID
 		if errors.As(rerr, &amb) {
+			candidates := amb.Candidates()
 			return CloseErrorOutput{
-				Error:   "ambiguous_id",
-				Message: rerr.Error(),
-			}, 2
+				Error:   "id_ambiguous",
+				Message: fmt.Sprintf("act close: prefix %q matches %d issues", opts.ID, len(candidates)),
+				Details: map[string]any{
+					"prefix":     opts.ID,
+					"candidates": candidates,
+				},
+				Candidates: candidates,
+			}, 3
 		}
 		return CloseErrorOutput{
 			Error:   "issue_not_found",
 			Message: rerr.Error(),
+			Details: map[string]any{"query": opts.ID},
 		}, 3
 	}
 

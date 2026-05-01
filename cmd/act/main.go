@@ -20,7 +20,10 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
+		// Bare `act` invocation. Honour --json only if it was somehow passed
+		// (it cannot be at this point, by definition, but guard anyway for
+		// future flag parsing changes).
+		emitBadFlag(false, "usage: act <subcommand> [flags]")
 		os.Exit(2)
 	}
 	sub := os.Args[1]
@@ -31,7 +34,12 @@ func main() {
 	// list) plug in here.
 	if sub == "dep" {
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "act dep: usage: act dep <add> [args]")
+			// Pre-flag-parse usage error: there's no chance to read --json,
+			// so default to the human surface (stderr). Agents that pipe
+			// `act dep` with --json appended after `add` already have to
+			// dispatch through the verb branch below to see structured
+			// output, so this fallback is correct.
+			emitBadFlag(false, "act dep: usage: act dep <add> [args]")
 			os.Exit(2)
 		}
 		verb := os.Args[2]
@@ -40,7 +48,11 @@ func main() {
 		case "add":
 			os.Exit(runDepAdd(rest))
 		default:
-			fmt.Fprintf(os.Stderr, "act dep %s: not implemented yet\n", verb)
+			// Same caveat as above: --json may live in `rest` but verb is
+			// unknown, so we cannot promise to honour it. Probe rest for a
+			// bare `--json` token to upgrade unknown-verb errors to the
+			// structured envelope, mirroring the rest of the CLI.
+			emitBadFlag(hasJSONFlag(rest), fmt.Sprintf("act dep %s: not implemented yet", verb))
 			os.Exit(2)
 		}
 	}
@@ -78,7 +90,7 @@ func main() {
 		usage()
 		os.Exit(0)
 	default:
-		fmt.Fprintf(os.Stderr, "act %s: not implemented yet\n", sub)
+		emitBadFlag(hasJSONFlag(args), fmt.Sprintf("act %s: not implemented yet", sub))
 		os.Exit(2)
 	}
 }
@@ -116,31 +128,60 @@ func runInit(args []string) int {
 
 // emitInit writes either a JSON document or a human-friendly summary depending
 // on asJSON. For success, prints the canonical "Initialized" line; for errors,
-// prints the message text on stderr.
+// prints the unified envelope to stdout (JSON) or stderr (human).
 func emitInit(asJSON bool, payload any, success bool) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act init: json marshal: %v\n", err)
+	if success {
+		if asJSON {
+			data, err := json.Marshal(payload)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "act init: json marshal: %v\n", err)
+				return
+			}
+			fmt.Println(string(data))
 			return
 		}
-		fmt.Println(string(data))
-		return
-	}
-	m, ok := toMap(payload)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "%v\n", payload)
-		return
-	}
-	if success {
+		m, ok := toMap(payload)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "%v\n", payload)
+			return
+		}
 		fmt.Printf("Initialized .act/ at %s with node_id %s\n", m["act_dir"], m["node_id"])
 		return
 	}
-	if msg, _ := m["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
+	emitEnvelope(asJSON, payload)
+}
+
+// emitEnvelope normalises any failure payload (typed struct or map) into the
+// canonical {"error","message","details"} shape and writes it via cli.Emit.
+// Use this from every error branch in main and the per-command run* helpers
+// so the on-disk envelope is uniform across commands.
+func emitEnvelope(asJSON bool, payload any) {
+	env := cli.Normalize(payload)
+	cli.Emit(env, asJSON, os.Stdout, os.Stderr)
+}
+
+// emitBadFlag is the fast path for usage errors raised before any command
+// logic runs (missing positional, bad flag value). It always emits the
+// canonical envelope; under --json the JSON goes to stdout, otherwise the
+// human-readable message goes to stderr.
+func emitBadFlag(asJSON bool, message string) {
+	emitEnvelope(asJSON, map[string]any{
+		"error":   cli.ErrBadFlag,
+		"message": message,
+	})
+}
+
+// hasJSONFlag scans a raw argv tail for "--json" or "-json", which is
+// equivalent to flag.Parse's recognition. Used by pre-dispatch error
+// branches (e.g. unknown `act dep <verb>`) to honour --json before the
+// per-command FlagSet is even constructed.
+func hasJSONFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--json" || a == "-json" {
+			return true
+		}
 	}
-	fmt.Fprintf(os.Stderr, "%v\n", payload)
+	return false
 }
 
 // toMap round-trips an arbitrary struct through JSON to recover a string-keyed
@@ -219,7 +260,7 @@ func runLog(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "act log: usage: act log <id> [--json]")
+		emitBadFlag(*asJSON, "act log: usage: act log <id> [--json]")
 		return 2
 	}
 	idArg := fs.Arg(0)
@@ -260,24 +301,10 @@ func runLog(args []string) int {
 }
 
 // emitLogError renders the error envelope to stderr (human form) or stdout
-// (JSON form).
+// (JSON form). All command-specific emit*Error helpers now defer to the
+// shared emitEnvelope so every CLI surface produces the same shape.
 func emitLogError(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act log: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }
 
 // runSearch dispatches `act search <query>`. The repo root is resolved
@@ -297,7 +324,7 @@ func runSearch(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "act search: usage: act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]")
+		emitBadFlag(*asJSON, "act search: usage: act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]")
 		return 2
 	}
 	query := fs.Arg(0)
@@ -344,22 +371,7 @@ func runSearch(args []string) int {
 
 // emitSearchError mirrors emitLogError for the search subcommand.
 func emitSearchError(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act search: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }
 
 // runList dispatches `act list`. Flag set mirrors spec §act list. Output
@@ -377,7 +389,7 @@ func runList(args []string) int {
 		return 2
 	}
 	if *limit == 0 {
-		fmt.Fprintln(os.Stderr, "act list: --limit 0 is not allowed")
+		emitBadFlag(*asJSON, "act list: --limit 0 is not allowed")
 		return 2
 	}
 
@@ -425,22 +437,7 @@ func runList(args []string) int {
 
 // emitListError mirrors emitLogError for the list subcommand.
 func emitListError(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act list: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }
 
 // runMigrate dispatches the hidden `act migrate` subcommand. It is plumbed
@@ -541,7 +538,7 @@ func runShow(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "act show: usage: act show <id> [--json] [--include-ops]")
+		emitBadFlag(*asJSON, "act show: usage: act show <id> [--json] [--include-ops]")
 		return 2
 	}
 	idArg := fs.Arg(0)
@@ -591,22 +588,7 @@ func runShow(args []string) int {
 
 // emitShowError mirrors emitLogError for the show subcommand.
 func emitShowError(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act show: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }
 
 // runMCP dispatches `act mcp`. It launches a stdio MCP server backed by

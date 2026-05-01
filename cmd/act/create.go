@@ -49,7 +49,7 @@ func runCreate(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "act create: usage: act create <title> [flags]")
+		emitBadFlag(*asJSON, "act create: usage: act create <title> [flags]")
 		return 2
 	}
 	title := fs.Arg(0)

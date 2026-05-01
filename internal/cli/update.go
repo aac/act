@@ -78,10 +78,15 @@ type UpdateClaimResult struct {
 	OpsWritten []string `json:"ops_written,omitempty"`
 }
 
-// UpdateErrorOutput is the structured failure envelope.
+// UpdateErrorOutput is the structured failure envelope. Candidates is non-nil
+// only on the id_ambiguous path; it is also mirrored under
+// Details["candidates"] so the on-the-wire JSON envelope matches spec
+// §"Errors" (`details.candidates[]`).
 type UpdateErrorOutput struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // validUpdateStatuses is the closed set of values acceptable on the
@@ -231,18 +236,26 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			return UpdateErrorOutput{
 				Error:   "issue_not_found",
 				Message: fmt.Sprintf("act update: %q: no matching id", opts.ID),
+				Details: map[string]any{"query": opts.ID},
 			}, 3
 		}
 		var amb *ids.ErrAmbiguousID
 		if errors.As(rerr, &amb) {
+			candidates := amb.Candidates()
 			return UpdateErrorOutput{
-				Error:   "ambiguous_id",
-				Message: rerr.Error(),
-			}, 2
+				Error:   "id_ambiguous",
+				Message: fmt.Sprintf("act update: prefix %q matches %d issues", opts.ID, len(candidates)),
+				Details: map[string]any{
+					"prefix":     opts.ID,
+					"candidates": candidates,
+				},
+				Candidates: candidates,
+			}, 3
 		}
 		return UpdateErrorOutput{
 			Error:   "issue_not_found",
 			Message: rerr.Error(),
+			Details: map[string]any{"query": opts.ID},
 		}, 3
 	}
 
@@ -496,11 +509,21 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		Push:        opts.Push,
 	}, clock, wrapped)
 	if err != nil {
-		// Hard failure: drift / write / pull-rebase / commit. These
-		// surface as exit 1 (logical) per §5.C.3 + spec §3 update.
+		// Hard failure: drift / write / pull-rebase / commit. These surface
+		// as exit 1 (logical) per §5.C.3 + spec §3 update. Per spec §error-
+		// envelope, raw subprocess stderr does NOT belong in `message`; we
+		// extract the trailing `(output: ...)` blob (set by gitops/claim's
+		// runGit wrapper) into `details.stderr_tail` so JSON consumers get
+		// a clean human message and a separate diagnostic field.
+		message, tail := SplitWrappedError(err.Error())
+		details := map[string]any{}
+		if tail != "" {
+			details["stderr_tail"] = CaptureStderrTail(tail)
+		}
 		return UpdateErrorOutput{
 			Error:   "claim_failed",
-			Message: err.Error(),
+			Message: message,
+			Details: details,
 		}, 1
 	}
 	if res.Claimed {
@@ -557,18 +580,26 @@ func resolveDepIDForUpdate(arg string, knownIDs []string) (string, int, any) {
 		return "", 3, UpdateErrorOutput{
 			Error:   "issue_not_found",
 			Message: fmt.Sprintf("act update: --dep-rm %q: no matching id", arg),
+			Details: map[string]any{"query": arg},
 		}
 	}
 	var amb *ids.ErrAmbiguousID
 	if errors.As(rerr, &amb) {
-		return "", 2, UpdateErrorOutput{
-			Error:   "ambiguous_id",
-			Message: fmt.Sprintf("act update: --dep-rm %q: %s", arg, rerr.Error()),
+		candidates := amb.Candidates()
+		return "", 3, UpdateErrorOutput{
+			Error:   "id_ambiguous",
+			Message: fmt.Sprintf("act update: --dep-rm %q matches %d issues", arg, len(candidates)),
+			Details: map[string]any{
+				"prefix":     arg,
+				"candidates": candidates,
+			},
+			Candidates: candidates,
 		}
 	}
 	return "", 3, UpdateErrorOutput{
 		Error:   "issue_not_found",
 		Message: rerr.Error(),
+		Details: map[string]any{"query": arg},
 	}
 }
 

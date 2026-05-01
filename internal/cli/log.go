@@ -22,11 +22,14 @@ type LogResult struct {
 }
 
 // LogErrorOutput is the structured shape returned to the caller when log
-// refuses. The Candidates slice is non-nil only on the id_ambiguous path.
+// refuses. Candidates is non-nil only on the id_ambiguous path; it is also
+// mirrored under Details["candidates"] so the on-the-wire JSON envelope
+// matches spec §"Errors" (`details.candidates[]`).
 type LogErrorOutput struct {
-	Error      string   `json:"error"`
-	Message    string   `json:"message"`
-	Candidates []string `json:"candidates,omitempty"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // RunLog implements `act log <id>`. It walks `.act/ops/<id>/<yyyy-mm>/*.json`
@@ -64,21 +67,14 @@ func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int)
 
 	full, ambiguous, found := ids.ResolvePrefix(allIDs, idOrPrefix)
 	if ambiguous {
-		// Re-scan to compose deterministic candidate list.
-		hex := normalizePrefix(idOrPrefix)
-		var candidates []string
-		for _, id := range allIDs {
-			if strings.HasPrefix(stripActPrefix(id), hex) {
-				candidates = append(candidates, id)
-			}
-		}
-		sort.Strings(candidates)
-		if len(candidates) > ids.MaxAmbiguousCandidates {
-			candidates = candidates[:ids.MaxAmbiguousCandidates]
-		}
+		candidates := ambiguousCandidates(allIDs, idOrPrefix)
 		return LogErrorOutput{
-			Error:      "id_ambiguous",
-			Message:    fmt.Sprintf("act log: prefix %q matches %d ids", idOrPrefix, len(candidates)),
+			Error:   "id_ambiguous",
+			Message: fmt.Sprintf("act log: prefix %q matches %d issues", idOrPrefix, len(candidates)),
+			Details: map[string]any{
+				"prefix":     idOrPrefix,
+				"candidates": candidates,
+			},
 			Candidates: candidates,
 		}, 3
 	}
@@ -86,6 +82,7 @@ func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int)
 		return LogErrorOutput{
 			Error:   "issue_not_found",
 			Message: fmt.Sprintf("act log: no issue matches %q", idOrPrefix),
+			Details: map[string]any{"query": idOrPrefix},
 		}, 3
 	}
 

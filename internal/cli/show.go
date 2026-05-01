@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/aac/act/internal/config"
@@ -56,11 +55,14 @@ type ShowTombstoned struct {
 }
 
 // ShowErrorOutput is the structured shape returned to the caller when show
-// refuses. Candidates is non-nil only on the id_ambiguous path.
+// refuses. Candidates is non-nil only on the id_ambiguous path; it is also
+// mirrored under Details["candidates"] so the on-the-wire JSON envelope
+// matches spec §"Errors" (`details.candidates[]`).
 type ShowErrorOutput struct {
-	Error      string   `json:"error"`
-	Message    string   `json:"message"`
-	Candidates []string `json:"candidates,omitempty"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // RunShow implements `act show <id>`. It resolves the user-supplied id
@@ -100,21 +102,14 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 
 	full, ambiguous, found := ids.ResolvePrefix(allIDs, opts.ID)
 	if ambiguous {
-		// Re-scan to compose deterministic candidate list.
-		hex := normalizePrefix(opts.ID)
-		var candidates []string
-		for _, id := range allIDs {
-			if strings.HasPrefix(stripActPrefix(id), hex) {
-				candidates = append(candidates, id)
-			}
-		}
-		sort.Strings(candidates)
-		if len(candidates) > ids.MaxAmbiguousCandidates {
-			candidates = candidates[:ids.MaxAmbiguousCandidates]
-		}
+		candidates := ambiguousCandidates(allIDs, opts.ID)
 		return ShowErrorOutput{
-			Error:      "id_ambiguous",
-			Message:    fmt.Sprintf("act show: prefix %q matches %d ids", opts.ID, len(candidates)),
+			Error:   "id_ambiguous",
+			Message: fmt.Sprintf("act show: prefix %q matches %d issues", opts.ID, len(candidates)),
+			Details: map[string]any{
+				"prefix":     opts.ID,
+				"candidates": candidates,
+			},
 			Candidates: candidates,
 		}, 3
 	}
@@ -122,6 +117,7 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 		return ShowErrorOutput{
 			Error:   "issue_not_found",
 			Message: fmt.Sprintf("act show: no issue matches %q", opts.ID),
+			Details: map[string]any{"query": opts.ID},
 		}, 3
 	}
 
