@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/op"
 )
 
@@ -51,7 +52,7 @@ func TestRunCreate_HappyPath(t *testing.T) {
 	out, code := RunCreate(root, CreateOptions{
 		Title:    "fix bug",
 		Type:     "bug",
-		Priority: 1,
+		Priority: intPtr(1),
 	})
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
@@ -95,7 +96,7 @@ func TestRunCreate_PersistsAllPayloadFields(t *testing.T) {
 		Type:        "task",
 		Parent:      parent,
 		Accept:      []string{"a", "b"},
-		Priority:    2,
+		Priority:    intPtr(2),
 	})
 	if code != 0 {
 		t.Fatalf("create child: code = %d, out=%+v", code, out)
@@ -295,6 +296,115 @@ func TestRunCreate_ParentNotFound(t *testing.T) {
 	if e.Error != "issue_not_found" {
 		t.Errorf("error = %q", e.Error)
 	}
+}
+
+// TestRunCreate_PriorityValuesRoundTrip is the regression test for
+// dogfood-report.md finding #1: `act create -p 0 "title"` was producing an
+// issue with priority=1 because the old CLI normalized Priority==0 to the
+// default. We assert that every priority in {0,1,2,3} round-trips through
+// both the on-disk op payload and the rendered fold state.
+func TestRunCreate_PriorityValuesRoundTrip(t *testing.T) {
+	for _, want := range []int{0, 1, 2, 3} {
+		want := want
+		t.Run("priority="+strconvItoa(want), func(t *testing.T) {
+			root := makeCreateRepo(t)
+			out, code := RunCreate(root, CreateOptions{
+				Title:    "p" + strconvItoa(want),
+				Type:     "task",
+				Priority: intPtr(want),
+			})
+			if code != 0 {
+				t.Fatalf("code = %d; out=%+v", code, out)
+			}
+			id := out.(CreateResult).ID
+
+			// 1. Op payload on disk records exactly the requested priority,
+			//    including 0 (which is what the dogfood bug hid).
+			matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-create.json"))
+			if len(matches) != 1 {
+				t.Fatalf("expected 1 op file, got %d", len(matches))
+			}
+			body, err := os.ReadFile(matches[0])
+			if err != nil {
+				t.Fatalf("read op: %v", err)
+			}
+			env, err := op.Unmarshal(body)
+			if err != nil {
+				t.Fatalf("unmarshal env: %v", err)
+			}
+			var p op.CreatePayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				t.Fatalf("unmarshal payload: %v", err)
+			}
+			if p.Priority == nil {
+				t.Fatalf("payload priority = nil; want pointer to %d", want)
+			}
+			if *p.Priority != want {
+				t.Fatalf("payload priority = %d; want %d", *p.Priority, want)
+			}
+
+			// 2. Folded state renders the same priority. This catches a
+			//    regression where the apply layer might re-apply the
+			//    "0 -> 1" coercion.
+			paths := config.Layout(root)
+			state, err := fold.FoldIssue(paths.Ops, id, fold.ApplyDispatch)
+			if err != nil {
+				t.Fatalf("FoldIssue: %v", err)
+			}
+			got, ok := state.Fields["priority"].(int)
+			if !ok {
+				t.Fatalf("rendered priority field type = %T (%v); want int", state.Fields["priority"], state.Fields["priority"])
+			}
+			if got != want {
+				t.Fatalf("rendered priority = %d; want %d", got, want)
+			}
+		})
+	}
+}
+
+// TestRunCreate_PriorityNilDefaults verifies that omitting Priority (the
+// caller passing nil) still defaults to 1 — i.e. the fix for -p 0 must not
+// regress the "no flag" path that all the existing tests rely on.
+func TestRunCreate_PriorityNilDefaults(t *testing.T) {
+	root := makeCreateRepo(t)
+	out, code := RunCreate(root, CreateOptions{Title: "default", Type: "task"})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	id := out.(CreateResult).ID
+
+	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-create.json"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 op file, got %d", len(matches))
+	}
+	body, _ := os.ReadFile(matches[0])
+	env, err := op.Unmarshal(body)
+	if err != nil {
+		t.Fatalf("unmarshal env: %v", err)
+	}
+	var p op.CreatePayload
+	if err := json.Unmarshal(env.Payload, &p); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if p.Priority == nil || *p.Priority != 1 {
+		t.Fatalf("default priority = %v; want pointer to 1", p.Priority)
+	}
+}
+
+// strconvItoa is a tiny inline wrapper so this file does not have to import
+// strconv just for the priority subtest names.
+func strconvItoa(i int) string {
+	switch i {
+	case 0:
+		return "0"
+	case 1:
+		return "1"
+	case 2:
+		return "2"
+	case 3:
+		return "3"
+	}
+	return "?"
 }
 
 // writeCloseOp writes a minimal close op to the given parent's shard so

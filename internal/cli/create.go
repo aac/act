@@ -22,9 +22,10 @@ import (
 type CreateOptions struct {
 	// Title is the positional argument; required, non-empty, ≤256 bytes.
 	Title string
-	// Priority is the spec priority enum. 0 (unset) is normalised to 1
-	// before payload construction.
-	Priority int
+	// Priority is the spec priority enum (0..3). nil means "not supplied"
+	// and is normalised to the spec default (1) before payload construction.
+	// A non-nil pointer to 0 (i.e. `-p 0`) is preserved as priority=0.
+	Priority *int
 	// Type is the issue-type enum (task|bug|epic|chore). Empty defaults to
 	// "task".
 	Type string
@@ -124,9 +125,12 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Message: fmt.Sprintf("act create: --type %q: must be one of task|bug|epic|chore", typ),
 		}, 2
 	}
-	priority := opts.Priority
-	if priority == 0 {
-		priority = 1
+	// Priority defaults to 1 when the caller did not pass --priority. An
+	// explicit -p 0 (Priority pointing at 0) is preserved verbatim so the
+	// payload records priority=0 and not the default.
+	priority := 1
+	if opts.Priority != nil {
+		priority = *opts.Priority
 	}
 	if priority < 0 || priority > 3 {
 		return CreateErrorOutput{
