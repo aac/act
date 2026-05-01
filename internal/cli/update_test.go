@@ -53,6 +53,41 @@ func TestRunUpdate_DescriptionOnly(t *testing.T) {
 	}
 }
 
+// TestRunUpdate_DescriptionRoundTripsAsString: regression for the
+// canonicaljson + json.RawMessage bug, which produced an on-disk update_field
+// op whose `value` was the byte-array form of "new description text".
+// After update + show the description must come back as the literal string,
+// not as [34, 110, 101, ...] bytes.
+func TestRunUpdate_DescriptionRoundTripsAsString(t *testing.T) {
+	root, id := makeUpdateRepoWithIssue(t)
+	const desc = "new description text"
+	if _, code := RunUpdate(root, UpdateOptions{
+		ID:          id,
+		Description: strPtr(desc),
+	}); code != 0 {
+		t.Fatalf("update: code = %d", code)
+	}
+	out, code := RunShow(root, ShowOptions{ID: id})
+	if code != 0 {
+		t.Fatalf("show: code = %d, out=%+v", code, out)
+	}
+	res, ok := out.(ShowResult)
+	if !ok {
+		t.Fatalf("show output type = %T, want ShowResult", out)
+	}
+	got, ok := res.Fields["description"]
+	if !ok {
+		t.Fatalf("description missing from show output: %+v", res.Fields)
+	}
+	gotStr, ok := got.(string)
+	if !ok {
+		t.Fatalf("description type = %T (%v), want string", got, got)
+	}
+	if gotStr != desc {
+		t.Errorf("description = %q, want %q", gotStr, desc)
+	}
+}
+
 // TestRunUpdate_MultiFieldGenerates2Ops: two flags → two ops.
 func TestRunUpdate_MultiFieldGenerates2Ops(t *testing.T) {
 	root, id := makeUpdateRepoWithIssue(t)

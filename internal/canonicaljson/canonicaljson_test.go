@@ -1,6 +1,7 @@
 package canonicaljson
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -215,6 +216,76 @@ func TestKeySortByteWise(t *testing.T) {
 	want := "{\"Z\":2,\"a\":1,\"aa\":4,\"ä\":3}"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestRawMessagePassthrough ensures json.RawMessage fields are emitted as
+// the JSON value they encode, NOT as the underlying []byte rendered as an
+// array of integers. Regression test for the canonicaljson + UpdateFieldPayload
+// round-trip bug where `act update --description X` produced a description
+// that came back from `show --json` as [34, ...] (a byte array) instead of
+// the literal string.
+func TestRawMessagePassthrough(t *testing.T) {
+	type wrapper struct {
+		Field string          `json:"field"`
+		Value json.RawMessage `json:"value"`
+	}
+	w := wrapper{Field: "description", Value: json.RawMessage(`"hello"`)}
+	got := mustMarshal(t, w)
+	want := `{"field":"description","value":"hello"}`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestRawMessageRecanonicalizes ensures that a non-canonical RawMessage
+// (e.g. with whitespace or unsorted keys) is re-emitted canonically.
+func TestRawMessageRecanonicalizes(t *testing.T) {
+	type wrapper struct {
+		V json.RawMessage `json:"v"`
+	}
+	w := wrapper{V: json.RawMessage(`{ "b": 1, "a": 2 }`)}
+	got := mustMarshal(t, w)
+	want := `{"v":{"a":2,"b":1}}`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestRawMessageTopLevel: a bare RawMessage marshals as the value it encodes.
+func TestRawMessageTopLevel(t *testing.T) {
+	got := mustMarshal(t, json.RawMessage(`"hello"`))
+	if got != `"hello"` {
+		t.Fatalf("got %q, want %q", got, `"hello"`)
+	}
+	got = mustMarshal(t, json.RawMessage(`123`))
+	if got != "123" {
+		t.Fatalf("got %q, want %q", got, "123")
+	}
+}
+
+// TestRawMessageEmpty: an empty RawMessage is treated as null (rather than
+// raising an unmarshal error).
+func TestRawMessageEmpty(t *testing.T) {
+	type wrapper struct {
+		V json.RawMessage `json:"v"`
+	}
+	w := wrapper{V: nil}
+	got := mustMarshal(t, w)
+	want := `{"v":null}`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestRawMessageInvalid: an invalid RawMessage surfaces an error.
+func TestRawMessageInvalid(t *testing.T) {
+	type wrapper struct {
+		V json.RawMessage `json:"v"`
+	}
+	_, err := Marshal(wrapper{V: json.RawMessage(`not json`)})
+	if err == nil {
+		t.Fatalf("expected error for invalid json.RawMessage, got nil")
 	}
 }
 
