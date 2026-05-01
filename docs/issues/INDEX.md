@@ -73,7 +73,7 @@ The DAG is the source of truth: phases are for human readability, dependencies a
 Triaged 2026-05-01 (see docs/triage.md).
 
 - act-g001-gap [closed] act show should surface closer identity for audit (deps: -) [fix-now]
-- act-g002-gap [open] act reopen <id> CLI command (deps: -) [fix-now]
+- act-g002-gap [closed] act reopen <id> CLI command (deps: -) [fix-now]
 - act-g003-gap [open, v0.2] act create --blocked-by and composed act_file_blocker MCP tool (deps: -)
 - act-g004-gap [open, v0.2] act mine and act ready --mine for self-scoped queries (deps: -)
 - act-g005-gap [open, v0.2] act dep add direction aliases (--blocks, --blocked-by) (deps: -)

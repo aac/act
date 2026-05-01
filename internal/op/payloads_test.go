@@ -384,6 +384,7 @@ func TestValidatePayload_AllOpTypes(t *testing.T) {
 		{"remove_accept", `{"index":0}`},
 		{"claim", `{"assignee":"alice"}`},
 		{"close", `{"reason":"done"}`},
+		{"reopen", `{"reason":"regressed"}`},
 		{"redact", `{"field_path":"description","replacement":"<redacted>"}`},
 		{"import", `{"source_ref":"github:owner/repo#1"}`},
 		{"migrate", `{"from_version":1,"to_version":2}`},

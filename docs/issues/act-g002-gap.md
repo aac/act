@@ -8,8 +8,9 @@ acceptance_criteria:
   - "Subsequent `act show` reflects the reopened state."
   - "`act update --status open` on a closed issue continues to be rejected (spec §5.A.4); the test suite asserts both behaviors."
   - "Standard universal flags apply (`--no-commit`, `--push`, `--isolated`, `--verify`)."
-status: open
+status: closed
 created_at: 2026-04-29T13:00:00Z
+closed_at: 2026-05-01T04:40:00Z
 ---
 
 # act reopen <id> CLI command
