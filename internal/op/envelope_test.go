@@ -40,8 +40,8 @@ func TestValidate_AllOpTypes(t *testing.T) {
 			t.Errorf("op_type %q: Validate: %v", opType, err)
 		}
 	}
-	if len(ValidOpTypes) != 12 {
-		t.Fatalf("ValidOpTypes has %d entries, want 12", len(ValidOpTypes))
+	if len(ValidOpTypes) != 13 {
+		t.Fatalf("ValidOpTypes has %d entries, want 13", len(ValidOpTypes))
 	}
 }
 

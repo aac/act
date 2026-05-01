@@ -1,0 +1,57 @@
+{
+  "id": "act-aaaa",
+  "fields": {
+    "accept": [],
+    "closed_at": "2023-11-14T22:13:21.000Z",
+    "closed_by_node": "11111111",
+    "closed_reason": "done",
+    "created_at": "2023-11-14T22:13:20.000Z",
+    "priority": 1,
+    "status": "closed",
+    "title": "t",
+    "type": "task"
+  },
+  "last_hlc": {
+    "accept": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "closed_at": {
+      "wall": "2023-11-14T22:13:21.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "closed_by_node": {
+      "wall": "2023-11-14T22:13:21.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "closed_reason": {
+      "wall": "2023-11-14T22:13:21.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "priority": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "status": {
+      "wall": "2023-11-14T22:13:21.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "title": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    },
+    "type": {
+      "wall": "2023-11-14T22:13:20.000Z",
+      "logical": 0,
+      "node_id": "11111111"
+    }
+  },
+  "tombstoned": false
+}
