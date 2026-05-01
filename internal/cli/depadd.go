@@ -54,9 +54,14 @@ type DepAddResult struct {
 }
 
 // DepAddErrorOutput is the structured failure envelope (non-cycle).
+// Candidates is non-nil only on the id_ambiguous path; it is also mirrored
+// under Details["candidates"] so the on-the-wire JSON envelope matches spec
+// §"Errors" (`details.candidates[]`).
 type DepAddErrorOutput struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // DepAddCycleOutput is the structured cycle failure envelope. The path
@@ -371,18 +376,26 @@ func resolveDepID(arg, label string, knownIDs []string) (string, int, any) {
 		return "", 3, DepAddErrorOutput{
 			Error:   "issue_not_found",
 			Message: fmt.Sprintf("act dep add: %s %q: no matching id", label, arg),
+			Details: map[string]any{"query": arg},
 		}
 	}
 	var amb *ids.ErrAmbiguousID
 	if errors.As(rerr, &amb) {
-		return "", 2, DepAddErrorOutput{
-			Error:   "ambiguous_id",
-			Message: fmt.Sprintf("act dep add: %s %q: %s", label, arg, rerr.Error()),
+		candidates := amb.Candidates()
+		return "", 3, DepAddErrorOutput{
+			Error:   "id_ambiguous",
+			Message: fmt.Sprintf("act dep add: %s %q matches %d issues", label, arg, len(candidates)),
+			Details: map[string]any{
+				"prefix":     arg,
+				"candidates": candidates,
+			},
+			Candidates: candidates,
 		}
 	}
 	return "", 3, DepAddErrorOutput{
 		Error:   "issue_not_found",
 		Message: rerr.Error(),
+		Details: map[string]any{"query": arg},
 	}
 }
 

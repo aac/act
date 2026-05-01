@@ -22,7 +22,7 @@ func runImport(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "act import: usage: act import <path-to-jsonl> [--json] [--no-commit] [--push]")
+		emitBadFlag(*asJSON, "act import: usage: act import <path-to-jsonl> [--json] [--no-commit] [--push]")
 		return 2
 	}
 	jsonl := fs.Arg(0)
@@ -82,20 +82,5 @@ func runImport(args []string) int {
 
 // emitImportError mirrors the other emit*Error helpers.
 func emitImportError(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act import: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }

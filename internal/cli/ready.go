@@ -42,10 +42,14 @@ type ReadyResult struct {
 	Count int          `json:"count"`
 }
 
-// ReadyErrorOutput is the failure envelope.
+// ReadyErrorOutput is the failure envelope. Candidates is non-nil only on
+// the id_ambiguous path; it is also mirrored under Details["candidates"] so
+// the on-the-wire JSON envelope matches spec §"Errors".
 type ReadyErrorOutput struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // defaultReadyLimit matches spec §act ready: bound the result count at 50
@@ -158,15 +162,22 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		}
 		full, ambiguous, found := ids.ResolvePrefix(allIDs, opts.Under)
 		if ambiguous {
+			candidates := ambiguousCandidates(allIDs, opts.Under)
 			return ReadyErrorOutput{
-				Error:   "ambiguous_id",
-				Message: fmt.Sprintf("act ready: --under %q: ambiguous prefix", opts.Under),
-			}, 2
+				Error:   "id_ambiguous",
+				Message: fmt.Sprintf("act ready: --under %q matches %d issues", opts.Under, len(candidates)),
+				Details: map[string]any{
+					"prefix":     opts.Under,
+					"candidates": candidates,
+				},
+				Candidates: candidates,
+			}, 3
 		}
 		if !found {
 			return ReadyErrorOutput{
-				Error:   "not_found",
+				Error:   "issue_not_found",
 				Message: fmt.Sprintf("act ready: --under %q: no matching issue", opts.Under),
+				Details: map[string]any{"query": opts.Under},
 			}, 3
 		}
 		descendants := descendantSet(full, byID)

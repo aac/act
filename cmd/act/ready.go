@@ -63,22 +63,7 @@ func runReady(args []string) int {
 }
 
 // emitReadyError renders the ready error envelope to stderr (human form)
-// or stdout (JSON form).
+// or stdout (JSON form). Delegates to the shared emitEnvelope helper.
 func emitReadyError(asJSON bool, payload map[string]any) {
-	if asJSON {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act ready: json marshal: %v\n", err)
-			return
-		}
-		fmt.Println(string(data))
-		return
-	}
-	if msg, _ := payload["message"].(string); msg != "" {
-		fmt.Fprintln(os.Stderr, msg)
-		return
-	}
-	if e, _ := payload["error"].(string); e != "" {
-		fmt.Fprintln(os.Stderr, e)
-	}
+	emitEnvelope(asJSON, payload)
 }

@@ -55,10 +55,15 @@ type CreateResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// CreateErrorOutput is the structured shape returned on failure.
+// CreateErrorOutput is the structured shape returned on failure. Candidates
+// is non-nil only on the id_ambiguous path (resolving --parent); it is also
+// mirrored under Details["candidates"] so the on-the-wire JSON envelope
+// matches spec §"Errors" (`details.candidates[]`).
 type CreateErrorOutput struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // validCreateTypes mirrors op.validIssueTypes; replicated locally to avoid
@@ -174,18 +179,26 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 				return CreateErrorOutput{
 					Error:   "issue_not_found",
 					Message: fmt.Sprintf("act create: --parent %q: no matching id", opts.Parent),
+					Details: map[string]any{"query": opts.Parent},
 				}, 3
 			}
 			var amb *ids.ErrAmbiguousID
 			if errors.As(rerr, &amb) {
+				candidates := amb.Candidates()
 				return CreateErrorOutput{
-					Error:   "ambiguous_id",
-					Message: rerr.Error(),
-				}, 2
+					Error:   "id_ambiguous",
+					Message: fmt.Sprintf("act create: --parent %q matches %d issues", opts.Parent, len(candidates)),
+					Details: map[string]any{
+						"prefix":     opts.Parent,
+						"candidates": candidates,
+					},
+					Candidates: candidates,
+				}, 3
 			}
 			return CreateErrorOutput{
 				Error:   "issue_not_found",
 				Message: rerr.Error(),
+				Details: map[string]any{"query": opts.Parent},
 			}, 3
 		}
 		parentFull = full
