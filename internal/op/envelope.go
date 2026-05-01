@@ -44,6 +44,7 @@ var ValidOpTypes = map[string]bool{
 	"remove_accept": true,
 	"claim":         true,
 	"close":         true,
+	"reopen":        true,
 	"redact":        true,
 	"import":        true,
 	"migrate":       true,

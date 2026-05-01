@@ -59,6 +59,8 @@ func ApplyDispatch(opType string) ApplyFunc {
 		return applyClaim
 	case "close":
 		return applyClose
+	case "reopen":
+		return applyReopen
 	case "redact":
 		return applyRedact
 	case "import":
@@ -353,19 +355,10 @@ func applyClose(state *IssueState, env op.Envelope, payload []byte) error {
 	return nil
 }
 
-func isClosed(state *IssueState) bool {
-	v, ok := state.Fields["status"]
-	if !ok {
-		return false
-	}
-	s, _ := v.(string)
-	return s == "closed"
-}
-
 // applyReopen reverses a close: it sets status back to "open" and clears
-// closed_at / closed_reason. Per spec §5.B.4 the LWW high-water marks for
-// these fields are reset to the reopen op's HLC so subsequent updates
-// aren't blocked by stale HLCs from before the close.
+// closed_at / closed_reason / closed_by_node. Per spec §5.B.4 the LWW
+// high-water marks for these fields are reset to the reopen op's HLC so
+// subsequent updates aren't blocked by stale HLCs from before the close.
 //
 // The op is idempotent on an already-open issue: the status LWW gate
 // admits the reopen only when env.HLC dominates the current status
@@ -389,6 +382,15 @@ func applyReopen(state *IssueState, env op.Envelope, payload []byte) error {
 	state.LastHLC["closed_reason"] = env.HLC
 	state.LastHLC["closed_by_node"] = env.HLC
 	return nil
+}
+
+func isClosed(state *IssueState) bool {
+	v, ok := state.Fields["status"]
+	if !ok {
+		return false
+	}
+	s, _ := v.(string)
+	return s == "closed"
 }
 
 // applyRedact records a redacted field path. Rendering enforcement happens

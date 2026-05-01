@@ -7,8 +7,9 @@ acceptance_criteria:
   - "Doctor `dangling-deps` continues to flag deps pointing at tombstoned ids."
   - "Standard universal flags apply."
   - "The command refuses to delete an issue with non-tombstoned descendants unless `--cascade` is set; `--cascade` walks the parent edge and tombstones each."
-status: open
+status: closed
 created_at: 2026-04-29T13:00:00Z
+closed_at: 2026-05-01T00:00:00Z
 ---
 
 # act delete <id> CLI command (tombstone op)
