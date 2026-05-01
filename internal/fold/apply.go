@@ -324,9 +324,17 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte) error {
 	return nil
 }
 
-// applyClose sets status=closed plus closed_at and closed_reason. Once
-// closed, the LWW gate on "status" prevents subsequent claims from
-// reverting it (because the close stamp dominates).
+// applyClose sets status=closed plus closed_at, closed_reason, and the
+// closer's node_id (closed_by_node) for audit. Once closed, the LWW gate
+// on "status" prevents subsequent claims from reverting it (because the
+// close stamp dominates).
+//
+// closed_by_tree (the git tree hash at close time) is intentionally NOT
+// surfaced here: the envelope does not carry it, and the SQLite index's
+// closed_by_tree column is populated post-commit by the close writer.
+// Surfacing it through the fold path is deferred until the envelope
+// schema carries it; for now `act show` reads closed_by_node from the
+// op stream (which is sufficient for the audit acceptance criteria).
 func applyClose(state *IssueState, env op.Envelope, payload []byte) error {
 	var p op.ClosePayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -340,6 +348,8 @@ func applyClose(state *IssueState, env op.Envelope, payload []byte) error {
 	state.LastHLC["closed_at"] = env.HLC
 	state.Fields["closed_reason"] = p.Reason
 	state.LastHLC["closed_reason"] = env.HLC
+	state.Fields["closed_by_node"] = env.NodeID
+	state.LastHLC["closed_by_node"] = env.HLC
 	return nil
 }
 
@@ -350,6 +360,35 @@ func isClosed(state *IssueState) bool {
 	}
 	s, _ := v.(string)
 	return s == "closed"
+}
+
+// applyReopen reverses a close: it sets status back to "open" and clears
+// closed_at / closed_reason. Per spec §5.B.4 the LWW high-water marks for
+// these fields are reset to the reopen op's HLC so subsequent updates
+// aren't blocked by stale HLCs from before the close.
+//
+// The op is idempotent on an already-open issue: the status LWW gate
+// admits the reopen only when env.HLC dominates the current status
+// stamp. A reopen older than a subsequent close is dominated and
+// ignored, preserving close-LWW semantics.
+func applyReopen(state *IssueState, env op.Envelope, payload []byte) error {
+	var p op.ReopenPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("reopen: unmarshal: %w", err)
+	}
+	_ = p // reason is recorded in the op log; not persisted to state today.
+	if cur, ok := state.LastHLC["status"]; ok && !cur.Less(env.HLC) {
+		return nil
+	}
+	state.Fields["status"] = "open"
+	state.LastHLC["status"] = env.HLC
+	delete(state.Fields, "closed_at")
+	delete(state.Fields, "closed_reason")
+	delete(state.Fields, "closed_by_node")
+	state.LastHLC["closed_at"] = env.HLC
+	state.LastHLC["closed_reason"] = env.HLC
+	state.LastHLC["closed_by_node"] = env.HLC
+	return nil
 }
 
 // applyRedact records a redacted field path. Rendering enforcement happens

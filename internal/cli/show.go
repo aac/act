@@ -249,6 +249,9 @@ func formatShowFields(res ShowResult) string {
 	if reason, ok := f["closed_reason"].(string); ok && reason != "" {
 		fmt.Fprintf(&b, "closed_reason: %s\n", reason)
 	}
+	if closer, ok := f["closed_by_node"].(string); ok && closer != "" {
+		fmt.Fprintf(&b, "closed_by_node: %s\n", closer)
+	}
 	return b.String()
 }
 
