@@ -95,7 +95,7 @@ func (p CreatePayload) Validate() error {
 			return fmt.Errorf("op: create.accept[%d] is empty", i)
 		}
 		if len(c) > 500 {
-			return fmt.Errorf("op: create.accept[%d] length %d > 500", i, len(c))
+			return fmt.Errorf("op: create.accept[%d] length %d > 500 bytes (see 'act help workflow' for cap rationale)", i, len(c))
 		}
 	}
 	if !nonceLooksValid(p.Nonce) {
@@ -178,7 +178,7 @@ func (p AddAcceptPayload) Validate() error {
 		return fmt.Errorf("op: add_accept.criterion is empty")
 	}
 	if len(p.Criterion) > 500 {
-		return fmt.Errorf("op: add_accept.criterion length %d > 500", len(p.Criterion))
+		return fmt.Errorf("op: add_accept.criterion length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Criterion))
 	}
 	return nil
 }
@@ -217,7 +217,7 @@ type ClosePayload struct {
 // Validate implements the close write-time rules.
 func (p ClosePayload) Validate() error {
 	if len(p.Reason) > 500 {
-		return fmt.Errorf("op: close.reason length %d > 500", len(p.Reason))
+		return fmt.Errorf("op: close.reason length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Reason))
 	}
 	return nil
 }
@@ -233,7 +233,7 @@ type ReopenPayload struct {
 // Validate implements the reopen write-time rules.
 func (p ReopenPayload) Validate() error {
 	if len(p.Reason) > 500 {
-		return fmt.Errorf("op: reopen.reason length %d > 500", len(p.Reason))
+		return fmt.Errorf("op: reopen.reason length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Reason))
 	}
 	return nil
 }
