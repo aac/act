@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/gitops"
 )
 
 // rfc3339Millis is the millisecond-precision RFC 3339 layout used throughout
@@ -26,18 +27,32 @@ type errorOutput struct {
 }
 
 // successOutput is the structured shape returned on a successful init.
+// Committed reflects whether RunInit auto-committed the new .act/ +
+// .gitignore changes; CommitError carries the message if commit was
+// requested but failed (the on-disk state is still valid; the user just
+// needs to commit manually).
 type successOutput struct {
-	OK     bool   `json:"ok"`
-	ActDir string `json:"act_dir"`
-	NodeID string `json:"node_id"`
+	OK          bool   `json:"ok"`
+	ActDir      string `json:"act_dir"`
+	NodeID      string `json:"node_id"`
+	Committed   bool   `json:"committed"`
+	CommitError string `json:"commit_error,omitempty"`
 }
 
 // RunInit executes the `act init` command logic. It is decoupled from
 // stdin/stdout/exec so tests can drive it directly.
 //
+// When commit is true, RunInit stages and commits .act/ + .gitignore in a
+// single commit so the project owner (or an agent) doesn't have to remember
+// to commit manually. Stages only those specific paths — never -A — so
+// pre-existing dirty work stays out of the commit. If the commit step
+// fails (e.g. unstaged conflicting changes, hooks rejecting), the on-disk
+// state is still valid; the failure is reported via CommitError and the
+// user can commit manually.
+//
 // Returns a JSON-encodable value (errorOutput on failure, successOutput on
 // success) plus a process exit code.
-func RunInit(repoRoot string, force bool, machineID, gitEmail string, now func() time.Time) (any, int) {
+func RunInit(repoRoot string, force, commit bool, machineID, gitEmail string, now func() time.Time) (any, int) {
 	if now == nil {
 		now = time.Now
 	}
@@ -92,11 +107,31 @@ func RunInit(repoRoot string, force bool, machineID, gitEmail string, now func()
 		}, 1
 	}
 
-	return successOutput{
+	out := successOutput{
 		OK:     true,
 		ActDir: paths.Root,
 		NodeID: nodeID,
-	}, 0
+	}
+
+	// Auto-commit step. Never `-A` — only the paths we just wrote, so pre-
+	// existing dirty work in the tree stays out of this commit.
+	if commit {
+		gops := gitops.NewGitOps(repoRoot)
+		if err := gops.StageOpFile(".act"); err != nil {
+			out.CommitError = fmt.Sprintf("git add .act: %v", err)
+			return out, 0
+		}
+		if err := gops.StageOpFile(".gitignore"); err != nil {
+			out.CommitError = fmt.Sprintf("git add .gitignore: %v", err)
+			return out, 0
+		}
+		if err := gops.Commit("act init: tracker initialized"); err != nil {
+			out.CommitError = fmt.Sprintf("git commit: %v", err)
+			return out, 0
+		}
+		out.Committed = true
+	}
+	return out, 0
 }
 
 // hasGitDir reports whether repoRoot or any of its ancestors contains a
