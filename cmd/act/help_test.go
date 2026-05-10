@@ -28,6 +28,7 @@ func TestRunHelpDefault(t *testing.T) {
 		"(act-",
 		"act help workflow",
 		"act help ops-model",
+		"act help errors",
 	})
 }
 
@@ -84,8 +85,62 @@ func TestRunHelpUnknownTopic(t *testing.T) {
 	if !strings.Contains(errOut, "bogus") {
 		t.Errorf("stderr should name the unknown topic; got %q", errOut)
 	}
-	if !strings.Contains(errOut, "workflow") || !strings.Contains(errOut, "ops-model") {
+	if !strings.Contains(errOut, "workflow") || !strings.Contains(errOut, "ops-model") || !strings.Contains(errOut, "errors") {
 		t.Errorf("stderr should list valid topics; got %q", errOut)
+	}
+}
+
+// TestRunHelpErrors asserts that the error-envelope topic covers every
+// load-bearing piece of the contract: shape, the always-present details
+// key, a representative slice of code categories from both tiers, the
+// byte-counted length rule with a pointer to its precedent, and how to
+// emit. If a future change drops one of these, an agent picking up an
+// unrelated issue would have to fall back to reading internal/cli/
+// errors.go — which is exactly the regression act-acd9 was filed to
+// prevent.
+func TestRunHelpErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if got := runHelpTo(&stdout, &stderr, []string{"errors"}); got != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", got, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("unexpected stderr: %q", stderr.String())
+	}
+	out := stdout.String()
+	mustContain(t, out, []string{
+		// Shape.
+		"ENVELOPE SHAPE",
+		`"error"`,
+		`"message"`,
+		`"details"`,
+		"always present",
+		// Code categories called out by the issue's accept criteria.
+		"bad_flag",
+		"id_ambiguous",
+		// At least one canonical spec code and one internal/per-command code
+		// beyond the ones the accept line names.
+		"not_in_git",
+		"claim_failed",
+		// Byte-counted length rule + precedent file.
+		"byte",
+		"internal/op/payloads.go",
+		// How to emit (so a new error path can be implemented from this page).
+		"cli.New",
+		"cli.Emit",
+	})
+}
+
+// TestRunHelpErrorsAliases lets agents reach the topic under a few
+// natural spellings.
+func TestRunHelpErrorsAliases(t *testing.T) {
+	for _, alias := range []string{"errors", "error", "error-envelope", "ERRORS"} {
+		var stdout, stderr bytes.Buffer
+		if got := runHelpTo(&stdout, &stderr, []string{alias}); got != 0 {
+			t.Errorf("alias %q: exit = %d, want 0; stderr=%q", alias, got, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "ENVELOPE SHAPE") {
+			t.Errorf("alias %q: missing errors content", alias)
+		}
 	}
 }
 
