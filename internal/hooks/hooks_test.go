@@ -31,10 +31,13 @@ func TestResolveHookMapsOpType(t *testing.T) {
 		t.Skip("perm bits not honored on windows")
 	}
 	dir := t.TempDir()
+	// Hook filenames mirror the op-type 1:1 (act-8277 renamed from
+	// the historical post-<op> form so it matches every doc and the
+	// existing .act/hooks/close gate in the act repo).
 	for opType, fname := range map[string]string{
-		"create": "post-create",
-		"close":  "post-close",
-		"claim":  "post-claim",
+		"create": "create",
+		"close":  "close",
+		"claim":  "claim",
 	} {
 		want := writeScript(t, dir, fname, "#!/bin/sh\nexit 0\n", 0o755)
 		got, ok := ResolveHook(dir, opType)
@@ -44,10 +47,27 @@ func TestResolveHookMapsOpType(t *testing.T) {
 	}
 }
 
+// TestResolveHookMatchesDocs is the regression test for act-8277. The
+// docs (CLAUDE.md, the act skill, `act help workflow`) all promise that
+// an executable `.act/hooks/close` runs on every close. The original
+// recognized map used `post-close` and silently no-op'd. This test
+// pins the contract at the doc-quoted name so the bug can't return.
+func TestResolveHookMatchesDocs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("perm bits not honored on windows")
+	}
+	dir := t.TempDir()
+	want := writeScript(t, dir, "close", "#!/bin/sh\nexit 0\n", 0o755)
+	got, ok := ResolveHook(dir, "close")
+	if !ok || got != want {
+		t.Fatalf("ResolveHook(\"close\") = (%q, %t); want (%q, true) — the doc-quoted .act/hooks/close filename must resolve", got, ok, want)
+	}
+}
+
 func TestResolveHookUnknownOpType(t *testing.T) {
 	dir := t.TempDir()
 	// Even if a file exists, unknown op-types should not resolve.
-	writeScript(t, dir, "post-create", "#!/bin/sh\nexit 0\n", 0o755)
+	writeScript(t, dir, "create", "#!/bin/sh\nexit 0\n", 0o755)
 	for _, opType := range []string{"update_field", "redact", "import", "", "post-fold"} {
 		if path, ok := ResolveHook(dir, opType); ok {
 			t.Errorf("ResolveHook(%q) = (%q, true); want (\"\", false)", opType, path)
@@ -60,7 +80,7 @@ func TestResolveHookNotExecutable(t *testing.T) {
 		t.Skip("perm bits not honored on windows")
 	}
 	dir := t.TempDir()
-	writeScript(t, dir, "post-create", "#!/bin/sh\nexit 0\n", 0o644)
+	writeScript(t, dir, "create", "#!/bin/sh\nexit 0\n", 0o644)
 	if path, ok := ResolveHook(dir, "create"); ok {
 		t.Fatalf("ResolveHook returned (%q, true) for non-executable hook", path)
 	}

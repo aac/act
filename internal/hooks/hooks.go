@@ -1,12 +1,18 @@
 // Package hooks implements the runtime contract for `.act/hooks/*` scripts
 // described by spec §"Errors, hooks, migration..." §2.
 //
-// Discovery: only three filenames are recognized — `post-create`,
-// `post-close`, and `post-claim`. Despite the names, all three execute
-// pre-commit-op (between op-write/stage and op-commit) so a non-zero exit
-// cleanly aborts the op. The names persist as the only three recognized
-// hook files for v0.1; future phases (`pre-commit-op`, `post-fold`,
-// `post-compact`) are reserved and MUST NOT be loaded by this package.
+// Discovery: only three filenames are recognized — `create`, `close`,
+// `claim`. They execute pre-commit-op (between op-write/stage and
+// op-commit) so a non-zero exit cleanly aborts the op. Future phases
+// (`pre-commit-op`, `post-fold`, `post-compact`) are reserved and MUST
+// NOT be loaded by this package.
+//
+// Naming history (act-8277): an earlier version of this package used
+// `post-<op>` filenames internally while every doc + every concrete
+// hook script in the act repo used the bare op-type name. The
+// mismatch silently no-op'd every hook in the act repo. The bare
+// names now match what CLAUDE.md, the act-skill, and `act help
+// workflow` document.
 //
 // Caller invariant: hooks NEVER run during `act fold` (read-only),
 // replay/recovery, `act import`, or fresh `git clone`. The invariant is
@@ -34,18 +40,26 @@ import (
 type Phase string
 
 // PhasePreCommitOp is the only phase recognized in v0.1. All three hook
-// files (`post-create`, `post-close`, `post-claim`) actually run at this
-// phase — between `git add` of the op file and `git commit`.
+// files (`create`, `close`, `claim`) actually run at this phase — between
+// `git add` of the op file and `git commit`.
 const PhasePreCommitOp Phase = "pre-commit-op"
 
-// recognized maps op_type → hook filename. Other op-types skip hook
-// execution entirely (caller does not invoke ResolveHook for them, but
-// ResolveHook itself returns ("", false) for unknown op-types as a
-// belt-and-braces guard).
+// recognized maps op_type → hook filename. The filename mirrors the
+// op-type 1:1 (the same name CLAUDE.md, the act-skill, and `act help
+// workflow` all use). Other op-types skip hook execution entirely
+// (caller does not invoke ResolveHook for them, but ResolveHook itself
+// returns ("", false) for unknown op-types as a belt-and-braces guard).
+//
+// Note (act-8277): the original v0.1 map used `post-<op>` filenames
+// but every doc + every existing hook file in this repo uses the bare
+// op-type name. The mismatch meant ResolveHook silently returned
+// ("", false) on every close, the `.act/hooks/close` gate never fired,
+// and gofmt/vet/test drift reached CI without being caught locally.
+// The post- prefix is now dropped to match what's documented.
 var recognized = map[string]string{
-	"create": "post-create",
-	"close":  "post-close",
-	"claim":  "post-claim",
+	"create": "create",
+	"close":  "close",
+	"claim":  "claim",
 }
 
 // HookContext carries the per-invocation environment for a hook. OpJSON

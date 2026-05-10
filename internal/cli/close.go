@@ -83,12 +83,17 @@ const closeReasonMaxBytes = 4096
 // RunClose implements `act close`.
 //
 // Steps:
+//
 //  1. Require a git working tree + initialised .act/. Missing → exit 3.
+//
 //  2. Resolve opts.ID via the prefix pipeline.
+//
 //  3. Fold the issue (via index rebuild). If status is already "closed",
 //     return idempotent exit 0 with `{id, already_closed:true}` and write
 //     no op.
+//
 //  4. Build a close envelope carrying ClosePayload{Reason: opts.Reason}.
+//
 //  5. Write the op file; run the post-close hook (pre-commit per the
 //     hooks contract); stage the op file. Then decide whether to commit:
 //

@@ -135,7 +135,7 @@ func TestWriteOpAndAutoCommitHookSuccess(t *testing.T) {
 	g := gitops.NewGitOps(dir)
 	env, body := fixedEnvelope(t)
 
-	hookPath := filepath.Join(paths.Hooks, "post-claim")
+	hookPath := filepath.Join(paths.Hooks, "claim")
 	marker := filepath.Join(dir, "hook-fired")
 	script := "#!/bin/sh\ntouch " + marker + "\nexit 0\n"
 	if err := os.WriteFile(hookPath, []byte(script), 0o755); err != nil {
@@ -166,7 +166,7 @@ func TestWriteOpAndAutoCommitHookFailure(t *testing.T) {
 	env, body := fixedEnvelope(t)
 	headBefore := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "HEAD"))
 
-	hookPath := filepath.Join(paths.Hooks, "post-claim")
+	hookPath := filepath.Join(paths.Hooks, "claim")
 	script := "#!/bin/sh\nprintf 'boom' 1>&2\nexit 1\n"
 	if err := os.WriteFile(hookPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write hook: %v", err)
