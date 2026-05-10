@@ -119,11 +119,27 @@ func TestResolvePrefixEmptySet(t *testing.T) {
 }
 
 func TestResolvePrefixTooShort(t *testing.T) {
+	// Only a completely empty hex tail (bare "act-" or whitespace) is
+	// rejected; sub-MinShortHexLen prefixes (1-3 hex chars) are accepted
+	// and resolve normally. MinInputHexLen=1 is the floor.
 	all := []string{"act-bd70cafebabe"}
-	for _, in := range []string{"", "act-", "bd", "act-bd", "b", "bd7"} {
+	for _, in := range []string{"", "act-", "  ", "act-   "} {
 		full, amb, found := ResolvePrefix(all, in)
 		if found || amb || full != "" {
 			t.Errorf("ResolvePrefix(%q) = (%q,%v,%v), want (\"\",false,false)", in, full, amb, found)
+		}
+	}
+}
+
+func TestResolvePrefixSubMinShortHexLen(t *testing.T) {
+	// Sub-4-char prefixes are now accepted when they uniquely identify one
+	// issue. This is the fix for act-6fca: "prefix ok" docs were right, the
+	// resolver just wasn't honouring them for short prefixes.
+	all := []string{"act-bd70cafebabe"}
+	for _, in := range []string{"b", "bd", "bd7", "act-b", "act-bd", "act-bd7"} {
+		full, amb, found := ResolvePrefix(all, in)
+		if !found || amb || full != "act-bd70cafebabe" {
+			t.Errorf("ResolvePrefix(%q) = (%q,%v,%v), want (act-bd70cafebabe,false,true)", in, full, amb, found)
 		}
 	}
 }
