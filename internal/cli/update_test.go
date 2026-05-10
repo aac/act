@@ -271,6 +271,81 @@ func TestRunUpdate_ClaimMutuallyExclusiveWithFieldFlags(t *testing.T) {
 	}
 }
 
+// TestRunUpdate_ClaimNoUpstreamSucceeds: act-fdb2 fix #1, integration.
+// `act update --claim` against a repo with NO upstream remote configured
+// must succeed (exit 0) and write a claim op — without the caller having
+// to pass --isolated. The fresh-repo / local-first case is the canonical
+// loop in CLAUDE.md and should not require an escape-hatch flag.
+func TestRunUpdate_ClaimNoUpstreamSucceeds(t *testing.T) {
+	root, id := makeUpdateRepoWithIssue(t)
+	// makeCreateRepo produces a repo with no remote/upstream by default,
+	// which is exactly the fdb2 reproduction case.
+	out, code := RunUpdate(root, UpdateOptions{
+		ID:    id,
+		Claim: true,
+		// NOTE: no Isolated:true — that's the whole point of the fix.
+	})
+	if code != 0 {
+		t.Fatalf("code = %d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(UpdateClaimResult)
+	if !ok {
+		t.Fatalf("type %T, want UpdateClaimResult", out)
+	}
+	if !res.Claimed || !res.OK {
+		t.Errorf("Claimed=%v OK=%v, want true/true", res.Claimed, res.OK)
+	}
+	// The claim op IS written (the rebase short-circuit must not skip the
+	// write — fix #1 only affects the rebase step).
+	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-claim.json"))
+	if len(matches) != 1 {
+		t.Errorf("expected 1 claim op on disk, got %d (%v)", len(matches), matches)
+	}
+}
+
+// TestRunUpdate_ClaimIdempotentSameNode: act-fdb2 fix #2, integration.
+// Re-running `act update --claim` against an issue this node already
+// owns must return success (exit 0) with no new op written. Before the
+// fix, the second invocation wrote a later-HLC claim, then lost the
+// (earliest-wins) ordering against its own first op and reported
+// `Lost claim race for <id> (winner=<self-node-id>)`.
+func TestRunUpdate_ClaimIdempotentSameNode(t *testing.T) {
+	root, id := makeUpdateRepoWithIssue(t)
+
+	// First claim: win.
+	out1, code1 := RunUpdate(root, UpdateOptions{ID: id, Claim: true})
+	if code1 != 0 {
+		t.Fatalf("first claim code = %d, want 0; out=%+v", code1, out1)
+	}
+	matchesAfterFirst, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-claim.json"))
+	if len(matchesAfterFirst) != 1 {
+		t.Fatalf("after first claim: %d ops on disk, want 1 (%v)", len(matchesAfterFirst), matchesAfterFirst)
+	}
+
+	// Second claim: idempotent success, NO new op written.
+	out2, code2 := RunUpdate(root, UpdateOptions{ID: id, Claim: true})
+	if code2 != 0 {
+		t.Fatalf("second claim code = %d, want 0 (idempotent); out=%+v", code2, out2)
+	}
+	res2, ok := out2.(UpdateClaimResult)
+	if !ok {
+		t.Fatalf("type %T, want UpdateClaimResult", out2)
+	}
+	if !res2.Claimed || !res2.OK {
+		t.Errorf("second claim Claimed=%v OK=%v, want true/true", res2.Claimed, res2.OK)
+	}
+	if res2.Reason == "lost-race" {
+		t.Errorf("Reason=%q, want empty (re-claim against self must not be a loss)", res2.Reason)
+	}
+
+	// Op count unchanged.
+	matchesAfterSecond, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-claim.json"))
+	if len(matchesAfterSecond) != 1 {
+		t.Errorf("after second claim: %d ops on disk, want 1 (idempotent); files=%v",
+			len(matchesAfterSecond), matchesAfterSecond)
+	}
+}
+
 // writeRawClaimUpdate writes a hand-crafted claim op directly to disk
 // and stages+commits it so the test repo's working tree stays clean.
 // (Bypassing RunClaim lets tests simulate concurrent writers.)
