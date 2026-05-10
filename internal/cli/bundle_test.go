@@ -603,8 +603,8 @@ func TestPerSession_LogUnchanged(t *testing.T) {
 			return ""
 		}
 		id := createOut.(CreateResult).ID
-		RunUpdate(root, UpdateOptions{ID: id, Claim: true, Isolated: true})  //nolint
-		RunClose(root, CloseOptions{ID: id, Reason: reason})                 //nolint
+		RunUpdate(root, UpdateOptions{ID: id, Claim: true, Isolated: true}) //nolint
+		RunClose(root, CloseOptions{ID: id, Reason: reason})                //nolint
 		return id
 	}
 
