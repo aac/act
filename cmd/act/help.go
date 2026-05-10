@@ -66,11 +66,22 @@ THE CANONICAL WORK LOOP (use this in every session)
   2. act update --claim <id>      # take it (atomic; concurrent claimers
                                   #          resolve via last-write-wins)
   3. <do the work, write tests, run them>
-  4. git commit -m "<summary> (act-<short-id>)"
-                                  # the (act-XXXX) marker lets
-                                  # 'act doctor' correlate work commits
-                                  # with closed issues
-  5. act close <id> [--reason "..."]
+  4. act close <id> [--reason "..."]
+                                  # writes + stages the close op. If the
+                                  # working tree has uncommitted code
+                                  # changes, the op stays staged for the
+                                  # NEXT git commit to subsume — one
+                                  # work commit instead of work + close
+                                  # (see 'act help workflow' for the
+                                  # rationale and act-a659 in the rough).
+                                  # If the tree is otherwise clean, the
+                                  # close commits standalone.
+  5. git commit -am "<summary> (act-<short-id>)"
+                                  # subsumes the staged close op + your
+                                  # code changes. The (act-XXXX) marker
+                                  # lets 'act doctor' correlate work
+                                  # commits with closed issues.
+  6. git push                     # publish for the other agents.
 
   In an MCP context, prefer act_next + act_finish — they compose the
   steps above into single tool calls and return commit_marker for free.
@@ -140,11 +151,17 @@ THE LOOP IN DETAIL
     work is expensive to redo.
 
   Doing the work
-    Implement, write tests, run them. Each work commit's message
-    should embed the issue's commit_marker so 'act doctor' can
-    correlate:
+    Implement, write tests, run them. The work commit's message must
+    embed the issue's commit_marker so 'act doctor' can correlate:
 
-      git commit -m "implement <thing> (act-XXXX)"
+      git commit -am "implement <thing> (act-XXXX)"
+
+    Order matters. The canonical loop is close-then-commit, NOT
+    commit-then-close: 'act close' stages its op file but defers
+    the commit when the working tree has code changes; your next
+    'git commit -am' subsumes the staged op into the work commit.
+    Result: one work-commit-with-close per task instead of work +
+    close (act-a659).
 
     If you find a bug or surface gap mid-flight, file it as a
     follow-up but keep working on the current issue:
@@ -155,21 +172,42 @@ THE LOOP IN DETAIL
   Closing
     $ act close <id> --reason "<one-liner>"
 
-    --reason is capped at 500 bytes. The cap is deliberate: reasons are
-    audit-trail summaries, intended to be readable at a glance from the
-    git log and 'act show'. If you find yourself wanting to write more,
-    that probably belongs in the work-commit message (longer-form), in
-    a follow-up issue's description, or in a separate doc — not in the
-    close reason. Same cap applies to --reason on 'act reopen' and to
-    each --accept criterion on 'act create'.
+    Writes the close op file, runs .act/hooks/close (if present), and
+    stages the op for git. Three commit outcomes depending on context:
+
+      - Working tree has non-.act changes (typical): close op stays
+        staged. Your next 'git commit -am' picks it up alongside the
+        code change. The CloseResult includes commit_marker so the
+        agent's prompt can build the message verbatim.
+      - Working tree clean outside .act/: close commits standalone
+        (preserves no-code-close UX as a single command).
+      - --no-commit: op file written, not staged, not committed.
+
+    --push errors when the close stays staged — there's nothing on
+    HEAD yet to publish. The error path fully rolls back the close
+    (op file removed), so the recovery is: commit your work first
+    via 'git commit -am <msg> (act-XXXX)', then either re-run
+    'act close <id> --push' or push manually after the work commit
+    subsumes the close op via the next plain 'act close'.
+
+    --reason is capped at 500 bytes. The cap is deliberate: reasons
+    are audit-trail summaries, intended to be readable at a glance
+    from git log and 'act show'. If you want more room, the work
+    commit message or a follow-up issue is the right home. Same cap
+    applies to --reason on 'act reopen' and each --accept on 'act
+    create'.
 
 EXAMPLE SESSION (CLI)
   $ act ready --json | jq -r '.ready[0].id'
   act-c26a
   $ act update --claim act-c26a
   $ # ... edit code, write tests, run them ...
-  $ git commit -am "implement --blocked-by flag (act-c26a)"
   $ act close act-c26a --reason "all 5 acceptance criteria green"
+  Closed act-c26a: all 5 acceptance criteria green
+    Close op staged. Include in your next commit:
+    git commit -am '<message> (act-c26a)'
+  $ git commit -am "implement --blocked-by flag (act-c26a)"
+  $ git push
 
 COMMIT MARKER INVARIANTS
   Format is always '(act-<short>)'. The short string is the issue's

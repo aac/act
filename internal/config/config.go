@@ -24,11 +24,22 @@ type HLCState struct {
 
 // BundleStrategy controls when act-op files are committed to git.
 //
-//   - "per_op"      — every op write auto-commits immediately (original behavior;
-//     default for repos initialized before this feature).
-//   - "per_session" — claim and close auto-commit/push; all other ops written
-//     during a claim→close window ride the close commit (deferred).
-//     Ops written outside a claim→close window auto-commit as today.
+//   - "per_op"      — every op write auto-commits immediately (original
+//     behavior; default for repos initialized before this feature). One
+//     standalone commit per op.
+//   - "per_session" — claim auto-commits and pushes (cross-agent visibility
+//     is non-negotiable). Intermediate ops written during a claim→close
+//     window are written to disk but not committed. At close time, all
+//     deferred ops + the close op are staged together; whether they
+//     commit standalone or wait for the agent's next git commit depends
+//     on whether the working tree has uncommitted non-.act changes:
+//
+//     - Clean outside .act/    → standalone act-op commit.
+//     - Has work changes       → leave staged. Agent's next `git commit
+//     -am '<msg> (act-XXXX)'` subsumes the close op into the work
+//     commit (act-a659). One work-commit-with-close instead of two
+//     commits (work + close).
+//
 //     Default for newly-initialized repos.
 const (
 	BundleStrategyPerOp      = "per_op"
