@@ -42,6 +42,12 @@ func TestRunHelpWorkflow(t *testing.T) {
 		"THE LOOP IN DETAIL",
 		"Pulling work",
 		"ESCAPE HATCHES",
+		// Commit-marker invariants per act-aa8c: format, source,
+		// doctor's substring-match guarantee, the don't-hand-roll rule.
+		"COMMIT MARKER INVARIANTS",
+		"ShortestUniquePrefixes",
+		"--commit-marker",
+		"do NOT slice the id by hand",
 	})
 }
 
