@@ -1,0 +1,1 @@
+{"hlc":{"logical":0,"node_id":"4397b575","wall":"2026-05-10T16:22:45.760Z"},"issue_id":"act-a4d6","node_id":"4397b575","op_type":"create","op_version":1,"payload":{"accept":null,"description":"","nonce":"1b326fbd63674c73135bc0a5e44a268e","parent":"","priority":3,"title":"smoke-test new shape","type":"chore"},"schema_version":1,"writer_version":"0.1.0"}
