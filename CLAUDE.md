@@ -10,7 +10,8 @@ This repo dogfoods `act` on its own backlog. Agents are the primary user; this f
 4. Do the work, write tests, run them.
 5. `git commit -m "<summary> (<short-id>)"` — the marker enables `act doctor` orphan-close detection.
 6. `./bin/act close <id> --reason "<one-liner>"`.
-7. Repeat from step 2 until `act ready` is empty.
+7. `git push origin main` — concurrent agents see the close immediately; session-death can't lose work.
+8. Repeat from step 2 until `act ready` is empty.
 
 In an MCP-equipped session, prefer `act_next` + `act_finish` over the raw CLI; `.mcp.json` wires this up automatically.
 
@@ -22,7 +23,7 @@ The work loop is autonomous by default. Halt and ask only when:
 - **Breaking change:** a fix can't be made strictly additive — existing callers would have to change. Andrew decides whether to take the breakage or design around it.
 - **Cross-issue scope:** the right fix needs another currently-open issue's fix to land first. File the dep and surface it; do not silently expand scope.
 - **Deeper defect:** tests for the current issue reveal a bug bigger than the issue's description. File a follow-up, decide whether the current issue still makes sense to land standalone, surface if not.
-- **External obligation:** anything that requires a public-facing action (publishing a release, pushing a tag, opening a PR against another repo, sending notifications).
+- **External obligation:** anything cross-repo or genuinely public-facing — publishing a release, pushing a tag, opening a PR against another repo, sending notifications. *Pushing same-branch commits to origin is part of the loop (step 7), not an obligation to halt on.*
 
 If you're unsure whether a situation qualifies, lean toward halting. Cheap to ask, expensive to undo.
 
@@ -59,3 +60,4 @@ Each rule below is versioned so a later skill-extraction pass can decide what's 
 - *Halt on breaking changes* (2026-05): `act` is pre-v1; we still have freedom to redesign cleanly. Better to surface the question once than carry compat shims for a single user's convenience.
 - *File mid-flight bugs as follow-ups, don't halt* (2026-05): the dogfood signal is the bug landing in the backlog with a clear repro, not a half-finished current task.
 - *Default serial sub-agents in this repo* (2026-05): v0.2 ergonomic issues all touch CLI code. Parallelism would cost more in merge time than it saves.
+- *Push after every close, not at session end* (2026-05): matches the dispatcher pattern, makes closes visible to concurrent agents immediately, and means a dropped session never silently swallows finished work. Verbose git history is the accepted cost. Discovered when the first dogfood agent (act-6bbd) followed the original loop and didn't push, leaving 3 commits local-only — see act-ac52.
