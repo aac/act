@@ -1,59 +1,63 @@
-# Session handoff — 2026-05-10 (evening)
+# Session handoff — 2026-05-10 (late evening)
 
-Resumed from afternoon handoff. Cleared two p=1s and filed one derivative. v0.2 marquee work (act-c26a composed primitives) is now in.
+Two close cycles + one root-cause-of-CI-red fix. Bootstrap path settled in conversation: `go install` is the canonical pitch.
 
-> **Quick read:** act-75fd (eval doc refresh) and act-c26a (`act create --blocked-by` + `act_file_blocker`) both shipped, pushed clean. Reviewer's lightweight pass on act-c26a returned two important findings (self-loop guard + JSON round-trip in echo test) — both fixed inline. One cross-cutting nit filed as act-c22b. No live worktrees. Backlog now 17 ready (one closed, one filed, net -0 because the derivative replaces the closed-feature slot).
+> **Quick read:** Shipped act-75fd (eval refresh), act-c26a (`--blocked-by` + `act_file_blocker`), and act-8277 (hooks-never-fire root cause + gofmt drift). CI was red across 5+ runs because `.act/hooks/close` had been a silent no-op since it was created — resolver looked for `post-close`, file was named `close`. Bug fixed; gate now actually catches drift locally before push. Three follow-ups filed (act-c22b, act-c83a, plus act-9c8c still open from afternoon). Andrew settled the bootstrap direction: go install (uvx-style — one command from a fresh agent session). Ready to share with Sasank / Corey / Andrew Widdowson once act-6051 implements the README pitch + verifies the public module path works.
 
 ## What landed this session
 
-- **act-75fd closed (commit a52bdb7).** Updated `docs/act-evaluation.md` to reflect post-act-a659 reality: per_session bundling + close-stages-into-work-commit approximates Dolt's "transaction = one commit" property in plain git; the original "is per-op-commit load-bearing?" question (act-6018) is resolved (hideable behind bundle_strategy). act-6181 closed. Remaining architecture concerns: act-492e, act-b7ad, act-7574 (latent multi-writer, not alpha-blocking). Issue intentionally treats this as an update pass; next material revision should follow a real alpha trial in another repo.
-- **act-c26a closed (commit b4610f6).** Shipped `act create --blocked-by <id>` (repeatable, dedups) + `act_file_blocker` MCP composed tool. Single atomic git commit via `WriteOpsAndAutoCommit` with rollback on failure. 12 new tests (7 CLI, 5 MCP). Tools-count assertion bumped 15→16. `act help workflow` updated.
-- **act-c22b filed (p=2, bug).** Reviewer-derived: `WriteOpsAndAutoCommit` rollback (in internal/cli/util.go) calls `unstage` on files that were never staged when a partial-stage failure forces rollback. Atomicity preserved (error discarded, file removed) but spurious git stderr emitted. The cleaner `writeBlockOpsViaInterface` pattern in composed.go (tracks `staged[]` separately) should be propagated. Affects act_block equally.
+- **act-75fd closed (a52bdb7).** docs/act-evaluation.md refreshed: per_session + close-stages-into-work-commit approximate Dolt's "transaction = one commit" property in plain git; the "is per-op-commit load-bearing?" question (act-6018 once asked) is resolved (hideable).
+- **act-c26a closed (b4610f6).** Shipped `act create --blocked-by <id>` (repeatable, dedups) + `act_file_blocker` MCP composed tool. Single atomic commit via WriteOpsAndAutoCommit with rollback. 12 new tests, tools count 15→16. AC #4 deviation documented: `--block-parent` NOT implemented per Andrew's "single choice, not flags" design call; workflow A continues via act_block after create.
+- **act-8277 closed (2f8ddd2).** Two-cluster root cause fix for the persistent CI red:
+  1. `internal/hooks/hooks.go` ResolveHook map renamed `post-<op>` → bare `<op>` to match every doc + the actual `.act/hooks/close` file. Silently no-op'd hooks now actually fire.
+  2. hookTimeout bumped 5s → 120s. Original 5s was sized for quick lints; the act repo's close gate runs `gofmt + vet + go test ./...` (~50s). Even with the resolver fixed, 5s would have timed out every gate.
+  3. gofmt-cleaned close.go + config.go (the drift CI was failing on — would have been caught locally if the hook had ever fired).
+  Verified end-to-end: introduce deliberate drift → close exits 1 → close op rolled back. CI green on the fix commit.
+- **Filed follow-ups:** act-c22b (WriteOpsAndAutoCommit rollback unstage-noise, reviewer-derived from c26a), act-c83a (HookFailedError.Error() drops the captured StderrTail; users see "hook exited 1" with no signal about what failed). act-9c8c from the prior session is still open.
 
-## Design decision worth preserving (act-c26a)
+## Conclusions worth preserving
 
-The marquee design question: which dep-edge direction does `--blocked-by` mean? The AC in docs/issues/act-g003-gap.md hinted both workflow A (new issue blocks existing) and workflow C (new issue blocked by existing) should reduce to one call, but a single flag with a single semantic can only serve one workflow cleanly. Andrew's call: "pick whatever is most intuitive — single choice, not flags." Shipped `--blocked-by X` = "new issue is blocked by X" (workflow C, matching `act_block`'s `blocked_by` semantic). Workflow A continues to use `act_block` after create (already 2 calls, well-optimized). Net: `--block-parent` from AC #4 is NOT implemented; deviation documented in the close reason and the commit body.
+**Log noise question — practically settled.** Two-commit-per-issue lifecycle on per_session repos approximates the Dolt commit pattern in plain git. The act-evaluation doc captures this. Remaining open question (deprecate per_op outright?) genuinely needs another repo's data — not more thinking from inside act.
 
-This is the kind of intuitive-direction-over-feature-completeness call worth defending if a future reviewer flags the AC drift.
+**`--blocked-by` design call (act-c26a).** Workflow C reduces to one call cleanly; workflow A (file a blocker for current work) continues via act_block after create. Single flag with a single semantic; no --block-parent. Worth defending if a future reviewer flags drift from the original AC.
 
-## Reviewer findings worth preserving
+**Hook gate must actually run (act-8277).** Every close hook fires now. The `.act/hooks/close` script is the local pre-flight gate that CI duplicates; both being green is the contract. The gate caught zero of the recent close commits because of the resolver bug, which is why a six-month-old drift made it to main.
 
-Lightweight code-reviewer pass on the b4610f6 unstaged diff, >70% confidence filter, returned three important findings:
+## Bootstrap decision (act-6051)
 
-1. *(filed as act-c22b)* WriteOpsAndAutoCommit rollback unstage noise — cross-cutting, deferred.
-2. *(fixed inline)* No self-loop guard if a `--blocked-by` id resolved to the new issue's own id under a concurrent-writer race. Added a defensive check matching the parity in act_block (composed.go:339). Cheap invariant; correctness-story value > the cost.
-3. *(fixed inline)* `TestActFileBlocker_MultipleBlockers` was asserting on the in-process `[]string` type rather than the wire `[]any` shape clients actually receive. Now marshals → unmarshals → asserts on `[]any` of `string`. Catches type-shape regressions.
+Conversation settled on `go install github.com/aac/act/cmd/act@latest` as the canonical pitch — the Go equivalent of the uvx pattern Simon Willison uses. One command from a fresh agent session lands `act` on PATH; from there, the act skill auto-activates and the agent can self-bootstrap by running `act help` / `act ready`. Brew tap (act-e6a5) and a curl installer stay as alternates, not the primary pitch.
 
-What's working well (do NOT regress):
-- `seen[parent]` dedup after full-id resolution: an agent passing two different prefix forms that resolve to the same full id correctly produces one edge.
-- Op ordering correctness: `env` (create) is index 0 in the batch; HLC clock advances monotonically via successive `Send()` calls → fold applies create before any add_dep regardless of FS ordering.
-- Error envelope exit codes consistent with depadd.go: `id_ambiguous` exit 2, `issue_not_found` exit 3 (universal table).
-- `TestRunCreate_BlockedBy_UnknownTarget` is the most load-bearing test: verifies no commit, no HEAD movement, no issue directories on disk after a resolution failure.
+Next session: implement the README pitch + verify the public Go module path actually works (`github.com/aac/act` — confirm the repo is public and `go install ...@latest` resolves cleanly from a fresh `$GOPATH`). Then act-6051 closes with the README documenting one-command install + `act init` to get a new repo going.
 
 ## Where things stand
 
-- Backlog: 17 ready issues. Top of p=1 queue (4 left):
-  - **act-6051** — canonical bootstrap decision (curl vs brew vs go install). This is a meta-decision Andrew should weigh in on; serves act-4fe6 / act-e6a5 / act-8416 once decided.
-  - **act-ff5c** — doc-drift prevention process. Substantive design work, doable without Andrew input.
-  - **act-8416** / **act-4fe6** — act in Cowork / CC Web. Each needs external-system context.
-- act-9c8c (p=2, show work commits) still open; the post-act-a659 case for bumping it to p=1 still holds — work commits ARE the close commits now, and there's no surface in `act show` to find them. Smallest concrete code change of the remaining backlog.
+- Backlog: 17 ready. Top of queue:
+  - **act-6051** (p=1) — canonical bootstrap; direction settled, implementation is next session's first task.
+  - **act-ff5c** (p=1) — doc-drift prevention process. act-8277 is exhibit A for why this matters; the test added (TestResolveHookMatchesDocs) is exhibit A for what the process should produce. Worth a brainstorming pass.
+  - **act-8416 / act-4fe6** (p=1) — Cowork / CC Web integrations. Need external-system context.
+  - **act-c83a** (p=2, new) — hook stderr surfacing. Trivial fix, clear regression test.
+  - **act-c22b** (p=2, new) — rollback unstage noise. Trivial fix.
+  - **act-9c8c** (p=2, carryover) — show work commits in `act show`. Smallest concrete win, ~30 min.
+- All worktrees clean. CI green on origin/main.
 
 ## What to look at first when resuming
 
-1. **act-6051 (bootstrap decision).** This is the next adoption-blocker. Probably ask Andrew which install path to canonicalize before touching anything — the answer routes which sibling issues become "the recommended way" vs "alternates."
-2. **act-9c8c (show work commits).** Smallest discrete win. Single git invocation at show-time, JSON + human renderings. Could be done autonomously without surfacing.
-3. **act-ff5c (doc-drift prevention).** Design-heavy; would benefit from a brainstorming pass before code. The 2026-05-10 dogfood found two real doc-drift bugs (prefix matching, missing `git push` in the canonical loop); a hook or test pattern that surfaces those drift cases automatically is the target.
-4. **act-c22b (rollback unstage noise).** Trivial fix once someone touches util.go. Worth bundling with the next change that lands in that file.
+1. **act-6051 implementation.** Direction is decided; this is mechanical. Confirm public Go module path → README → close.
+2. **act-c83a then act-c22b.** Both are small, both make the next CI / close cycle quieter. Quick wins to bundle.
+3. **act-ff5c.** Brainstorm first. The doc-drift class spans resolver/doc mismatches (act-8277), unexercised invariants (the act-act-double-prefix bug Andrew mentioned earlier), and silent gate regressions. A doctor check + a test pattern + a CI guard is probably the shape. Don't over-engineer; the bar is "would this have caught act-8277 before merge?"
+4. **act-9c8c** if there's time. Read-side, isolated, smallest discrete win.
 
-## Known stale areas worth cleaning
+## Sharing readiness (Sasank / Corey / Andrew Widdowson)
 
-- `bundle_strategy=per_op` still exists alongside `per_session`. The deprecation question is captured in CLAUDE.md; revisit once another repo has run on per_session+act-a659 for a while.
-- Surface-gap-analysis Workflows A and C: the AC said both reduce to 1 call; in practice only C does (via `--blocked-by`), and A remains a 2-call sequence (create + act_block). The gap analysis doc isn't updated to reflect this. Low-priority; agents reading the doc will infer it from `act help workflow`.
+After act-6051 lands a working `go install` pitch:
+- Yes for personal-repo alpha trial. Workflow loop survives cold-start; log noise resolved on per_session; architecture good for solo-to-small-multi-agent.
+- Pitch shape: "go install github.com/aac/act/cmd/act@latest; cd <your repo>; act init; act create 'first task'" → done in 30 seconds.
+- Ask them to share: what was their first friction point, what tripped a cold-start agent, what does the log look like after a week.
+- The act-evaluation doc's "what changes the read next" line — "a real alpha trial in another repo" — is exactly what this enables.
 
 ## Operational notes
 
-- `bin/act` is current as of b4610f6. Rebuild with `go build -o bin/act ./cmd/act` if missing.
-- `.act/hooks/close` still runs gofmt + vet + tests on every close. All test suites green at session end.
-- No live worktrees.
-- This session ran in `main` (no worktree). All work was on cmd/act/, internal/cli/, internal/mcp/, plus docs. CLAUDE.md's "default serial sub-agents in this repo" rule held.
-- The full ToolSearch / deferred-tool dance for TaskCreate took one round-trip; harmless but a reminder that the loop loads more incrementally than older sessions.
+- `bin/act` current as of 2f8ddd2.
+- `.act/hooks/close` now ACTUALLY runs on every close (act-8277). Be aware: introducing gofmt drift will block your closes locally now — that's the intended gate.
+- Two test issues (act-2434, act-498a) created during act-8277 hook verification were tombstoned via `act delete`; this is the first session that exercised `act delete` deliberately, and it worked cleanly.
+- The "default serial sub-agents in this repo" rule held. All work in `main` (no worktrees).
