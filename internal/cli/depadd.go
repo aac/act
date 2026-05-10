@@ -382,7 +382,8 @@ func resolveDepID(arg, label string, knownIDs []string) (string, int, any) {
 	var amb *ids.ErrAmbiguousID
 	if errors.As(rerr, &amb) {
 		candidates := amb.Candidates()
-		return "", 3, DepAddErrorOutput{
+		// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
+		return "", 2, DepAddErrorOutput{
 			Error:   "id_ambiguous",
 			Message: fmt.Sprintf("act dep add: %s %q matches %d issues", label, arg, len(candidates)),
 			Details: map[string]any{

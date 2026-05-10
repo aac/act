@@ -178,6 +178,7 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		full, ambiguous, found := ids.ResolvePrefix(allIDs, opts.Under)
 		if ambiguous {
 			candidates := ambiguousCandidates(allIDs, opts.Under)
+			// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
 			return ReadyErrorOutput{
 				Error:   "id_ambiguous",
 				Message: fmt.Sprintf("act ready: --under %q matches %d issues", opts.Under, len(candidates)),
@@ -186,7 +187,7 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 					"candidates": candidates,
 				},
 				Candidates: candidates,
-			}, 3
+			}, 2
 		}
 		if !found {
 			return ReadyErrorOutput{

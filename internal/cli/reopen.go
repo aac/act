@@ -146,6 +146,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		var amb *ids.ErrAmbiguousID
 		if errors.As(rerr, &amb) {
 			candidates := amb.Candidates()
+			// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
 			return ReopenErrorOutput{
 				Error:   "id_ambiguous",
 				Message: fmt.Sprintf("act reopen: prefix %q matches %d issues", opts.ID, len(candidates)),
@@ -154,7 +155,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 					"candidates": candidates,
 				},
 				Candidates: candidates,
-			}, 3
+			}, 2
 		}
 		return ReopenErrorOutput{
 			Error:   "issue_not_found",
