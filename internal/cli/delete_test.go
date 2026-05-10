@@ -145,11 +145,15 @@ func TestRunDelete_Cascade(t *testing.T) {
 		t.Errorf("Tombstoned (sorted) = %s, want %s", got, wantStr)
 	}
 
-	// Single git commit batches all three tombstones (act-op:
-	// (<short>) tombstone cascade x3).
+	// Single git commit batches all three tombstones using the canonical
+	// batch subject `act-op: (act-XXXX) tombstone +N` (count of *extra*
+	// ops beyond the head). 3 ops => `+2`.
 	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
-	if !strings.Contains(subj, "tombstone cascade x3") {
-		t.Errorf("commit subject %q missing 'tombstone cascade x3'", subj)
+	if !strings.HasPrefix(subj, "act-op: (") {
+		t.Errorf("commit subject %q missing canonical 'act-op: (act-XXXX)' prefix", subj)
+	}
+	if !strings.Contains(subj, " tombstone +2") {
+		t.Errorf("commit subject %q missing ' tombstone +2' (3 cascaded ops)", subj)
 	}
 
 	// Verify each id is tombstoned in the post-state fold.

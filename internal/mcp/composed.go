@@ -420,11 +420,10 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		}
 	}
 
-	short := full
-	if len(full) > len("act-")+ids.MinShortHexLen {
-		short = full[:len("act-")+ids.MinShortHexLen]
-	}
-	commitMsg := fmt.Sprintf("act-block: %s", short)
+	// Block-composed commit subject: `act-block: (act-XXXX)`. Parens
+	// match the shape doctor's orphan-close grep keys on (act-d3a5) so a
+	// block-then-close sequence still correlates the close with a commit.
+	commitMsg := fmt.Sprintf("act-block: (%s)", cli.ShortIssueID(full))
 
 	// Use the underlying real *gitops.GitOps when no factory was injected;
 	// the factory path lets tests trigger commit failure to exercise the

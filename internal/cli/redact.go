@@ -330,14 +330,9 @@ func RunRedact(repoRoot string, opts RedactOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	short := full
-	if len(full) > len("act-")+ids.MinShortHexLen {
-		short = full[:len("act-")+ids.MinShortHexLen]
-	}
-
 	return RedactResult{
 		ID:          full,
-		ShortID:     short,
+		ShortID:     ShortIssueID(full),
 		FieldPath:   opts.FieldPath,
 		Replacement: replacement,
 		OpsWritten:  1,
