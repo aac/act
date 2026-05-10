@@ -1,0 +1,1 @@
+{"hlc":{"logical":0,"node_id":"4397b575","wall":"2026-05-10T16:12:44.898Z"},"issue_id":"act-728d","node_id":"4397b575","op_type":"close","op_version":1,"payload":{"reason":"implemented bundle_strategy per_op/per_session; all 8 ACs covered by 14 tests; self-review fixed unused opsDir param; branch worktree-agent-af41186e8ef48c5aa"},"schema_version":1,"writer_version":"0.1.0"}
