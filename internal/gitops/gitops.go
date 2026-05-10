@@ -319,3 +319,71 @@ func (g *GitOps) SquashActOpRange(firstSHA, lastSHA, maxWriterVersion string) er
 	}
 	return nil
 }
+
+// WorkCommit is a single git commit attributed to an issue via the
+// `(act-XXXX)` marker convention.
+type WorkCommit struct {
+	SHA        string `json:"sha"`
+	Subject    string `json:"subject"`
+	AuthorDate string `json:"author_date"`
+}
+
+// WorkCommitsForIssue runs `git log --all --fixed-strings --grep='(act-<prefix4>'`
+// and returns up to limit matching commits, most-recent-first. The 4-char
+// prefix is the same key act doctor uses (orphan-close grep) so the result
+// includes commits whose marker is the bare 4-char form OR a longer prefix
+// that grew out of an id collision — both contain `(act-<prefix4>` as a
+// literal substring.
+//
+// limit=0 means unbounded. The pattern is fixed-strings so the literal
+// parenthesis isn't interpreted as regex.
+//
+// An empty repository (no commits yet) is treated as "no matches" rather
+// than an error: `git log` on a repo with no HEAD exits non-zero, but to
+// the caller the answer "this issue has no work commits" is the right
+// shape.
+func (g *GitOps) WorkCommitsForIssue(prefix4 string, limit int) ([]WorkCommit, error) {
+	if len(prefix4) < 4 {
+		return nil, fmt.Errorf("gitops: WorkCommitsForIssue: prefix4 length %d < 4", len(prefix4))
+	}
+	pattern := "(act-" + prefix4
+	args := []string{
+		"log", "--all",
+		"--fixed-strings",
+		"--grep=" + pattern,
+		// Tab-separated triplet so we can split unambiguously even if the
+		// subject contains tabs (it normally doesn't, but author_date
+		// follows ISO-8601 with colons that would confuse a colon split).
+		"--pretty=format:%H%x09%s%x09%aI",
+	}
+	if limit > 0 {
+		args = append(args, fmt.Sprintf("-n%d", limit))
+	}
+	out, err := g.run(args...)
+	if err != nil {
+		// Empty repo / no HEAD → treat as no matches.
+		if strings.Contains(err.Error(), "does not have any commits yet") ||
+			strings.Contains(err.Error(), "bad default revision 'HEAD'") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return nil, nil
+	}
+	var commits []WorkCommit
+	for _, line := range strings.Split(out, "\n") {
+		// Format: "<sha>\t<subject>\t<author_date>".
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		commits = append(commits, WorkCommit{
+			SHA:        parts[0],
+			Subject:    parts[1],
+			AuthorDate: parts[2],
+		})
+	}
+	return commits, nil
+}
