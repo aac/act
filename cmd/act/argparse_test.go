@@ -66,9 +66,13 @@ func TestRearrangeArgs(t *testing.T) {
 			want: []string{"--json", "--no-commit", "title"},
 		},
 		{
+			// Per act-6218: rearrangeArgs preserves the `--` terminator so
+			// fs.Parse honours it and treats flag-shaped tokens after it
+			// as positional verbatim. Previously the `--` was dropped,
+			// causing flag-shaped titles to misparse.
 			name: "double-dash-terminator",
 			in:   []string{"--json", "--", "--reason", "literal"},
-			want: []string{"--json", "--reason", "literal"},
+			want: []string{"--json", "--", "--reason", "literal"},
 		},
 		{
 			name: "string-flag-with-flag-looking-value",

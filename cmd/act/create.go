@@ -50,7 +50,7 @@ func runCreate(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		emitBadFlag(*asJSON, "act create: usage: act create <title> [flags]")
+		emitBadFlag(*asJSON, "act create: usage: act create <title> [flags]\n  if your title starts with '-' or '--', put it after a '--' terminator: act create [flags] -- '--my-title'")
 		return 2
 	}
 	title := fs.Arg(0)
