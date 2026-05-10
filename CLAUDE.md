@@ -4,7 +4,7 @@ This repo dogfoods `act` on its own backlog. Agents are the primary user; this f
 
 ## First session, every session
 
-1. `./bin/act help` if you've never used `act` before. Mechanics live there; this file is for opinions and project-specific rules. If `bin/act` is missing, `go build -o bin/act ./cmd/act`.
+1. `./bin/act help` if you've never used `act` before. Mechanics live there; this file is for opinions and project-specific rules. If `bin/act` is missing, `go build -o bin/act ./cmd/act`. For the JSON error-envelope contract (shape, code list, byte-counted length rule), see `./bin/act help errors`.
 2. `./bin/act ready` to see the unblocked frontier. Pick the highest-priority issue.
 3. `./bin/act update --claim <id>` to take it.
 4. Do the work, write tests, run them.
