@@ -277,10 +277,54 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}, 1
 	}
 
+	// Determine whether we should bundle pending op files (per_session strategy).
+	// In per_session mode the close commit collects all deferred op files that
+	// were written during the claim→close window for this specific issue (they
+	// were written to disk but not committed, per InClaimWindowForNode semantics).
+	var pendingPaths []string
+	if cfg.EffectiveBundleStrategy() == config.BundleStrategyPerSession && !opts.NoCommit {
+		pp, perr := ListPendingOpFilesForIssue(repoRoot, paths.Ops, full)
+		if perr != nil {
+			_ = os.Remove(opPath)
+			return CloseErrorOutput{
+				Error:   "pending_ops_scan_failed",
+				Message: perr.Error(),
+			}, 1
+		}
+		// pendingPaths may include the close op file we just wrote (it is
+		// untracked). Filter it out so we stage it explicitly below and
+		// avoid double-staging.
+		for _, p := range pp {
+			if p != opPath {
+				pendingPaths = append(pendingPaths, p)
+			}
+		}
+	}
+
 	committed := false
 	if !opts.NoCommit {
 		gops := gitops.NewGitOps(repoRoot)
+
+		// Stage any deferred op files first (they have no associated hook).
+		rollbackPending := func() {
+			for _, p := range pendingPaths {
+				_ = runUnstage(gops.RepoRoot, p)
+			}
+		}
+		for _, p := range pendingPaths {
+			if err := gops.StageOpFile(p); err != nil {
+				rollbackPending()
+				_ = os.Remove(opPath)
+				return CloseErrorOutput{
+					Error:   "stage_failed",
+					Message: fmt.Sprintf("stage pending op %s: %v", p, err),
+				}, 1
+			}
+		}
+
+		// Stage the close op file itself.
 		if err := gops.StageOpFile(opPath); err != nil {
+			rollbackPending()
 			return CloseErrorOutput{
 				Error:   "stage_failed",
 				Message: err.Error(),
@@ -291,6 +335,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
 			opID, herr := env.Hash()
 			if herr != nil {
+				rollbackPending()
 				_ = runUnstage(gops.RepoRoot, opPath)
 				return CloseErrorOutput{
 					Error:   "hash_failed",
@@ -305,6 +350,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 				OpJSON:  body,
 			}
 			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
+				rollbackPending()
 				_ = runUnstage(gops.RepoRoot, opPath)
 				_ = os.Remove(opPath)
 				return CloseErrorOutput{
@@ -317,8 +363,16 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		// Commit subject is built by BuildOpCommitMessage; canonical
 		// format is `act-op: (act-XXXX) close`. Doctor's orphan-close
 		// grep keys on the parenthesized short id. See act-d3a5.
-		msg := BuildOpCommitMessage(env)
+		// When bundling, include the count of bundled ops in the message
+		// (including the close op itself).
+		var msg string
+		if len(pendingPaths) > 0 {
+			msg = BuildBatchCommitMessage(env, len(pendingPaths)+1)
+		} else {
+			msg = BuildOpCommitMessage(env)
+		}
 		if err := gops.Commit(msg); err != nil {
+			rollbackPending()
 			_ = runUnstage(gops.RepoRoot, opPath)
 			return CloseErrorOutput{
 				Error:   "commit_failed",
