@@ -68,8 +68,17 @@ func BuildBatchCommitMessage(env op.Envelope, count int) string {
 }
 
 // hookTimeout is the wall-clock limit applied to a single hook
-// invocation, per spec §"Hooks contract" step 7.
-const hookTimeout = 5 * time.Second
+// invocation. Set to 120s (act-8277): the original 5s value was sized
+// for quick lint scripts, but real-world close hooks gate the full
+// test suite (the act repo's own .act/hooks/close runs gofmt + vet +
+// go test ./..., which lands around 50s on a warm cache). 5s made
+// every meaningful gate silently time out; bumping gives gates room
+// to do the work they're written to do.
+//
+// Repos with test suites that legitimately exceed 120s should split
+// quick-gate work into the hook and the long tail into CI; the hook
+// timeout is not the right knob to push past two minutes.
+const hookTimeout = 120 * time.Second
 
 // WriteOpts encodes the universal-flag knobs that apply to every write
 // command (per spec §4 + the act-5ca9 acceptance criteria). Its fields are
