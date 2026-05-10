@@ -3,6 +3,7 @@ package hooks
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -74,7 +75,15 @@ func TestResolveHookAbsent(t *testing.T) {
 
 func TestRunSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("/bin/true unavailable on windows")
+		t.Skip("`true` unavailable on windows")
+	}
+	// Resolve `true` via $PATH so the test works across distros: macOS
+	// puts it at /usr/bin/true; Linux at /bin/true. Hardcoding either
+	// fails on the other (this regressed silently when origin verification
+	// ran on Linux).
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Skipf("`true` not on PATH: %v", err)
 	}
 	ctx := HookContext{
 		OpID:    "op123",
@@ -83,8 +92,8 @@ func TestRunSuccess(t *testing.T) {
 		Phase:   PhasePreCommitOp,
 		OpJSON:  []byte(`{"hello":"world"}`),
 	}
-	if err := Run(ctx, "/bin/true", 5*time.Second); err != nil {
-		t.Fatalf("Run(/bin/true): %v", err)
+	if err := Run(ctx, truePath, 5*time.Second); err != nil {
+		t.Fatalf("Run(%s): %v", truePath, err)
 	}
 }
 
