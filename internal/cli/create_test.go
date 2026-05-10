@@ -70,8 +70,8 @@ func TestRunCreate_HappyPath(t *testing.T) {
 	if res.Title != "fix bug" {
 		t.Errorf("title = %q", res.Title)
 	}
-	if !strings.HasPrefix(res.ID, res.ShortID) {
-		t.Errorf("short_id %q is not a prefix of id %q", res.ShortID, res.ID)
+	if !strings.HasPrefix(res.ID, res.Prefix) {
+		t.Errorf("prefix %q is not a prefix of id %q", res.Prefix, res.ID)
 	}
 
 	// One op file must be on disk.
