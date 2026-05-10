@@ -92,9 +92,11 @@ func main() {
 		os.Exit(runImport(args))
 	case "mcp":
 		os.Exit(runMCP(args))
-	case "-h", "--help", "help":
+	case "-h", "--help":
 		usage()
 		os.Exit(0)
+	case "help":
+		os.Exit(runHelp(args))
 	default:
 		emitBadFlag(hasJSONFlag(args), fmt.Sprintf("act %s: not implemented yet", sub))
 		os.Exit(2)
