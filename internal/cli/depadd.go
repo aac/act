@@ -105,8 +105,10 @@ var validDepAddEdgeTypes = map[string]bool{
 //   - output: DepAddResult on success, DepAddErrorOutput on bad-flag /
 //     not-found, DepAddCycleOutput on cycle.
 //   - exitCode: 0 success or idempotent dedup; 1 cycle / write failure;
-//     2 bad flags / self-edge / ambiguous prefix; 3 missing repo /
-//     missing .act/ / unknown id.
+//     2 bad flags / self-edge; 3 missing repo / missing .act/ / unknown id /
+//     ambiguous prefix. (NOTE: the old text placed ambiguous at exit 2 per
+//     the per-section spec; actual implementation and spec §1 universal table
+//     both use exit 3. act-8dcd is resolving this discrepancy.)
 func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 	// Step 1: repo + .act/ required.
 	if !hasGitDir(repoRoot) {
@@ -366,7 +368,14 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 
 // resolveDepID resolves a single id (child or parent) via the prefix
 // pipeline. Returns the full id on success, or the appropriate error
-// envelope + exit code (2 for ambiguous, 3 for not-found) on failure.
+// envelope + exit code on failure.
+//
+// NOTE: the comment below once said "exit code (2 for ambiguous)" but the
+// actual implementation has always returned 3 for id_ambiguous, consistent
+// with spec-v2.md §1 universal error table. The discrepancy between exit-2
+// per the old per-section text (spec-v2.md line 529) and exit-3 per the
+// universal table is being resolved by act-8dcd. Do not change the exit codes
+// here without coordinating with that issue.
 func resolveDepID(arg, label string, knownIDs []string) (string, int, any) {
 	full, rerr := ids.Resolve(arg, knownIDs)
 	if rerr == nil {

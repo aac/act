@@ -168,6 +168,85 @@ func TestRunShow_PrefixResolution(t *testing.T) {
 	}
 }
 
+// TestRunShow_ShortPrefixResolution covers act-6fca: sub-4-char prefixes that
+// uniquely identify one issue must resolve successfully. Every doc that says
+// "prefix ok" implies that e.g. `act show act-ab` works when no other id
+// shares the `ab` hex prefix.
+func TestRunShow_ShortPrefixResolution(t *testing.T) {
+	root := makeRepoWithAct(t)
+	env := makeShowCreateEnv(t, "act-abcd1234", 1700000000000, 0, "hello")
+	writeOpFile(t, root, env, "2026-04", "create.json")
+
+	for _, prefix := range []string{"a", "ab", "abc", "act-a", "act-ab", "act-abc"} {
+		out, code := RunShow(root, ShowOptions{ID: prefix})
+		if code != 0 {
+			t.Errorf("prefix=%q: exit code = %d, want 0; out=%+v", prefix, code, out)
+			continue
+		}
+		res, ok := out.(ShowResult)
+		if !ok {
+			t.Errorf("prefix=%q: output type = %T, want ShowResult", prefix, out)
+			continue
+		}
+		if got := res.Fields["id"]; got != "act-abcd1234" {
+			t.Errorf("prefix=%q: id = %v, want act-abcd1234", prefix, got)
+		}
+	}
+}
+
+// TestRunShow_ShortPrefixAmbiguous verifies that a sub-4-char prefix matching
+// multiple issues returns id_ambiguous (not issue_not_found) with candidates.
+func TestRunShow_ShortPrefixAmbiguous(t *testing.T) {
+	root := makeRepoWithAct(t)
+	a := makeShowCreateEnv(t, "act-ab001234", 1700000000000, 0, "a")
+	b := makeShowCreateEnv(t, "act-ab005678", 1700000000001, 0, "b")
+	writeOpFile(t, root, a, "2026-04", "a.json")
+	writeOpFile(t, root, b, "2026-04", "b.json")
+
+	// "ab" prefix matches both — must surface id_ambiguous, not not_found.
+	out, code := RunShow(root, ShowOptions{ID: "ab"})
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	e, ok := out.(ShowErrorOutput)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowErrorOutput", out)
+	}
+	if e.Error != "id_ambiguous" {
+		t.Errorf("error = %q, want id_ambiguous", e.Error)
+	}
+	if len(e.Candidates) != 2 {
+		t.Fatalf("candidates len = %d, want 2", len(e.Candidates))
+	}
+}
+
+// TestRunShow_TombstonedViaPrefix covers the acceptance criterion that
+// `act show <unique prefix of tombstoned issue>` returns tombstoned=true
+// (not issue_not_found).
+func TestRunShow_TombstonedViaPrefix(t *testing.T) {
+	root := makeRepoWithAct(t)
+	createEnv := makeShowCreateEnv(t, "act-dead1234", 1700000000000, 0, "doomed")
+	tombEnv := makeShowTombstoneEnv(t, "act-dead1234", 1700000010000, 0)
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, tombEnv, "2026-04", "tomb.json")
+
+	// Resolve via unique prefix — must return tombstoned shape, not not_found.
+	out, code := RunShow(root, ShowOptions{ID: "dead"})
+	if code != 0 {
+		t.Fatalf("prefix=dead: exit code = %d, want 0; out=%+v", code, out)
+	}
+	tomb, ok := out.(ShowTombstoned)
+	if !ok {
+		t.Fatalf("output type = %T, want ShowTombstoned", out)
+	}
+	if !tomb.Tombstoned {
+		t.Errorf("Tombstoned = false, want true")
+	}
+	if tomb.ID != "act-dead1234" {
+		t.Errorf("ID = %q, want act-dead1234", tomb.ID)
+	}
+}
+
 func TestRunShow_AmbiguousPrefix(t *testing.T) {
 	root := makeRepoWithAct(t)
 	a := makeShowCreateEnv(t, "act-abcd1234", 1700000000000, 0, "a")
