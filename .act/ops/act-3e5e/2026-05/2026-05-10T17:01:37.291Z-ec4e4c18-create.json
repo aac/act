@@ -1,0 +1,1 @@
+{"hlc":{"logical":0,"node_id":"4397b575","wall":"2026-05-10T17:01:37.291Z"},"issue_id":"act-3e5e","node_id":"4397b575","op_type":"create","op_version":1,"payload":{"accept":null,"description":"smoke test of -- separator","nonce":"fed169825980a349c9e22bc91d3a6cd6","parent":"","priority":3,"title":"--leading-dashes-test","type":"chore"},"schema_version":1,"writer_version":"0.1.0"}
