@@ -125,14 +125,29 @@ func ShortestUniquePrefixes(fullIDs []string) map[string]string {
 	return out
 }
 
+// MinInputHexLen is the minimum number of hex characters required in a
+// user-supplied id prefix for resolution to proceed. Any shorter input
+// (including the bare "act-" prefix with no hex tail) is treated as
+// not_found rather than matching everything.
+//
+// Note: this constant is intentionally distinct from MinShortHexLen (which
+// governs display and id generation). Input resolution accepts any prefix of
+// at least one hex character so that `act show act-c2` resolves when unique,
+// even though the display/generation floor is 4 hex characters.
+const MinInputHexLen = 1
+
 // ResolvePrefix matches a user-supplied prefix (e.g. `act-bd7`, `bd70`,
-// `BD70`) against allFullIDs. It returns the unique full id when exactly one
-// match exists; ambiguous=true when multiple match; found=false when no full
-// id has a hex tail starting with the supplied hex prefix or when the
-// effective hex prefix is shorter than MinShortHexLen.
+// `BD70`, `act-c2`) against allFullIDs. It returns the unique full id when
+// exactly one match exists; ambiguous=true when multiple match; found=false
+// when no full id has a hex tail starting with the supplied hex prefix or
+// when the effective hex prefix is empty (bare "act-" or whitespace only).
+//
+// Any prefix of at least MinInputHexLen hex characters is considered; the
+// MinShortHexLen floor (4) applies only to display and id generation, not to
+// user-supplied lookup.
 func ResolvePrefix(allFullIDs []string, prefix string) (full string, ambiguous bool, found bool) {
 	hex := normalizeHex(prefix)
-	if len(hex) < MinShortHexLen {
+	if len(hex) < MinInputHexLen {
 		return "", false, false
 	}
 	matches := make([]string, 0, 4)
@@ -154,9 +169,12 @@ func ResolvePrefix(allFullIDs []string, prefix string) (full string, ambiguous b
 // Resolve is the error-returning counterpart to ResolvePrefix; it implements
 // the spec §Pre-import id resolution contract: ErrNotFound on zero matches,
 // *ErrAmbiguousID on multiple matches, otherwise the unique full id.
+//
+// Any prefix of at least MinInputHexLen hex characters is accepted; the
+// MinShortHexLen floor (4) applies only to display and id generation.
 func Resolve(input string, known []string) (string, error) {
 	hex := normalizeHex(input)
-	if len(hex) < MinShortHexLen {
+	if len(hex) < MinInputHexLen {
 		return "", ErrNotFound
 	}
 	matches := make([]string, 0, 4)
