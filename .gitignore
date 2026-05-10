@@ -1,6 +1,7 @@
 # Built binary
 /act
 act.exe
+/bin/
 
 # Go build artifacts
 /vendor/
