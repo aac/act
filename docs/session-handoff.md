@@ -51,8 +51,8 @@ Next session: implement the README pitch + verify the public Go module path actu
 
 After act-6051 lands a working `go install` pitch:
 - Yes for personal-repo alpha trial. Workflow loop survives cold-start; log noise resolved on per_session; architecture good for solo-to-small-multi-agent.
-- Pitch shape: "go install github.com/aac/act/cmd/act@latest; cd <your repo>; act init; act create 'first task'" → done in 30 seconds.
-- Ask them to share: what was their first friction point, what tripped a cold-start agent, what does the log look like after a week.
+- **The friends aren't running the commands — their agents are.** What we're actually testing: can a cold-start agent in someone else's repo discover act exists, run `go install …@latest`, find the binary on PATH, fire the global act skill, run `act init`, and pick up the workflow without their human explaining anything. The pitch to a friend is "tell your agent to install act and try it on a real task" — the agent does the install/init/first-task; the friend reports back on what tripped the agent. This is the dogfood-memory pattern (agents are the primary user), now extrapolated to a repo we don't own.
+- Open questions a real alpha will answer that the dogfood can't: does the skill auto-discover from `.act/` in repos with their own CLAUDE.md? Does `go install` from a fresh `$HOME` produce a usable binary on the friend's platform (Linux, Mac, whatever)? What does the friend's git log look like after a week of agent-driven act use — readable, or did some per_session edge case re-noise it?
 - The act-evaluation doc's "what changes the read next" line — "a real alpha trial in another repo" — is exactly what this enables.
 
 ## Operational notes
