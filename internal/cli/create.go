@@ -43,6 +43,13 @@ type CreateOptions struct {
 	NoCommit bool
 	Push     bool
 	Isolated bool
+	// BlockedBy, when non-empty, attaches one add_dep (type=blocks) op per
+	// id alongside the create op. Each id is resolved via the prefix
+	// pipeline; duplicates resolving to the same full id are folded to one
+	// edge. Edge direction is new→id (the new issue is blocked by id),
+	// matching the semantic of `act_block`'s `blocked_by` parameter — so
+	// agents who already know `act_block` read the flag the same way.
+	BlockedBy []string
 }
 
 // CreateResult is the JSON shape returned on success. Field order is
@@ -311,16 +318,143 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Step 7: write + auto-commit (and run post-create hook).
+	// Step 6b: resolve --blocked-by ids (if any). Each becomes an add_dep
+	// op writing IssueID=<new>, parent=<resolved>, type=blocks. Duplicates
+	// resolving to the same full id are folded to one edge (the dep itself
+	// is idempotent — writing it twice would just create two ops the
+	// applier dedups, but agents reading the op log shouldn't see noise).
+	var blockedByEnvs []op.Envelope
+	var blockedByBodies [][]byte
+	if len(opts.BlockedBy) > 0 {
+		seen := make(map[string]bool, len(opts.BlockedBy))
+		for _, raw := range opts.BlockedBy {
+			if raw == "" {
+				return CreateErrorOutput{
+					Error:   "bad_flag",
+					Message: "act create: --blocked-by: id is required and must be non-empty",
+				}, 2
+			}
+			parent, rerr := ids.Resolve(raw, knownIDs)
+			if rerr != nil {
+				if errors.Is(rerr, ids.ErrNotFound) {
+					return CreateErrorOutput{
+						Error:   "issue_not_found",
+						Message: fmt.Sprintf("act create: --blocked-by %q: no matching id", raw),
+						Details: map[string]any{"query": raw},
+					}, 3
+				}
+				var amb *ids.ErrAmbiguousID
+				if errors.As(rerr, &amb) {
+					candidates := amb.Candidates()
+					return CreateErrorOutput{
+						Error:   "id_ambiguous",
+						Message: fmt.Sprintf("act create: --blocked-by %q matches %d issues", raw, len(candidates)),
+						Details: map[string]any{
+							"prefix":     raw,
+							"candidates": candidates,
+						},
+						Candidates: candidates,
+					}, 2
+				}
+				return CreateErrorOutput{
+					Error:   "issue_not_found",
+					Message: rerr.Error(),
+					Details: map[string]any{"query": raw},
+				}, 3
+			}
+			if seen[parent] {
+				continue
+			}
+			seen[parent] = true
+			// Defensive: reject a self-loop. Under the single-writer model
+			// this is unreachable because knownIDs is snapshotted before
+			// PickUnique generates issueID — ids.Resolve cannot return
+			// issueID. But a concurrent writer writing a create op between
+			// the snapshot and PickUnique could theoretically smuggle our
+			// new id into a future call's knownIDs; guarding here matches
+			// the parity check in act_block (composed.go:339) and is the
+			// kind of cheap invariant doctor's correctness story relies on.
+			if parent == issueID {
+				return CreateErrorOutput{
+					Error:   "bad_flag",
+					Message: "act create: --blocked-by cannot reference the issue being created (self-loop)",
+				}, 2
+			}
+
+			depPayload := op.AddDepPayload{Parent: parent, EdgeType: "blocks"}
+			if verr := depPayload.Validate(); verr != nil {
+				return CreateErrorOutput{
+					Error:   "payload_invalid",
+					Message: verr.Error(),
+				}, 1
+			}
+			depBody, perr := canonicaljson.Marshal(depPayload)
+			if perr != nil {
+				return CreateErrorOutput{
+					Error:   "marshal_failed",
+					Message: perr.Error(),
+				}, 1
+			}
+			depStamp := clock.Send()
+			depStamp.NodeID = cfg.NodeID
+			depEnv := op.Envelope{
+				OpVersion:     op.CurrentOpVersion,
+				SchemaVersion: op.CurrentSchemaVersion,
+				WriterVersion: op.WriterVersion,
+				OpType:        "add_dep",
+				IssueID:       issueID,
+				Payload:       depBody,
+				HLC:           depStamp,
+				NodeID:        cfg.NodeID,
+			}
+			if verr := depEnv.Validate(); verr != nil {
+				return CreateErrorOutput{
+					Error:   "envelope_invalid",
+					Message: verr.Error(),
+				}, 1
+			}
+			depEnvBody, merr := depEnv.Marshal()
+			if merr != nil {
+				return CreateErrorOutput{
+					Error:   "marshal_failed",
+					Message: merr.Error(),
+				}, 1
+			}
+			blockedByEnvs = append(blockedByEnvs, depEnv)
+			blockedByBodies = append(blockedByBodies, depEnvBody)
+		}
+	}
+
+	// Step 7: write + auto-commit. With no --blocked-by, take the
+	// hook-aware single-op path. With one or more, batch the create +
+	// add_dep ops into a single atomic commit; on any failure between
+	// op-write and commit-success, rollback unstages and removes every
+	// written op file so the bug never exists with no edge.
+	//
+	// Multi-op batches do not fire per-op-type hooks (matching the
+	// composed `act_block` pattern); projects with a `create` hook will
+	// observe it on the no-blocked-by path only.
 	var gops *gitops.GitOps
 	if !opts.NoCommit {
 		gops = gitops.NewGitOps(repoRoot)
 	}
-	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
-		NoCommit: opts.NoCommit,
-		Push:     opts.Push,
-		Isolated: opts.Isolated,
-	})
+	var werr error
+	if len(blockedByEnvs) == 0 {
+		werr = WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
+			NoCommit: opts.NoCommit,
+			Push:     opts.Push,
+			Isolated: opts.Isolated,
+		})
+	} else {
+		envs := append([]op.Envelope{env}, blockedByEnvs...)
+		bodies := append([][]byte{body}, blockedByBodies...)
+		commitMsg := BuildBatchCommitMessage(env, len(envs))
+		werr = WriteOpsAndAutoCommit(envs, bodies, paths, gops, WriteOpts{
+			NoCommit: opts.NoCommit,
+			Push:     opts.Push,
+			Isolated: opts.Isolated,
+		}, commitMsg)
+	}
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {
 			return CreateErrorOutput{

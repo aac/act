@@ -456,3 +456,235 @@ func writeCloseOp(t *testing.T, root, parentID string) {
 		t.Fatalf("git commit close: %v", err)
 	}
 }
+
+// TestRunCreate_BlockedBy_SingleAtomicCommit verifies act-c26a's core
+// promise: `act create --blocked-by X` writes the create + add_dep ops
+// into ONE git commit (not two), with the canonical batch marker subject
+// `act-op: (act-XXXX) create +1`.
+func TestRunCreate_BlockedBy_SingleAtomicCommit(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	parentOut, code := RunCreate(root, CreateOptions{Title: "blocker", Type: "task"})
+	if code != 0 {
+		t.Fatalf("seed parent: %d", code)
+	}
+	parentID := parentOut.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "blocked",
+		Type:      "task",
+		BlockedBy: []string{parentID},
+	})
+	if code != 0 {
+		t.Fatalf("create with --blocked-by: code = %d; out=%+v", code, out)
+	}
+	childID := out.(CreateResult).ID
+
+	// One commit, not two.
+	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	if commitsAfter != "1" {
+		t.Errorf("expected 1 new commit, got %s", commitsAfter)
+	}
+
+	// Subject carries the +N batch marker (the create + 1 dep op).
+	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	if !strings.Contains(subj, "create +1") {
+		t.Errorf("subject %q missing batch suffix `create +1`", subj)
+	}
+	// And the (act-XXXX) marker is the child's short id so doctor's grep
+	// keys on the right issue.
+	if !strings.Contains(subj, "("+ShortIssueID(childID)+")") {
+		t.Errorf("subject %q does not embed child short id", subj)
+	}
+
+	// Both op files exist on disk under the child id's shard.
+	createMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", childID, "*", "*-create.json"))
+	depMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", childID, "*", "*-add_dep.json"))
+	if len(createMatches) != 1 {
+		t.Errorf("expected 1 create op file, got %d", len(createMatches))
+	}
+	if len(depMatches) != 1 {
+		t.Errorf("expected 1 add_dep op file, got %d", len(depMatches))
+	}
+
+	// The folded state of the child has exactly one blocks-edge to the parent.
+	paths := config.Layout(root)
+	state, err := fold.FoldIssue(paths.Ops, childID, fold.ApplyDispatch)
+	if err != nil {
+		t.Fatalf("FoldIssue child: %v", err)
+	}
+	deps, ok := state.Fields["deps"].([]map[string]string)
+	if !ok || len(deps) != 1 {
+		t.Fatalf("expected 1 dep, got %v (type %T)", state.Fields["deps"], state.Fields["deps"])
+	}
+	if deps[0]["parent"] != parentID || deps[0]["edge_type"] != "blocks" {
+		t.Errorf("dep = %v; want parent=%s edge_type=blocks", deps[0], parentID)
+	}
+}
+
+// TestRunCreate_BlockedBy_MultipleDeps verifies that N --blocked-by ids
+// each produce a distinct add_dep op, all bundled into one commit.
+func TestRunCreate_BlockedBy_MultipleDeps(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	a, _ := RunCreate(root, CreateOptions{Title: "a"})
+	b, _ := RunCreate(root, CreateOptions{Title: "b"})
+	c, _ := RunCreate(root, CreateOptions{Title: "c"})
+	aID := a.(CreateResult).ID
+	bID := b.(CreateResult).ID
+	cID := c.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "child of three",
+		BlockedBy: []string{aID, bID, cID},
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	childID := out.(CreateResult).ID
+
+	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	if commitsAfter != "1" {
+		t.Errorf("expected 1 commit, got %s", commitsAfter)
+	}
+	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	if !strings.Contains(subj, "create +3") {
+		t.Errorf("subject %q missing `create +3` (1 create + 3 deps = 4 ops)", subj)
+	}
+
+	depMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", childID, "*", "*-add_dep.json"))
+	if len(depMatches) != 3 {
+		t.Errorf("expected 3 add_dep op files, got %d", len(depMatches))
+	}
+
+	paths := config.Layout(root)
+	state, err := fold.FoldIssue(paths.Ops, childID, fold.ApplyDispatch)
+	if err != nil {
+		t.Fatalf("FoldIssue: %v", err)
+	}
+	deps, _ := state.Fields["deps"].([]map[string]string)
+	if len(deps) != 3 {
+		t.Fatalf("expected 3 deps, got %d (%v)", len(deps), deps)
+	}
+	gotParents := map[string]bool{}
+	for _, d := range deps {
+		if d["edge_type"] != "blocks" {
+			t.Errorf("non-blocks edge type %q", d["edge_type"])
+		}
+		gotParents[d["parent"]] = true
+	}
+	for _, want := range []string{aID, bID, cID} {
+		if !gotParents[want] {
+			t.Errorf("missing dep to %s", want)
+		}
+	}
+}
+
+// TestRunCreate_BlockedBy_DuplicateTargetsDedup verifies that --blocked-by
+// values resolving to the same full id fold to one edge (not two).
+func TestRunCreate_BlockedBy_DuplicateTargetsDedup(t *testing.T) {
+	root := makeCreateRepo(t)
+	pOut, _ := RunCreate(root, CreateOptions{Title: "parent"})
+	pID := pOut.(CreateResult).ID
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "child",
+		BlockedBy: []string{pID, pID, pID},
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	childID := out.(CreateResult).ID
+
+	depMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", childID, "*", "*-add_dep.json"))
+	if len(depMatches) != 1 {
+		t.Errorf("expected 1 add_dep (dedup), got %d", len(depMatches))
+	}
+}
+
+// TestRunCreate_BlockedBy_UnknownTarget verifies that an unknown id
+// surfaces issue_not_found (exit 3) and leaves NO ops on disk — the new
+// issue must not exist with a missing edge.
+func TestRunCreate_BlockedBy_UnknownTarget(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "would-be orphan",
+		BlockedBy: []string{"act-deadbeef"},
+	})
+	if code != 3 {
+		t.Fatalf("code = %d; want 3 (issue_not_found); out=%+v", code, out)
+	}
+	e, ok := out.(CreateErrorOutput)
+	if !ok || e.Error != "issue_not_found" {
+		t.Fatalf("error envelope = %+v (type %T)", out, out)
+	}
+
+	// No commit should have landed.
+	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Errorf("HEAD moved %s -> %s; should be unchanged on unknown-target failure", headBefore, headAfter)
+	}
+
+	// No op files for any new issue: the .act/ops/ tree should contain
+	// only directories from prior makeCreateRepo seeds (which is none).
+	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", "act-*"))
+	if len(matches) != 0 {
+		t.Errorf("expected no issue directories, got %v", matches)
+	}
+}
+
+// TestRunCreate_BlockedBy_EmptyValue verifies that --blocked-by "" is
+// rejected as bad_flag (exit 2). A no-op flag with an empty string would
+// silently succeed otherwise.
+func TestRunCreate_BlockedBy_EmptyValue(t *testing.T) {
+	root := makeCreateRepo(t)
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "x",
+		BlockedBy: []string{""},
+	})
+	if code != 2 {
+		t.Fatalf("code = %d; want 2; out=%+v", code, out)
+	}
+	e, ok := out.(CreateErrorOutput)
+	if !ok || e.Error != "bad_flag" {
+		t.Errorf("error envelope = %+v (type %T)", out, out)
+	}
+}
+
+// TestRunCreate_BlockedBy_NoCommit verifies that --no-commit writes all
+// op files (create + dep ops) but does not commit. This is the bootstrap/
+// migration escape hatch; agents using --no-commit are responsible for
+// downstream staging.
+func TestRunCreate_BlockedBy_NoCommit(t *testing.T) {
+	root := makeCreateRepo(t)
+	pOut, _ := RunCreate(root, CreateOptions{Title: "p"})
+	pID := pOut.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "c",
+		BlockedBy: []string{pID},
+		NoCommit:  true,
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	childID := out.(CreateResult).ID
+
+	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
+	}
+	createMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", childID, "*", "*-create.json"))
+	depMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", childID, "*", "*-add_dep.json"))
+	if len(createMatches) != 1 || len(depMatches) != 1 {
+		t.Errorf("expected 1 create + 1 add_dep on disk, got %d + %d", len(createMatches), len(depMatches))
+	}
+}
