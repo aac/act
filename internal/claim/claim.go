@@ -280,8 +280,13 @@ func singleAttempt(
 		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: write op: %w", err)
 	}
 
-	// Step 3b: commit the new op.
-	msg := fmt.Sprintf("act-%s: claim %s", issueID, opts.Assignee)
+	// Step 3b: commit the new op. The canonical auto-commit subject is
+	// `act-op: (act-XXXX) claim`; the parenthesized short id is required
+	// for doctor's orphan-close grep, and the op_type-only suffix matches
+	// every other write op (act-d3a5). The previous form `act-<id>: claim
+	// <assignee>` produced a double-prefix bug (`act-act-XXXX: ...`)
+	// because issueID already begins with "act-".
+	msg := buildClaimCommitMessage(issueID)
 	if err := gitOps.Commit(msg); err != nil {
 		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: commit: %w", err)
 	}
@@ -472,3 +477,26 @@ func repoReference(repoRoot string) (hlc.HLC, error) {
 
 // readFile is var-indirect for fault-injection tests.
 var readFile = osReadFile
+
+// commitMarkerLen is the length of the parenthesized short id used in the
+// claim auto-commit subject (`(act-XXXX)`). It mirrors
+// cli.CommitMarkerLen but is inlined here to avoid a cli→claim→cli import
+// cycle (cli depends on claim). The constant is intentionally small —
+// `len("act-") + 4` — and load-bearing across the codebase; if either side
+// changes, both must move together. See act-d3a5.
+const commitMarkerLen = len("act-") + 4
+
+// buildClaimCommitMessage returns the canonical auto-commit subject for a
+// claim op: `act-op: (act-XXXX) claim`. Mirrors cli.BuildOpCommitMessage
+// for op_type="claim" without taking a cli import. The previous form
+// `act-<id>: claim <assignee>` (issueID already has the `act-` prefix)
+// produced double-prefixed subjects (`act-act-XXXX: claim …`) and broke
+// doctor's orphan-close grep, which keys on the literal `(act-XXXX)`
+// marker. See act-d3a5.
+func buildClaimCommitMessage(issueID string) string {
+	short := issueID
+	if len(issueID) > commitMarkerLen {
+		short = issueID[:commitMarkerLen]
+	}
+	return fmt.Sprintf("act-op: (%s) claim", short)
+}

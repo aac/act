@@ -201,7 +201,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	if st, ok := fr.Issues[full]; ok && st != nil && st.Tombstoned {
 		return DeleteResult{
 			ID:         full,
-			ShortID:    shortIDFor(full),
+			ShortID:    ShortIssueID(full),
 			OpsWritten: 0,
 			Committed:  false,
 			Tombstoned: []string{full},
@@ -325,11 +325,10 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	// Step 6c: write + (optionally) commit. Always batch through
 	// WriteOpsAndAutoCommit (single op or many) so the rollback path is
 	// a single helper and the commit subject format stays consistent.
-	short := shortIDFor(full)
-	commitMsg := fmt.Sprintf("act-op: (%s) tombstone", short)
-	if len(envs) > 1 {
-		commitMsg = fmt.Sprintf("act-op: (%s) tombstone cascade x%d", short, len(envs))
-	}
+	// Subject is built by BuildBatchCommitMessage on the *first* envelope
+	// (the head of the cascade): canonical form is
+	// `act-op: (act-XXXX) tombstone [+N]`. See act-d3a5.
+	commitMsg := BuildBatchCommitMessage(envs[0], len(envs))
 
 	var gops *gitops.GitOps
 	if !opts.NoCommit {
@@ -373,7 +372,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	sort.Strings(tombstoned)
 	return DeleteResult{
 		ID:         full,
-		ShortID:    short,
+		ShortID:    ShortIssueID(full),
 		OpsWritten: len(envs),
 		Committed:  !opts.NoCommit,
 		Tombstoned: tombstoned,
@@ -410,16 +409,6 @@ func collectDescendantsBFS(root string, childrenOf map[string][]string) []string
 		}
 	}
 	return out
-}
-
-// shortIDFor returns the canonical 4-hex-char short id used in commit
-// subjects. Mirrors the format produced by close.go so doctor's commit
-// grep and the human-facing CLI surface stay aligned.
-func shortIDFor(full string) string {
-	if len(full) > len("act-")+ids.MinShortHexLen {
-		return full[:len("act-")+ids.MinShortHexLen]
-	}
-	return full
 }
 
 // FormatDeleteHuman renders a DeleteResult as a single human-friendly

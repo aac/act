@@ -259,18 +259,15 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Compute the short id for the commit subject. We use the on-disk
-	// prefix-of-id length (4 hex chars after `act-`) so doctor's
-	// orphan-close grep `(act-XXXX)` always matches.
-	short := full
-	if len(full) > len("act-")+ids.MinShortHexLen {
-		short = full[:len("act-")+ids.MinShortHexLen]
-	}
+	// Compute the short id for the JSON result. Doctor's orphan-close
+	// grep keys on the same `(act-XXXX)` marker that BuildOpCommitMessage
+	// produces, so the JSON shape and the commit subject stay aligned.
+	short := ShortIssueID(full)
 
-	// Step 5: write op file + (optionally) commit. We do NOT route through
-	// WriteOpAndAutoCommit because the close commit subject must embed
-	// `(<short_id>)` for doctor's orphan-close grep — a format the shared
-	// helper does not produce.
+	// Step 5: write op file + (optionally) commit. The close path stays
+	// out of WriteOpAndAutoCommit because it threads a custom hook
+	// invocation; the commit subject itself is the canonical
+	// BuildOpCommitMessage form, identical to every other write op.
 	opPath, _, werr := op.ProbeAndWrite(paths.Ops, env, body, func() (func(), error) { return func() {}, nil })
 	if werr != nil {
 		return CloseErrorOutput{
@@ -316,10 +313,10 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}
 		}
 
-		// Commit subject embeds `(<short_id>)` so doctor's
-		// orphan-close grep can correlate the closed issue with a
-		// commit referencing its short id.
-		msg := fmt.Sprintf("act-op: (%s) close", short)
+		// Commit subject is built by BuildOpCommitMessage; canonical
+		// format is `act-op: (act-XXXX) close`. Doctor's orphan-close
+		// grep keys on the parenthesized short id. See act-d3a5.
+		msg := BuildOpCommitMessage(env)
 		if err := gops.Commit(msg); err != nil {
 			_ = runUnstage(gops.RepoRoot, opPath)
 			return CloseErrorOutput{

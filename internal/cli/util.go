@@ -10,9 +10,59 @@ import (
 	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hooks"
+	"github.com/aac/act/internal/ids"
 	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
+
+// CommitMarkerLen is the length of the parenthesized short id used in
+// auto-commit subjects (`(act-XXXX)`), counting the `act-` prefix plus the
+// first MinShortHexLen hex characters. Doctor's orphan-close grep keys on
+// this exact marker, so the constant is load-bearing across packages.
+const CommitMarkerLen = len("act-") + ids.MinShortHexLen
+
+// ShortIssueID returns the canonical short id used in auto-commit subjects
+// for the given full issue id. For ids that already match `act-` + at least
+// MinShortHexLen hex characters, the prefix is truncated to that length.
+// For shorter / malformed ids the input is returned verbatim — the commit
+// is still written but doctor's grep may not match it; that is the correct
+// behavior because the input is itself non-canonical.
+func ShortIssueID(full string) string {
+	if len(full) > CommitMarkerLen {
+		return full[:CommitMarkerLen]
+	}
+	return full
+}
+
+// BuildOpCommitMessage returns the canonical auto-commit subject for a
+// single-op write. The format is `act-op: (act-XXXX) <op_type>` — the
+// parenthesized short id is required so `act doctor orphan-close` (which
+// greps for the literal `(act-XXXX)` marker) keeps matching every op
+// commit, not only closes. This single helper is the only place the
+// format is built; per-command call sites must NOT construct the subject
+// inline (act-d3a5 lesson: three different inline templates produced three
+// different shapes within a single session).
+func BuildOpCommitMessage(env op.Envelope) string {
+	return fmt.Sprintf("act-op: (%s) %s", ShortIssueID(env.IssueID), env.OpType)
+}
+
+// BuildBatchCommitMessage returns the canonical auto-commit subject for a
+// multi-op batch covering a single issue id (the batch must be homogeneous
+// in issue_id; spec §5.D.2). The format is
+// `act-op: (act-XXXX) <op_type> [+N]` where `+N` is the count of ops
+// beyond the first. For a single-op batch the count suffix is omitted, so
+// the message is byte-identical to BuildOpCommitMessage(env).
+//
+// The shared helper ensures cascade tombstones, act_block-style composed
+// tools, and any future multi-op write all produce subjects that doctor's
+// grep recognizes.
+func BuildBatchCommitMessage(env op.Envelope, count int) string {
+	base := BuildOpCommitMessage(env)
+	if count <= 1 {
+		return base
+	}
+	return fmt.Sprintf("%s +%d", base, count-1)
+}
 
 // hookTimeout is the wall-clock limit applied to a single hook
 // invocation, per spec §"Hooks contract" step 7.
@@ -46,8 +96,10 @@ var ErrInvalidFlags = errors.New("cli: invalid flag combination")
 // Steps:
 //  1. Validate flag combinations (§4).
 //  2. Write the op file via op.ProbeAndWrite into paths.Ops.
-//  3. If !opts.NoCommit: stage the new file and commit with the spec's
-//     `act-op: <id_short> <op_type>` message.
+//  3. If !opts.NoCommit: stage the new file and commit with the canonical
+//     `act-op: (act-XXXX) <op_type>` message produced by
+//     BuildOpCommitMessage. The parenthesized marker is required by
+//     doctor's orphan-close grep (spec §act doctor orphan-close).
 //  4. If opts.Push: invoke gitops.Push(); a missing remote yields ErrNoRemote
 //     which the caller may surface as exit 2.
 //
@@ -102,17 +154,11 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 			return err
 		}
 	}
-	idShort := env.IssueID
-	if len(idShort) > 4 {
-		// The shortest-unique-prefix layer (act-6991) materializes a
-		// shorter prefix when one is unique. At write time we do not yet
-		// have access to the prefix index, so we fall back to the first 4
-		// hex characters of the id (matching the on-disk prefix-of-id
-		// convention) for human readability of the commit subject. The
-		// full id is always present in the op file's path.
-		idShort = env.IssueID[:4]
-	}
-	msg := fmt.Sprintf("act-op: %s %s", idShort, env.OpType)
+	// Auto-commit subject is built by BuildOpCommitMessage; the canonical
+	// format is `act-op: (act-XXXX) <op_type>`. Doctor's orphan-close
+	// check greps for the literal parenthesized marker, so every write op
+	// (not just close) embeds it. See act-d3a5.
+	msg := BuildOpCommitMessage(env)
 	if err := gops.Commit(msg); err != nil {
 		// Best-effort un-stage so the working tree returns to its
 		// pre-attempt state; the op file is intentionally left on disk so
