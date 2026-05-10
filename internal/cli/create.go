@@ -331,15 +331,12 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Step 8: success envelope. The short id mirrors the on-disk prefix
-	// of the issue id (the first 4 hex chars after `act-`).
-	short := issueID
-	if len(issueID) > len("act-")+ids.MinShortHexLen {
-		short = issueID[:len("act-")+ids.MinShortHexLen]
-	}
+	// Step 8: success envelope. The short id mirrors the marker that
+	// BuildOpCommitMessage embeds in the auto-commit subject so doctor's
+	// orphan-close grep stays aligned with the JSON output.
 	return CreateResult{
 		ID:       issueID,
-		ShortID:  short,
+		ShortID:  ShortIssueID(issueID),
 		Title:    opts.Title,
 		Warnings: warnings,
 	}, 0
