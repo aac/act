@@ -9,11 +9,25 @@ This repo dogfoods `act` on its own backlog. Agents are the primary user; this f
 3. `./bin/act update --claim <id>` to take it.
 4. Do the work, write tests, run them.
 5. `git commit -m "<summary> (<short-id>)"` — the marker enables `act doctor` orphan-close detection.
-6. `./bin/act close <id> --reason "<one-liner>"`.
-7. `git push origin main` — concurrent agents see the close immediately; session-death can't lose work.
-8. Repeat from step 2 until `act ready` is empty.
+6. **Review the diff** — see "Review step" below. Decide what kind, file follow-ups for findings.
+7. `./bin/act close <id> --reason "<one-liner>"`.
+8. `git push origin main` — concurrent agents see the close immediately; session-death can't lose work.
+9. Repeat from step 2 until `act ready` is empty.
 
 In an MCP-equipped session, prefer `act_next` + `act_finish` over the raw CLI; `.mcp.json` wires this up automatically.
+
+## Review step
+
+Step 6 of the loop is "review the diff." The orchestrator decides which kind based on the change's scope and risk. The standard cuts:
+
+- **No review:** typo fixes, doc touch-ups, formatting-only commits, comments. Trust the work + your own checks; close.
+- **Lightweight review (default for ergonomic features and bugfixes):** a `feature-dev:code-reviewer` sub-agent over the diff with `>70% confidence` filter. Goal is signal not nits. Findings → file as follow-up issues, fix the load-bearing ones inline, close on the rest.
+- **Multi-modal review (default for changes affecting agent workflow, public API, or concurrency semantics):** code-reviewer + a UX/walkthrough reviewer + (where appropriate) a real workflow run by a fresh agent. These catch non-overlapping defect classes; rely on one and you'll miss things the others would have caught.
+- **Pre-implementation review (for big architectural moves):** review the *plan* before writing code. Cheaper to throw away an approach than a refactor.
+
+Reviewer prompts should always: pin the commit hash explicitly, set a confidence floor, and ask for a "what's working well" section at the end so subsequent work knows what *not* to break. File the review itself as an act issue (claim, run, close-with-derivative-pointers) — same audit lifecycle as feature work.
+
+When to skip the review step: you genuinely have to. Don't skip just because the change is small; small changes have introduced load-bearing bugs in this repo (act-d3a5's `act-act-` double prefix had passed every test). When in doubt, lightweight review.
 
 ## When to halt and surface to Andrew
 
@@ -71,3 +85,4 @@ Each rule below is versioned so a later skill-extraction pass can decide what's 
 - *Push after every close, not at session end* (2026-05): matches the dispatcher pattern, makes closes visible to concurrent agents immediately, and means a dropped session never silently swallows finished work. Verbose git history is the accepted cost. Discovered when the first dogfood agent (act-6bbd) followed the original loop and didn't push, leaving 3 commits local-only — see act-ac52.
 - *Sub-agents must use isolation:worktree by default* (2026-05): un-isolated agents collide on git index even with disjoint files because `git commit` serializes per working tree. Op-log file-level concurrency (the multi-writer thesis from the brief) only saves you when each writer has its own working tree. Discovered when sub-agent #2 on act-5467 blocked the parent session from claiming a different issue in the same tree — see act-6e2b.
 - *Prefix resolution accepts any non-empty hex prefix, not just ≥4 chars* (2026-05): every doc and help string says "prefix ok" for id arguments (act-6fca). The MinShortHexLen=4 floor governs display and id generation; it no longer applies to user-supplied lookup. `ids.MinInputHexLen=1` is the floor for resolution. An empty hex tail (bare "act-" or whitespace) still returns not_found. This lets agents use e.g. `act show act-c2` when unique. Error-envelope distinction: `issue_not_found` (code `issue_not_found`, no candidates, exit 3) vs `id_ambiguous` (code `id_ambiguous`, `details.candidates[]` lists all matching full ids sorted, capped at `MaxAmbiguousCandidates=16`, exit 2 per the universal table — see act-8dcd).
+- *Review step in the loop, with orchestrator-judged scope* (2026-05): the canonical loop now has step 6 ("review the diff"); see the Review step section. Lessons from the first overall review (act-da03): (1) confidence filter at >70% gave high-signal findings instead of taste-level noise — keep this default; (2) pin the commit ref explicitly in reviewer prompts (the first review's intro line cited a stale hash); (3) ask for a "what's working well" section at the end so subsequent work knows what NOT to break — guidance for future authors as much as a reviewer politeness; (4) reviews are first-class tracked tasks in act, with derivative-issues-on-close as the audit pattern.
