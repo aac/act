@@ -61,6 +61,22 @@ WHAT THIS IS
   Agents are the primary user; humans interact through the agents,
   not the tracker.
 
+GETTING STARTED
+  If the 'act' binary isn't on PATH yet:
+
+    go install github.com/aac/act/cmd/act@latest
+
+  Then, in any git repo:
+
+    act init                 # creates .act/, records a node_id
+    act ready                # the canonical first loop step
+
+  go install is the canonical bootstrap — one command, no setup. The
+  alternates (brew tap, prebuilt release binaries, curl installer)
+  exist but are tracked separately (act-e6a5, act-4fe6, act-8416) and
+  are not the recommended path for new agent sessions. See README.md
+  for the rationale and the tradeoffs.
+
 THE CANONICAL WORK LOOP (use this in every session)
   1. act ready                    # what's unblocked, ordered by priority
   2. act update --claim <id>      # take it (atomic; concurrent claimers

@@ -29,6 +29,12 @@ func TestRunHelpDefault(t *testing.T) {
 		"act help workflow",
 		"act help ops-model",
 		"act help errors",
+		// GETTING STARTED section: the canonical bootstrap pitch must
+		// match the README so a fresh agent reading either gets the
+		// same one-command install path (act-6051).
+		"GETTING STARTED",
+		"go install github.com/aac/act/cmd/act@latest",
+		"act init",
 	})
 }
 
