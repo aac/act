@@ -14,7 +14,7 @@ import (
 // write flags (`--no-commit`, `--push`, `--isolated`).
 func runClose(args []string) int {
 	fs := flag.NewFlagSet("close", flag.ContinueOnError)
-	reason := fs.String("reason", "", "closed reason (stored as closed_reason)")
+	reason := fs.String("reason", "", "closed reason (stored as closed_reason; max 500 bytes — see 'act help workflow' for cap rationale)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")

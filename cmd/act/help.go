@@ -150,6 +150,14 @@ THE LOOP IN DETAIL
   Closing
     $ act close <id> --reason "<one-liner>"
 
+    --reason is capped at 500 bytes. The cap is deliberate: reasons are
+    audit-trail summaries, intended to be readable at a glance from the
+    git log and 'act show'. If you find yourself wanting to write more,
+    that probably belongs in the work-commit message (longer-form), in
+    a follow-up issue's description, or in a separate doc — not in the
+    close reason. Same cap applies to --reason on 'act reopen' and to
+    each --accept criterion on 'act create'.
+
 EXAMPLE SESSION (CLI)
   $ act ready --json | jq -r '.ready[0].id'
   act-c26a
