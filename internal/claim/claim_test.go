@@ -450,6 +450,132 @@ func TestRunClaim_ClaimAfterCloseExcluded(t *testing.T) {
 	}
 }
 
+// TestRunClaim_PullRebaseNoUpstreamIsNoopSuccess: act-fdb2 fix #1.
+// When the GitOps.PullRebase implementation reports ErrNoUpstream the
+// claim protocol must short-circuit the rebase step (no remote, nothing
+// to rebase against) and complete as a normal win — without --isolated
+// being required by the caller. This is the local-first / fresh-repo
+// case CLAUDE.md's canonical loop now relies on.
+func TestRunClaim_PullRebaseNoUpstreamIsNoopSuccess(t *testing.T) {
+	root := t.TempDir()
+	initRepo(t, root)
+	clock := newClock(t, "abcdef01", 1_700_000_000_000)
+	git := &FakeGitOps{PullRebaseErr: ErrNoUpstream}
+
+	res, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)
+	if err != nil {
+		t.Fatalf("RunClaim: %v", err)
+	}
+	if !res.Claimed {
+		t.Fatalf("Claimed=false, want true; result=%+v", res)
+	}
+	if res.Winner != "alice" {
+		t.Errorf("Winner=%q, want alice", res.Winner)
+	}
+	// PullRebase WAS called (we don't skip the call, only its error).
+	if git.PullRebaseCalls != 1 {
+		t.Errorf("PullRebaseCalls=%d, want 1 (called, error swallowed)", git.PullRebaseCalls)
+	}
+	if git.CommitCalls != 1 {
+		t.Errorf("CommitCalls=%d, want 1", git.CommitCalls)
+	}
+}
+
+// TestRunClaim_PullRebaseOtherErrorStillFails: any non-ErrNoUpstream
+// PullRebase error remains a hard failure (rebase conflict, network).
+func TestRunClaim_PullRebaseOtherErrorStillFails(t *testing.T) {
+	root := t.TempDir()
+	initRepo(t, root)
+	clock := newClock(t, "abcdef01", 1_700_000_000_000)
+	boom := errors.New("rebase conflict on .act/ops/foo.json")
+	git := &FakeGitOps{PullRebaseErr: boom}
+
+	_, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)
+	if err == nil {
+		t.Fatalf("RunClaim: want error, got nil")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("RunClaim err=%v, want wrap of %v", err, boom)
+	}
+}
+
+// TestRunClaim_IdempotentReClaimSameAssignee: act-fdb2 fix #2. Re-running
+// claim against an issue already won by the same assignee returns
+// success WITHOUT writing a new claim op (otherwise the second op loses
+// the (earliest-wins) ordering against the first and the agent reports
+// "lost race against itself").
+func TestRunClaim_IdempotentReClaimSameAssignee(t *testing.T) {
+	root := t.TempDir()
+	paths := initRepo(t, root)
+
+	// Plant a pre-existing winning claim by alice (us).
+	priorHLC := hlc.HLC{Wall: 1_700_000_000_000, Logical: 0, NodeID: "abcdef01"}
+	priorPath := writeRawClaim(t, paths.Ops, "act-1234", "alice", priorHLC)
+
+	// Our re-claim attempt with a LATER clock: without idempotence we'd
+	// write a second op and lose to the earlier one.
+	clock := newClock(t, "abcdef01", 1_700_000_001_000)
+	git := &FakeGitOps{}
+
+	res, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)
+	if err != nil {
+		t.Fatalf("RunClaim: %v", err)
+	}
+	if !res.Claimed {
+		t.Fatalf("Claimed=false, want true (idempotent re-claim); result=%+v", res)
+	}
+	if res.Winner != "alice" {
+		t.Errorf("Winner=%q, want alice", res.Winner)
+	}
+
+	// Critically: NO new op was written, NO commit/pull happened.
+	if git.CommitCalls != 0 {
+		t.Errorf("CommitCalls=%d, want 0 (idempotent path must not write)", git.CommitCalls)
+	}
+	if git.PullRebaseCalls != 0 {
+		t.Errorf("PullRebaseCalls=%d, want 0 (idempotent path must not pull)", git.PullRebaseCalls)
+	}
+	matches, _ := filepath.Glob(filepath.Join(paths.Ops, "act-1234", "*", "*-claim.json"))
+	if len(matches) != 1 {
+		t.Errorf("claim ops on disk = %d, want 1 (only the prior op); files=%v", len(matches), matches)
+	}
+	// The single op on disk is the one we planted, untouched.
+	if len(matches) == 1 && matches[0] != priorPath {
+		t.Errorf("claim op path = %q, want %q (prior op untouched)", matches[0], priorPath)
+	}
+}
+
+// TestRunClaim_IdempotenceDoesNotMaskRealLoss: if the prior winner is a
+// DIFFERENT assignee, re-claim must NOT short-circuit — we'd silently
+// claim an issue we don't own. This is the regression guard for the
+// idempotence check's predicate.
+func TestRunClaim_IdempotenceDoesNotMaskRealLoss(t *testing.T) {
+	root := t.TempDir()
+	paths := initRepo(t, root)
+
+	// Pre-existing winning claim by carol (NOT us).
+	carolHLC := hlc.HLC{Wall: 1_700_000_000_000, Logical: 0, NodeID: "11111111"}
+	writeRawClaim(t, paths.Ops, "act-1234", "carol", carolHLC)
+
+	clock := newClock(t, "abcdef01", 1_700_000_001_000)
+	git := &FakeGitOps{}
+
+	res, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)
+	if err != nil {
+		t.Fatalf("RunClaim: %v", err)
+	}
+	if res.Claimed {
+		t.Fatalf("Claimed=true, want false (carol won); result=%+v", res)
+	}
+	if res.Winner != "carol" {
+		t.Errorf("Winner=%q, want carol", res.Winner)
+	}
+	// We DID write our op (and commit) — only same-assignee short-circuits.
+	if git.CommitCalls != 1 {
+		t.Errorf("CommitCalls=%d, want 1 (different-assignee path must write)", git.CommitCalls)
+	}
+}
+
 // writeRawClose writes a close op directly to disk for fixture setup.
 func writeRawClose(t *testing.T, rootOps, issueID string, h hlc.HLC, reason string) string {
 	t.Helper()

@@ -17,7 +17,6 @@ package gitops
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -33,7 +32,11 @@ var _ claim.GitOps = (*GitOps)(nil)
 // ErrNoRemote is returned by PullRebase and Push when the working tree has
 // no upstream configured. Callers translate this to spec exit code 2 (usage
 // error) when the user explicitly asked for --push.
-var ErrNoRemote = errors.New("gitops: no upstream remote configured")
+//
+// Aliased to claim.ErrNoUpstream so the claim package's PullRebase
+// short-circuit (act-fdb2) detects it via errors.Is without the gitops
+// package having to expose a second sentinel.
+var ErrNoRemote = claim.ErrNoUpstream
 
 // GitOps is a concrete implementation of the git side-effects used by the
 // claim and write-op flows. The zero value is not safe; use NewGitOps.
