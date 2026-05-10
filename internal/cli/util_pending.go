@@ -12,10 +12,19 @@ import (
 // restricted to the .act/ops/<issueID>/ subtree and returns the absolute paths
 // of all untracked (pending) op files for that specific issue.
 //
+// opsDir is an absolute path; the function derives the git-relative path for
+// the issue subtree by trimming repoRoot from opsDir. This ensures any
+// non-standard ops directory layout (e.g. in tests) is handled correctly.
+//
 // Isolated in its own file so tests can replace the implementation.
 func runListPendingOpFilesForIssue(repoRoot, opsDir, issueID string) ([]string, error) {
-	// The subtree path is relative to repoRoot, as git requires.
-	issuePath := filepath.Join(".act", "ops", issueID) + string(filepath.Separator)
+	// Derive the path relative to repoRoot so git accepts it.
+	relOpsDir, err := filepath.Rel(repoRoot, opsDir)
+	if err != nil {
+		return nil, fmt.Errorf("cli: list pending ops for %s: rel path: %w", issueID, err)
+	}
+	issuePath := filepath.Join(relOpsDir, issueID) + string(filepath.Separator)
+
 	cmd := exec.Command("git", "ls-files",
 		"--others", "--exclude-standard", "--full-name", "--",
 		issuePath)
