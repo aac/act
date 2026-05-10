@@ -29,6 +29,7 @@ func runUpdate(args []string) int {
 	priorityFlag := fs.Int("priority", -1, "new priority [0..3]")
 	assigneeFlag := fs.String("assignee", "", "new assignee (empty string clears)")
 	descriptionFlag := fs.String("description", "", "new description (empty string clears)")
+	descriptionFileFlag := fs.String("description-file", "", "read new description from file (UTF-8); use - for stdin")
 	var acceptFlag stringSliceFlag
 	fs.Var(&acceptFlag, "accept", "append an acceptance criterion (repeatable)")
 	var depRmFlag stringSliceFlag
@@ -86,9 +87,27 @@ func runUpdate(args []string) int {
 		a := *assigneeFlag
 		opts.Assignee = &a
 	}
+	// --description-file is mutually exclusive with --description (per
+	// act-6bbd acceptance criterion). If both are set, exit 2 before any
+	// I/O. Otherwise, when --description-file is set, read the file
+	// contents (or stdin for "-") and route them through the same
+	// Description option as the inline flag.
+	if visited["description"] && visited["description-file"] {
+		emitBadFlag(*asJSON, "act update: --description and --description-file are mutually exclusive")
+		return 2
+	}
 	if visited["description"] {
 		d := *descriptionFlag
 		opts.Description = &d
+	}
+	if visited["description-file"] {
+		body, code, errEnv := loadDescriptionFile(*descriptionFileFlag)
+		if code != 0 {
+			errEnv["message"] = "act update: " + errEnv["message"].(string)
+			emitUpdate(*asJSON, errEnv)
+			return code
+		}
+		opts.Description = &body
 	}
 
 	root, err := findRepoRoot()
