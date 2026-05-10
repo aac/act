@@ -80,6 +80,15 @@ var ErrInvalidFlags = errors.New("claim: invalid flag combination")
 // ErrEmptyAssignee is returned when Options.Assignee is empty.
 var ErrEmptyAssignee = errors.New("claim: assignee is required")
 
+// ErrNoUpstream is the sentinel a GitOps.PullRebase implementation should
+// return when the working tree has no upstream remote configured. RunClaim
+// treats this as a no-op success path for the local-first / fresh-repo
+// case (act-fdb2): the protocol still works without a remote because
+// nothing can have raced us. The gitops package re-exports this value as
+// ErrNoRemote so callers that want to detect "no remote at all" can keep
+// using either sentinel; errors.Is matches both.
+var ErrNoUpstream = errors.New("claim: no upstream remote configured")
+
 // sleeper is the indirection used to make --wait retry deterministic in
 // tests. The default implementation calls time.Sleep; tests inject a fake.
 type sleeper func(time.Duration)
@@ -218,6 +227,25 @@ func singleAttempt(
 ) (Result, error) {
 	paths := config.Layout(repoRoot)
 
+	// Step 0 (act-fdb2): idempotent re-claim short-circuit. If the active
+	// claim window already has a winner whose assignee equals ours, the
+	// issue is already ours and re-running is a no-op success — we MUST
+	// NOT write a duplicate claim op. Without this guard, a re-claim by
+	// the same node writes a later-HLC claim, then loses the (earliest-
+	// wins) ordering against its own earlier op and reports "lost race
+	// (winner=<self-node-id>)". See spec §5.B.3 (claim-suppression rule).
+	if winnerHash, winnerAssignee, err := winnerOnDisk(paths.Ops, issueID); err != nil {
+		return Result{IssueID: issueID, HLC: stamp}, fmt.Errorf("claim: idempotence-check winner: %w", err)
+	} else if winnerHash != "" && winnerAssignee == opts.Assignee {
+		return Result{
+			IssueID:    issueID,
+			YourOpHash: winnerHash,
+			Winner:     winnerAssignee,
+			HLC:        stamp,
+			Claimed:    true,
+		}, nil
+	}
+
 	// Step 2: build envelope.
 	payload := op.ClaimPayload{Assignee: opts.Assignee}
 	payloadBytes, err := json.Marshal(payload)
@@ -258,10 +286,17 @@ func singleAttempt(
 		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: commit: %w", err)
 	}
 
-	// Step 4: pull --rebase unless --isolated.
+	// Step 4: pull --rebase unless --isolated. A missing upstream
+	// (ErrNoUpstream) is treated as a successful no-op per act-fdb2: in
+	// the local-first / fresh-repo case there is no remote, therefore no
+	// concurrent writer to rebase against, and the protocol is still
+	// safe. Other PullRebase failures (rebase conflict, network) remain
+	// hard errors.
 	if !opts.Isolated {
 		if err := gitOps.PullRebase(); err != nil {
-			return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: pull --rebase: %w", err)
+			if !errors.Is(err, ErrNoUpstream) {
+				return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: pull --rebase: %w", err)
+			}
 		}
 	}
 
