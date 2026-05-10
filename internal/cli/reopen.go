@@ -264,6 +264,13 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 				Message: werr.Error(),
 			}, 2
 		}
+		if msg, details, isHook := HookFailureDetails(werr); isHook {
+			return ReopenErrorOutput{
+				Error:   "hook_failed",
+				Message: msg,
+				Details: details,
+			}, 1
+		}
 		return ReopenErrorOutput{
 			Error:   "write_failed",
 			Message: werr.Error(),
