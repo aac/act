@@ -141,6 +141,7 @@ func unknownDepVerbMsg(verb string) string {
 func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "reinitialize even if .act/ already exists")
+	noCommit := fs.Bool("no-commit", false, "create .act/ but do not stage and commit it (default: auto-commit)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -157,7 +158,7 @@ func runInit(args []string) int {
 		return 3
 	}
 
-	out, code := cli.RunInit(root, *force, getMachineID(), getGitEmail(), nil)
+	out, code := cli.RunInit(root, *force, !*noCommit, getMachineID(), getGitEmail(), nil)
 	emitInit(*asJSON, out, code == 0)
 	return code
 }
@@ -182,6 +183,13 @@ func emitInit(asJSON bool, payload any, success bool) {
 			return
 		}
 		fmt.Printf("Initialized .act/ at %s with node_id %s\n", m["act_dir"], m["node_id"])
+		if committed, _ := m["committed"].(bool); committed {
+			fmt.Println(`Committed initial state ("act init: tracker initialized"). Run "act create" to file your first issue.`)
+		} else if cerr, _ := m["commit_error"].(string); cerr != "" {
+			fmt.Fprintf(os.Stderr, "warning: auto-commit failed (%s); .act/ is on disk, commit manually with: git add .act .gitignore && git commit -m \"act init: tracker initialized\"\n", cerr)
+		} else {
+			fmt.Println(`Run "git add .act .gitignore && git commit" to track the new state, then "act create" to file your first issue.`)
+		}
 		return
 	}
 	emitEnvelope(asJSON, payload)
