@@ -248,7 +248,7 @@ func TestReadOnlyRefusal(t *testing.T) {
 }
 
 // TestActNextHappyPath: with one ready issue and no contention, act_next
-// claims the issue and returns {claimed:true, issue:{...}}.
+// claims the issue and returns {claimed:true, issue:{...}, commit_marker}.
 func TestActNextHappyPath(t *testing.T) {
 	root := makeRealRepo(t)
 	id := seedIssue(t, root, "ready-issue")
@@ -271,6 +271,20 @@ func TestActNextHappyPath(t *testing.T) {
 	}
 	if issue["id"] != id {
 		t.Errorf("issue.id = %v; want %s", issue["id"], id)
+	}
+	// commit_marker must be `(act-XXXX)` using the same shortest-unique
+	// prefix the CLI exposes via show's short_id. With one ready issue,
+	// the prefix should equal the rendered short_id.
+	marker, _ := m["commit_marker"].(string)
+	if marker == "" {
+		t.Fatalf("commit_marker missing or empty: %+v", m)
+	}
+	if !strings.HasPrefix(marker, "(act-") || !strings.HasSuffix(marker, ")") {
+		t.Errorf("commit_marker = %q; want `(act-XXXX)` shape", marker)
+	}
+	short, _ := issue["short_id"].(string)
+	if want := "(" + short + ")"; marker != want {
+		t.Errorf("commit_marker = %q; want %q (matching issue.short_id)", marker, want)
 	}
 }
 

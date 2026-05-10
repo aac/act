@@ -492,7 +492,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_next",
-			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state. Wraps act_ready + act_update --claim + act_show with bounded retry on claim loss (§5.D.1).",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state. Wraps act_ready + act_update --claim + act_show with bounded retry on claim loss (§5.D.1). Returns `commit_marker` (e.g. \"(act-XXXX)\") — include this verbatim in every work-commit message for the claimed issue so `act doctor` orphan-close can correlate the close with a real commit.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Optional id prefix; restrict to descendants."),
 			}, nil),
