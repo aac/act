@@ -32,7 +32,16 @@ func rearrangeArgs(args []string, fs *flag.FlagSet) ([]string, error) {
 
 		// Bare `--` ends flag parsing entirely; everything after it is
 		// positional verbatim (including tokens that look like flags).
+		// Preserve the terminator in the rearranged output so fs.Parse
+		// honours it — without this, a title that starts with `--`
+		// (e.g. `act create -- "--my-flag-named-issue"`) was passed
+		// through as a flag-shaped first positional and fs.Parse
+		// rejected it as an unknown flag (act-6218). Convention: all
+		// flags MUST appear before the `--` terminator on the command
+		// line; flags after `--` become positional, same as every
+		// other Unix tool.
 		if a == "--" {
+			flags = append(flags, "--")
 			positionals = append(positionals, args[i+1:]...)
 			break
 		}
