@@ -1,0 +1,49 @@
+#!/bin/bash
+# Pre-close hook for the act repo (act-8534).
+#
+# Runs the gates CI runs, locally, before the close commit lands. Catches
+# gofmt drift, vet warnings, and test failures *before* they fail CI on
+# the next push, eliminating the noise pattern act-728d introduced
+# (a dozen CI failures across consecutive close commits).
+#
+# This hook fires once per issue close (per_session bundling means the
+# close commit is the natural boundary). On failure: exit non-zero;
+# the close op file is rolled back per the WriteOpAndAutoCommit contract.
+#
+# Performance: full `go test ./...` takes ~50s. Run on close, not on
+# every op, so amortised cost per issue is acceptable.
+set -uo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$repo_root" ]; then
+  echo "[hook] not inside a git repo; skipping" >&2
+  exit 0
+fi
+cd "$repo_root"
+
+echo "[hook] act close: running pre-close checks (gofmt + vet + tests)"
+
+unformatted=$(gofmt -l . 2>/dev/null || true)
+if [ -n "$unformatted" ]; then
+  echo "[hook] FAIL: gofmt drift in:" >&2
+  echo "$unformatted" >&2
+  echo "[hook] run 'gofmt -w .' to fix, then re-close" >&2
+  exit 1
+fi
+
+if ! go vet ./... 2>&1; then
+  echo "[hook] FAIL: go vet found issues" >&2
+  exit 1
+fi
+
+# Run tests with a sane timeout. `go test ./...` ~50s on this codebase;
+# the 180s ceiling guards against a runaway test that would otherwise
+# block close indefinitely.
+if ! go test -timeout 180s ./... > /tmp/act-pre-close-test.log 2>&1; then
+  echo "[hook] FAIL: go test failed; last 20 lines:" >&2
+  tail -20 /tmp/act-pre-close-test.log >&2
+  exit 1
+fi
+
+echo "[hook] checks passed"
+exit 0
