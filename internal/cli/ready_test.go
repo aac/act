@@ -141,6 +141,107 @@ func seedClose(t *testing.T, root, id, reason string, wallMs int64, monthDir str
 	}
 }
 
+// seedClaim writes a claim op so that `id` transitions to status=in_progress
+// with the given assignee. Used to test that act ready excludes claimed
+// issues (act-d79b regression coverage).
+func seedClaim(t *testing.T, root, id, assignee string, wallMs int64, logical int, monthDir string) {
+	t.Helper()
+	pl := op.ClaimPayload{Assignee: assignee}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal claim payload: %v", err)
+	}
+	env := op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "claim",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: uint32(logical),
+			NodeID:  "0123abcd",
+		},
+		NodeID: "0123abcd",
+	}
+	envBody, err := env.Marshal()
+	if err != nil {
+		t.Fatalf("marshal claim envelope: %v", err)
+	}
+	dir := filepath.Join(root, ".act", "ops", id, monthDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, id+"-claim.json")
+	if err := os.WriteFile(path, envBody, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestRunReady_ExcludesNonOpenIssues asserts the ready set is restricted to
+// status=="open" candidates. Regression test for act-d79b: previously the
+// candidate filter accepted anything non-closed, surfacing in_progress
+// (already-claimed) and blocked issues as "ready" and teeing up losing
+// claim races.
+func TestRunReady_ExcludesNonOpenIssues(t *testing.T) {
+	root := makeRepoWithAct(t)
+	// Three open issues; we'll claim one and check the other two surface.
+	seedIssueWithParent(t, root, "act-1aaa00000000aaaa", "open-one", "task", "", 1, 1700000000000, "2026-04")
+	seedIssueWithParent(t, root, "act-2bbb00000000bbbb", "open-two", "task", "", 1, 1700000010000, "2026-04")
+	seedIssueWithParent(t, root, "act-3ccc00000000cccc", "to-claim", "task", "", 1, 1700000020000, "2026-04")
+	seedClaim(t, root, "act-3ccc00000000cccc", "agent-x", 1700000030000, 0, "2026-04")
+
+	out, code := RunReady(root, ReadyOptions{})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; out=%+v", code, out)
+	}
+	res := out.(ReadyResult)
+	if res.Count != 2 {
+		t.Fatalf("count = %d, want 2 (claimed issue must be excluded); ready=%+v", res.Count, res.Ready)
+	}
+	for _, r := range res.Ready {
+		if r.ID == "act-3ccc00000000cccc" {
+			t.Errorf("ready set contains claimed issue %q (status=in_progress); should be excluded", r.ID)
+		}
+	}
+}
+
+// TestRunReady_BlockerSemanticsUnchanged asserts that an in_progress (or
+// otherwise non-closed) parent still blocks its dependents. Counterpart to
+// TestRunReady_ExcludesNonOpenIssues — the candidate filter narrowed but the
+// blocker check should remain "anything not closed counts as blocking".
+func TestRunReady_BlockerSemanticsUnchanged(t *testing.T) {
+	root := makeRepoWithAct(t)
+	// child is open; parent is in_progress. child must NOT appear in ready.
+	seedIssueWithParent(t, root, "act-aaaa00000000aaaa", "child", "task", "", 1, 1700000000000, "2026-04")
+	seedIssueWithParent(t, root, "act-bbbb00000000bbbb", "parent", "task", "", 1, 1700000010000, "2026-04")
+	seedAddDep(t, root, "act-aaaa00000000aaaa", "act-bbbb00000000bbbb", "blocks", 1700000020000, 0, "2026-04")
+	seedClaim(t, root, "act-bbbb00000000bbbb", "agent-x", 1700000030000, 0, "2026-04")
+
+	out, code := RunReady(root, ReadyOptions{})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	res := out.(ReadyResult)
+	// Neither child (blocked by in_progress parent) nor parent (in_progress)
+	// should appear. The set is empty.
+	if res.Count != 0 {
+		t.Fatalf("count = %d, want 0; ready=%+v", res.Count, res.Ready)
+	}
+
+	// Closing the parent unblocks the child. Now child surfaces.
+	seedClose(t, root, "act-bbbb00000000bbbb", "done", 1700000040000, "2026-04")
+	out, code = RunReady(root, ReadyOptions{})
+	if code != 0 {
+		t.Fatalf("after close: exit = %d", code)
+	}
+	res = out.(ReadyResult)
+	if res.Count != 1 || res.Ready[0].ID != "act-aaaa00000000aaaa" {
+		t.Fatalf("after close: ready=%+v, want [act-aaaa00000000aaaa]", res.Ready)
+	}
+}
+
 // TestRunReady_BlocksFiltersBlockedIssues seeds A blocked by B (open). Only
 // B should be ready. After closing B, A becomes ready as well.
 func TestRunReady_BlocksFiltersBlockedIssues(t *testing.T) {
