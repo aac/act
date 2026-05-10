@@ -22,15 +22,38 @@ type HLCState struct {
 	Logical uint32 `json:"logical"`
 }
 
+// BundleStrategy controls when act-op files are committed to git.
+//
+//   - "per_op"      — every op write auto-commits immediately (original behavior;
+//                     default for repos initialized before this feature).
+//   - "per_session" — claim and close auto-commit/push; all other ops written
+//                     during a claim→close window ride the close commit (deferred).
+//                     Ops written outside a claim→close window auto-commit as today.
+//                     Default for newly-initialized repos.
+const (
+	BundleStrategyPerOp      = "per_op"
+	BundleStrategyPerSession = "per_session"
+)
+
 // Config is the on-disk shape of .act/config.json.
 //
 // Field order in this struct does not matter for serialization: writes use
 // canonicaljson which sorts keys lexicographically.
 type Config struct {
-	NodeID    string   `json:"node_id"`
-	CreatedAt string   `json:"created_at"`
-	Version   string   `json:"version"`
-	LastHLC   HLCState `json:"last_hlc"`
+	NodeID         string   `json:"node_id"`
+	BundleStrategy string   `json:"bundle_strategy,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	Version        string   `json:"version"`
+	LastHLC        HLCState `json:"last_hlc"`
+}
+
+// EffectiveBundleStrategy returns the resolved bundle strategy, defaulting to
+// BundleStrategyPerOp when the field is empty (pre-feature repos).
+func (c Config) EffectiveBundleStrategy() string {
+	if c.BundleStrategy == "" {
+		return BundleStrategyPerOp
+	}
+	return c.BundleStrategy
 }
 
 // LayoutPaths holds absolute paths for every .act/ artifact a writer touches.

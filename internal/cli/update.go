@@ -409,20 +409,38 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
-	// Step 8: write each op via WriteOpAndAutoCommit. Each call performs
-	// its own auto-commit; so we end up with N commits when N flags were
-	// supplied. (The acceptance criterion calling for "single commit"
-	// across multiple flags belongs to a future refactor; for now each
-	// op is a separate commit, which still satisfies the JSON contract:
-	// committed=true means at least one commit happened.)
+	// Step 8: determine whether to defer commits (per_session bundle strategy).
+	// In per_session mode: if the target issue is currently in an active claim
+	// window for this node, defer the commit so it rides the close commit.
+	// Ops outside a claim window auto-commit as today.
+	effectiveNoCommit := opts.NoCommit
+	if !effectiveNoCommit {
+		if cfg.EffectiveBundleStrategy() == config.BundleStrategyPerSession {
+			inWindow, werr := InClaimWindowForNode(paths.Ops, full, cfg.NodeID)
+			if werr != nil {
+				return UpdateErrorOutput{
+					Error:   "bundle_check_failed",
+					Message: werr.Error(),
+				}, 1
+			}
+			if inWindow {
+				effectiveNoCommit = true
+			}
+		}
+	}
+
+	// Step 9: write each op via WriteOpAndAutoCommit. Each call performs
+	// its own auto-commit (unless deferred); so we end up with N commits
+	// when N flags were supplied and not deferred. The JSON contract:
+	// committed=true means at least one commit happened.
 	var gops *gitops.GitOps
-	if !opts.NoCommit {
+	if !effectiveNoCommit {
 		gops = gitops.NewGitOps(repoRoot)
 		gops.Verify = opts.Verify
 	}
 	for i, env := range envelopes {
 		werr := WriteOpAndAutoCommit(env, bodies[i], paths, gops, WriteOpts{
-			NoCommit: opts.NoCommit,
+			NoCommit: effectiveNoCommit,
 			// Defer the push to AFTER all ops are written so we don't push
 			// a partial state mid-batch.
 			Push:     false,
@@ -442,7 +460,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
-	// Step 9: optional push (after all ops committed).
+	// Step 10: optional push (after all ops committed).
 	if opts.Push && gops != nil {
 		if perr := gops.Push(); perr != nil {
 			return UpdateErrorOutput{
@@ -465,7 +483,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	return UpdateResult{
 		ID:         full,
 		OpsWritten: len(envelopes),
-		Committed:  !opts.NoCommit,
+		Committed:  !effectiveNoCommit,
 	}, 0
 }
 
