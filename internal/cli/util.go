@@ -228,14 +228,23 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	}
 
 	// Step 2: write all op files. Track each path so we can roll back on
-	// failure.
+	// failure. `staged` is tracked separately from `written` so the rollback
+	// only unstages files that successfully passed StageOpFile (act-c22b);
+	// running `git restore --staged` on a never-staged path exits non-zero
+	// and would leak a stderr line to anyone wiring exec.Cmd.Stderr through
+	// (today runUnstage discards stderr by default, but the asymmetry was a
+	// latent bug — see the writeBlockOpsViaInterface pattern in
+	// internal/mcp/composed.go).
 	fsLock := func() (func(), error) { return func() {}, nil }
 	written := make([]string, 0, len(envs))
+	staged := make([]string, 0, len(envs))
 	rollback := func() {
-		for _, p := range written {
-			if gops != nil {
+		if gops != nil {
+			for _, p := range staged {
 				_ = unstage(gops, p)
 			}
+		}
+		for _, p := range written {
 			_ = os.Remove(p)
 		}
 	}
@@ -252,12 +261,15 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 		return nil
 	}
 
-	// Step 3: stage every op file.
+	// Step 3: stage every op file. Append to `staged` only after a
+	// successful StageOpFile so a partial-stage failure rolls back exactly
+	// the entries that were actually staged (no spurious unstage calls).
 	for _, p := range written {
 		if err := gops.StageOpFile(p); err != nil {
 			rollback()
 			return fmt.Errorf("cli: stage: %w", err)
 		}
+		staged = append(staged, p)
 	}
 
 	// Step 4: single commit.
