@@ -196,6 +196,15 @@ WHY THIS SHAPE
   textually conflict. This gets cell-level merge semantics without
   Dolt or any custom merge driver.
 
+HLC ORDERING
+  Each op has a Hybrid Logical Clock stamp: (wall_ms, logical_counter,
+  node_id). HLC combines physical wall-clock time with a Lamport-style
+  logical counter so writers on different machines, with imperfectly
+  synchronised clocks, still produce a deterministic order. Comparison
+  is wall first, logical second, op_hash as tiebreak. This is what lets
+  the fold function produce identical state from any permutation of the
+  same op set.
+
 LOGICAL CONFLICTS
   Two ops touching the same field (e.g. both setting priority)
   produce two files. The fold function applies LWW by HLC timestamp,

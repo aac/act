@@ -41,6 +41,8 @@ Net: yes, intuitive enough — *now*. Probably wasn't a week ago.
 
 The reviewer's report (2026-05-10) is the cleanest single source. Highlights:
 
+> *HLC ("Hybrid Logical Clock") is how act orders events across distributed writers. Each op has a stamp `(wall_ms, logical_counter, node_id)` that combines physical wall-clock time with a Lamport-style logical counter. Two agents on different machines writing conflicting ops resolve deterministically: compare wall time first, then logical counter, then op-hash for tiebreak. It's what makes "no central server, just git pull --rebase" produce a coherent merged state.*
+
 **Strong:** HLC implementation matches the spec algorithm exactly; op-envelope canonicalization gives genuine determinism (property tests + fuzzer back this up); the claim protocol is correct end-to-end including the no-upstream and idempotent-self-claim cases; error-envelope shape is uniformly enforced; the `WriteOpAndAutoCommit` rollback prevents partial-write corruption.
 
 **Real concerns:**
