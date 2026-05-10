@@ -1,6 +1,8 @@
 # Session handoff — 2026-05-09 → 2026-05-10
 
-Andrew's session bootstrapping `act` to dogfood itself, then grinding the v0.2 backlog while reviewing the resulting DX. Ended with Andrew going to bed and asking the loop to keep cranking overnight.
+Andrew's session bootstrapping `act` to dogfood itself, then grinding the v0.2 backlog while reviewing the resulting DX. Ended with Andrew going to bed and the loop cranking through three more worktree agents before stopping.
+
+> **Quick read:** All three p=0 showstoppers closed (claim+rebase, id_ambiguous exit code, id prefix matching). 17 issues closed total. 17 still ready, top of queue is now p=1. **act is meaningfully closer to being usable in another project — the explicit adoption blockers are gone.** Remaining work is polish + the marquee composed primitive (act-c26a). Read `docs/compound-candidates-2026-05-10.md` for five process learnings I'd propose to your KB.
 
 ## Where things stand
 
@@ -18,20 +20,25 @@ Andrew's session bootstrapping `act` to dogfood itself, then grinding the v0.2 b
 - act-63a1 — `act dep add --blocks` / `--blocked-by` directional flag aliases
 - act-fdb2 — `act update --claim` no longer breaks on local-only repos and is idempotent on re-claim by same node
 
-**In flight when the session paused:**
-- `act-da03` — overall code review of the codebase (claimed by parent session; reviewer agent in flight at the time of writing). Findings get filed as derivative act issues; this issue closes with a pointer list.
-- `act-d3a5` — auto-commit message inconsistency. Worktree branch `worktree-agent-a5db7f3785fa19dd3`. Will need merge + push when it returns.
+**Closed after the original handoff (overnight stretch):**
+- act-da03 — overall code review (closed with pointers to 9 derivative issues)
+- act-d79b — act ready was returning in_progress and blocked issues; spec says only open
+- act-d3a5 — commit messages now use canonical `act-op: (act-XXXX) <op>` everywhere; killed the act-act- and empty-id bugs
+- act-8dcd — ambiguous-id-prefix now exits 2 across all commands per the spec's universal table
+- act-6fca — true unique-prefix id resolution (any non-empty hex prefix that uniquely matches now works); MinInputHexLen=1 for lookup, MinShortHexLen=4 still governs display
 
-**Ready (highest priority first):**
-- act-6fca (p=0) — id prefix matching contradicts every doc; the docs say "prefix ok" but only the full short id works. Showstopper for any new repo because agents will trust the docs.
-- act-c26a (p=1) — `act create --blocked-by` + composed `act_file_blocker` MCP tool with atomic rollback.
-- act-10f7 (p=1) — `act show` text mode hides description and commit_marker; reach-for-jq friction.
-- act-982a (p=2) — `act dep add` and `act show` display strings read inverse to actual dep semantics.
-- act-6218 (p=2) — `act create` misparses titles starting with `--`.
-- act-b891 (p=2) — `act show --include-ops` is a no-op without `--json`.
-- act-56a0 (p=2) — `act log --summary` one-line-per-op timeline view.
-- act-c93b (p=2) — `act mine` and `act ready --mine`.
-- act-f2c7 (p=3) — UX polish nits (5 small things bundled).
+**In flight at session end:** none. All three worktree agents (d3a5, 8dcd, 6fca) returned, branches merged, tests green, pushed.
+
+**Conflicts surfaced and reconciled:** 6fca's branch was off pre-8dcd main; their TestRunShow_ShortPrefixAmbiguous asserted exit 3 (the old behavior) and a CLAUDE.md note said id_ambiguous=exit 3. Both reconciled to 8dcd's exit-2 in commit c4b22e0. No behavioral conflict.
+
+**Ready (highest priority first, no p=0 left):**
+- act-a319 (p=1) — CLAUDE.md should grow a review step in the canonical loop (your earlier ask). Lessons from this session's first review captured in the description.
+- act-6181 (p=1) — `act create --json` shape diverges from spec (no `ok`, `prefix` vs `short_id`, missing `op_id`/`committed`/`pushed`).
+- act-d9c7 (p=1) — default priority is 1 in code, spec says 2.
+- act-10f7 (p=1) — `act show` text mode hides description and commit_marker.
+- act-c26a (p=1) — `act create --blocked-by` + composed `act_file_blocker` MCP tool with atomic rollback. Marquee remaining v0.2 work; recommend a focused review-then-implement cycle when you're back rather than a sleepy worktree run.
+- 8 p=2 issues: dep direction display, title-`--` misparse, `--include-ops` no-op, IsValidID cap, HLC tiebreak, applyClaim race, deps type mismatch, close-reason cap, log --summary, act mine/ready --mine.
+- 2 p=3: doctor SQL cleanup, UX polish nits bundle.
 
 ## What to look at first when you resume
 
@@ -74,13 +81,11 @@ What I'd lift into a future skill or guide:
 
 ## Viability for other projects
 
-**Not yet, but close.** Two showstoppers block adoption right now:
-- act-6fca (prefix matching) — agents in any new repo will trust the "prefix ok" docs and immediately get burned.
-- act-d3a5 (commit message bugs) — `act-act-` and empty-id forms would pollute the user's git history; doctor's grep would miss some commits.
+**Updated read: ready for an alpha trial.** All three named showstoppers (claim+rebase, ambiguous-prefix exit, prefix matching) closed. Auto-commit messages canonical. Reviewer's high-severity findings either landed or filed for follow-up.
 
-Both will be done shortly (d3a5 worktree in flight; 6fca is next-up after the review). After they land, plus whatever the review surfaces, an alpha trial in a small read-mostly project (a knowledge repo, a personal tool repo) is reasonable — agents would use act, we'd watch the trace, fix what breaks.
+**Reasonable next step:** drop `.act/` into a small repo of yours (the knowledge base, an old personal-tool repo) and have an agent file + work + close issues there. Watch the trace. Anything broken becomes a follow-up here. The dogfood loop has shipped 17 fixes from the same kind of trial run on this repo, so the pattern is proven.
 
-**Full "drop into any repo" readiness** wants: a global Claude Code skill that triggers on the presence of `.act/` and contains the patterns above; a `brew install` tap or `curl … | sh` so installation isn't `go build`; a published GitHub Release (currently draft). That's another arc of work, not today.
+**Full "drop into any repo" readiness** still wants: a global Claude Code skill that triggers on the presence of `.act/` and contains the workflow patterns; a `brew install` tap or `curl … | sh` so installation isn't `go build`; a published GitHub Release (currently draft); arguably also act-c26a (composed primitives) since `act_file_blocker` is the workflow shape agents most want for "file a bug, link it" moments. Not blockers for an alpha but they're the difference between alpha and "use this anywhere."
 
 ## Operational notes
 
