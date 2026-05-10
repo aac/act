@@ -122,8 +122,23 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		byID[r.ID] = r
 	}
 
-	// "Open" here means non-closed AND non-tombstoned. We treat any status
-	// other than "closed" as an active blocker (open, in_progress, blocked).
+	// Two distinct predicates:
+	//
+	//   isReadyCandidate — does this issue belong in the ready set at all?
+	//   Per spec-v2.md §act ready, only status=="open" issues are candidates.
+	//   in_progress means someone has claimed it; surfacing it would tee up
+	//   losing claim races. blocked means the assignee says it's stuck;
+	//   surfacing it pretends otherwise.
+	//
+	//   isActive — does this issue, when seen as a dep parent, currently
+	//   block its child? Anything not closed (open, in_progress, blocked)
+	//   counts; only a closed parent unblocks the child.
+	//
+	// These were conflated in v0.1.0 (act-d79b), which let in_progress and
+	// blocked issues appear in act ready output.
+	isReadyCandidate := func(r index.Row) bool {
+		return r.Status == "open"
+	}
 	isActive := func(r index.Row) bool {
 		return r.Status != "closed"
 	}
@@ -131,7 +146,7 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 	// Compute the ready set.
 	ready := make([]index.Row, 0, len(rows))
 	for _, r := range rows {
-		if !isActive(r) {
+		if !isReadyCandidate(r) {
 			continue
 		}
 		blocked := false
