@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +12,20 @@ import (
 
 	"github.com/aac/act/internal/config"
 )
+
+// mustGitOutput runs `git <args>` in repoRoot and returns trimmed stdout,
+// failing the test on non-zero exit. Used by the auto-commit tests below
+// (act-2c7d).
+func mustGitOutput(t *testing.T, repoRoot string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // fakeNow returns a deterministic time func suitable for RunInit.
 func fakeNow(t time.Time) func() time.Time { return func() time.Time { return t } }
@@ -215,6 +231,108 @@ func TestRunInit_OutputJSONShape(t *testing.T) {
 	if s, ok := decoded["node_id"].(string); !ok || len(s) != 8 {
 		t.Errorf("node_id shape: %v", decoded["node_id"])
 	}
+}
+
+// makeRealGitRepo creates a real git repo with one initial commit and NO
+// act state. Distinct from makeRepo (fake .git/ only) and makeCreateRepo
+// (real git + pre-initialized .act/). Used by the auto-commit tests below.
+func makeRealGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustGit(t, dir, "init", "-q", "-b", "main")
+	mustGit(t, dir, "config", "user.email", "u@example.com")
+	mustGit(t, dir, "config", "user.name", "U")
+	mustGit(t, dir, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	mustGit(t, dir, "add", "README")
+	mustGit(t, dir, "commit", "-q", "--no-verify", "-m", "init")
+	return dir
+}
+
+// TestRunInit_AutoCommit asserts that RunInit(commit=true) creates exactly
+// one new git commit on the current branch with the canonical subject and
+// stages only .act + .gitignore (never -A) — pre-existing dirty files
+// stay out of the commit. Regression coverage for act-2c7d.
+func TestRunInit_AutoCommit(t *testing.T) {
+	root := makeRealGitRepo(t)
+
+	// Drop a deliberately dirty file at root so we can verify it stays
+	// unstaged after init's auto-commit. If the implementation ever
+	// regresses to `git add -A`, this file lands in the commit and the
+	// assertion below fires.
+	dirty := filepath.Join(root, "DIRTY.txt")
+	if err := os.WriteFile(dirty, []byte("uncommitted; should NOT be in act init's commit"), 0o644); err != nil {
+		t.Fatalf("seed dirty file: %v", err)
+	}
+
+	beforeCount := mustGitCommitCount(t, root)
+
+	out, code := RunInit(root, false, true, "m", "alice@example.com", nil)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
+	}
+	succ, ok := out.(successOutput)
+	if !ok {
+		t.Fatalf("output type = %T, want successOutput", out)
+	}
+	if !succ.Committed {
+		t.Errorf("Committed=false; commit_error=%q", succ.CommitError)
+	}
+
+	afterCount := mustGitCommitCount(t, root)
+	if afterCount != beforeCount+1 {
+		t.Fatalf("commit count went %d -> %d, want exactly 1 new commit", beforeCount, afterCount)
+	}
+
+	subject := mustGitOutput(t, root, "log", "-1", "--format=%s")
+	if subject != "act init: tracker initialized" {
+		t.Errorf("commit subject = %q, want %q", subject, "act init: tracker initialized")
+	}
+
+	// DIRTY.txt must still be untracked.
+	status := mustGitOutput(t, root, "status", "--porcelain", "DIRTY.txt")
+	if !strings.HasPrefix(status, "?? ") {
+		t.Errorf("DIRTY.txt status = %q, want untracked (starts with '?? '). act init must stage only .act and .gitignore, never -A", status)
+	}
+}
+
+// TestRunInit_NoCommitFlag asserts that RunInit(commit=false) leaves the
+// working tree state matching the pre-v0.2 behavior — files written, no
+// new commit made.
+func TestRunInit_NoCommitFlag(t *testing.T) {
+	root := makeRealGitRepo(t)
+	beforeCount := mustGitCommitCount(t, root)
+
+	out, code := RunInit(root, false, false, "m", "e", nil)
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	succ := out.(successOutput)
+	if succ.Committed {
+		t.Errorf("Committed=true with commit=false; should be false")
+	}
+	if succ.CommitError != "" {
+		t.Errorf("CommitError=%q; should be empty", succ.CommitError)
+	}
+
+	afterCount := mustGitCommitCount(t, root)
+	if afterCount != beforeCount {
+		t.Errorf("commit count changed %d -> %d; expected no new commits", beforeCount, afterCount)
+	}
+}
+
+// mustGitCommitCount returns the number of commits reachable from HEAD,
+// failing the test on any error.
+func mustGitCommitCount(t *testing.T, repoRoot string) int {
+	t.Helper()
+	out := mustGitOutput(t, repoRoot, "rev-list", "--count", "HEAD")
+	n := 0
+	if _, err := fmt.Sscanf(out, "%d", &n); err != nil {
+		t.Fatalf("parse rev-list count %q: %v", out, err)
+	}
+	return n
 }
 
 func TestRunInit_ErrorJSONShape(t *testing.T) {
