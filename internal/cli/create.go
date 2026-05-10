@@ -462,6 +462,13 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 				Message: werr.Error(),
 			}, 2
 		}
+		if msg, details, isHook := HookFailureDetails(werr); isHook {
+			return CreateErrorOutput{
+				Error:   "hook_failed",
+				Message: msg,
+				Details: details,
+			}, 1
+		}
 		return CreateErrorOutput{
 			Error:   "write_failed",
 			Message: werr.Error(),

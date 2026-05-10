@@ -453,6 +453,13 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 					Message: werr.Error(),
 				}, 2
 			}
+			if msg, details, isHook := HookFailureDetails(werr); isHook {
+				return UpdateErrorOutput{
+					Error:   "hook_failed",
+					Message: msg,
+					Details: details,
+				}, 1
+			}
 			return UpdateErrorOutput{
 				Error:   "write_failed",
 				Message: werr.Error(),

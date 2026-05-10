@@ -385,9 +385,11 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 				rollbackPending()
 				_ = runUnstage(gops.RepoRoot, opPath)
 				_ = os.Remove(opPath)
+				msg, details, _ := HookFailureDetails(err)
 				return CloseErrorOutput{
 					Error:   "hook_failed",
-					Message: err.Error(),
+					Message: msg,
+					Details: details,
 				}, 1
 			}
 		}
