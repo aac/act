@@ -9,10 +9,14 @@ Since the v0.1.0 tag, this repo has **107 commits**. Breaking them down:
 | Category | Count | % of total |
 |---|---|---|
 | `act-op:` auto-commits (claim, close, create, etc.) | 55 | 51% |
+| Old-format claim commits (`act-act-XXXX: claim`) | 19 | 18% |
+| **Total act bookkeeping** | **74** | **69%** |
 | Work commits with `(act-XXXX)` marker | 23 | 22% |
-| Other commits (infra, docs, no marker) | 29 | 27% |
+| Other commits (infra, docs, no marker) | 10 | 9% |
 
-**51% of all commits are pure bookkeeping.** Humans reading `git log` see one act-op commit for every two lines of meaningful history.
+Note: two commit formats exist because the canonical `act-op:` subject was standardized mid-stream (act-d3a5). Claims before that fix used `act-act-XXXX: claim <node>`. Both formats are pure bookkeeping; the 51% figure in early drafts missed the old-format rows.
+
+**69% of all commits are pure bookkeeping.** Humans reading `git log` see roughly one work commit for every three act-op commits.
 
 Tracing six representative issues:
 
@@ -25,7 +29,7 @@ Tracing six representative issues:
 | act-fdb2 (claim no-upstream) | 2 (retried claim) | 1 + 1 merge | 1 | **5** |
 | act-8dcd (ambiguous-id exit) | 1 | 1 + 1 merge | 1 | **4** |
 
-Across 18 closed issues, 55 act-op commits = **~3 act-op commits per issue** on average. Add the work commit and a merge commit: **~5 commits per issue** in total, of which 3 are pure overhead.
+Across 18 closed issues, 74 act bookkeeping commits (55 new-format + 19 old-format claims) = **~4 act-op commits per issue** on average. Add the work commit and a merge commit: **~6 commits per issue** in total, of which 4 are pure overhead.
 
 Claim retries (act-acd9, act-fdb2) each add commits. Failed or multi-attempt claims are not unusual in parallel-agent sessions.
 
@@ -164,10 +168,10 @@ A single flag is not the final answer — it's the test. If production mode sees
 ## Minimum Implementation Path
 
 **Files to touch:**
-1. `internal/store/store.go` — split `WriteOpAndAutoCommit` into `WriteOp` (write file only) and `CommitOp` (git add + commit); `WriteOpAndAutoCommit` delegates based on config.
-2. `internal/config/config.go` — add `AutoCommit bool` field; read from `BEADS_MODE` env or `--production` flag.
-3. `cmd/act/flush.go` — new `act flush` command; collects uncommitted op files, groups them, single `git commit` with enumerated ops in message.
-4. `cmd/act/root.go` — wire `--production` persistent flag; inject into config.
+1. `internal/cli/util.go` — `WriteOpAndAutoCommit` and `WriteOpsAndAutoCommit` live here; `WriteOpts.NoCommit bool` already exists. Add a `DeferCommit` mode that writes the op file but skips the `git add + commit` step, leaving the file staged-but-not-committed for a later flush.
+2. `internal/config/config.go` — add `AutoCommit bool` field (default `true`); read from `ACT_MODE=production` env var or `--production` flag propagated from the root command.
+3. `cmd/act/flush.go` — new `act flush` command; scans `.act/ops/` for files not yet committed (via `git status --porcelain`), stages them, produces a single `git commit` with enumerated ops in message.
+4. `cmd/act/main.go` — wire `--production` as a persistent flag on the root command; inject into config before dispatch.
 
 **Test coverage expected:**
 - Unit: `WriteOp` in no-auto-commit mode leaves files unstaged; `CommitOp` stages and commits correctly.
