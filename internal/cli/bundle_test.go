@@ -805,4 +805,47 @@ func TestInClaimWindowForNode_WrongNode(t *testing.T) {
 	}
 }
 
+// TestPerSession_CloseWithoutClaim_DegradesProperly verifies that in per_session
+// mode, closing an issue that was never claimed (or was claimed by a different
+// node) behaves identically to per_op mode: one close op commit, no pending
+// file accumulation.
+func TestPerSession_CloseWithoutClaim_DegradesProperly(t *testing.T) {
+	root := makePerSessionRepo(t)
+
+	createOut, code := RunCreate(root, CreateOptions{Title: "unclaimed close", Type: "task"})
+	if code != 0 {
+		t.Fatalf("create: code = %d", code)
+	}
+	id := createOut.(CreateResult).ID
+
+	// Close without any prior claim.
+	closeOut, code := RunClose(root, CloseOptions{ID: id, Reason: "direct close"})
+	if code != 0 {
+		t.Fatalf("close: code = %d, out=%+v", code, closeOut)
+	}
+	res := closeOut.(CloseResult)
+	if !res.Committed {
+		t.Errorf("unclaimed close: Committed = false, want true")
+	}
+
+	// Exactly one close op file, one close commit — same as per_op.
+	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-close.json"))
+	if len(matches) != 1 {
+		t.Errorf("expected 1 close op file, got %d: %v", len(matches), matches)
+	}
+
+	// Close commit subject must not have "+N" (no pending ops bundled).
+	log := gitLog(t, root)
+	if len(log) == 0 {
+		t.Fatal("empty git log")
+	}
+	closeSubj := log[0]
+	if strings.Contains(closeSubj, "+") {
+		t.Errorf("unclaimed close commit subject = %q, should not have bundle marker", closeSubj)
+	}
+	if !strings.Contains(closeSubj, "("+ShortIssueID(id)+")") {
+		t.Errorf("close commit subject = %q, missing (%s) marker", closeSubj, ShortIssueID(id))
+	}
+}
+
 // strPtr is defined in update_test.go (package-level helper).
