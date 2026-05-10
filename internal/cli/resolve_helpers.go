@@ -13,14 +13,16 @@ import (
 // user has enough information to retype an unambiguous prefix without
 // flooding the terminal on a near-empty prefix.
 //
-// Spec note: the universal error table (spec-v2.md §1 "Error handling")
-// places `id_ambiguous` at exit code 3 with `details.candidates[]`; the older
-// per-section text at line 529 says exit 2 instead. We follow the universal
-// table — exit 3 for both `id_ambiguous` and `issue_not_found` — because
-// "world is in a state the caller didn't anticipate" maps cleanly onto the
-// "world is wrong" exit-3 bucket, and consistency between the two
-// closely-related id-resolution failures lets agents handle them with one
-// branch.
+// Spec note (corrected per act-8dcd): the universal exit-code table
+// (spec-v2.md §"Universal exit codes", lines 515-519) is the load-bearing
+// authority and it places `id_ambiguous` at exit 2: the caller supplied a
+// non-unique argument, which is a usage error. The §"Pre-import id
+// resolution" text at line 529 confirms this — multiple matches → exit 2.
+// The error-envelope summary table at line 901 lists exit 3, which is the
+// stale entry; the universal table wins. `issue_not_found` stays at exit 3
+// (environment error: the world doesn't contain what the caller asked for).
+// The two id-resolution failures intentionally diverge: ambiguous = "fix
+// your input", not_found = "your input is fine but the world is wrong."
 func ambiguousCandidates(allIDs []string, input string) []string {
 	hex := normalizePrefix(input)
 	var candidates []string

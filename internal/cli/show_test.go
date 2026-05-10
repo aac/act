@@ -176,8 +176,10 @@ func TestRunShow_AmbiguousPrefix(t *testing.T) {
 	writeOpFile(t, root, b, "2026-04", "b.json")
 
 	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
-	if code != 3 {
-		t.Fatalf("exit code = %d, want 3", code)
+	// Ambiguous prefix is a usage error per spec-v2.md universal exit-code
+	// table; see resolve_helpers.go and act-8dcd.
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
 	}
 	e, ok := out.(ShowErrorOutput)
 	if !ok {
