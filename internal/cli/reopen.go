@@ -278,13 +278,9 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	short := full
-	if len(full) > len("act-")+ids.MinShortHexLen {
-		short = full[:len("act-")+ids.MinShortHexLen]
-	}
 	return ReopenResult{
 		ID:         full,
-		ShortID:    short,
+		ShortID:    ShortIssueID(full),
 		OpsWritten: 1,
 		Committed:  !opts.NoCommit,
 		Reason:     opts.Reason,
