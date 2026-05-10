@@ -130,10 +130,13 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Message: fmt.Sprintf("act create: --type %q: must be one of task|bug|epic|chore", typ),
 		}, 2
 	}
-	// Priority defaults to 1 when the caller did not pass --priority. An
+	// Priority defaults to 2 when the caller did not pass --priority — the
+	// value spec-v2.md §"Issue model" and §"act create" both mandate. An
 	// explicit -p 0 (Priority pointing at 0) is preserved verbatim so the
-	// payload records priority=0 and not the default.
-	priority := 1
+	// payload records priority=0 and not the default. Bumped from the
+	// v0.1.0 in-code 1 to 2 (act-d9c7) so default-filed follow-ups sort
+	// below intentional p=1 work, matching the docs.
+	priority := 2
 	if opts.Priority != nil {
 		priority = *opts.Priority
 	}

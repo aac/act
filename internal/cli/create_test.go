@@ -386,8 +386,8 @@ func TestRunCreate_PriorityNilDefaults(t *testing.T) {
 	if err := json.Unmarshal(env.Payload, &p); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if p.Priority == nil || *p.Priority != 1 {
-		t.Fatalf("default priority = %v; want pointer to 1", p.Priority)
+	if p.Priority == nil || *p.Priority != 2 {
+		t.Fatalf("default priority = %v; want pointer to 2 (spec default; act-d9c7)", p.Priority)
 	}
 }
 

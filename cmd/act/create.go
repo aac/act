@@ -30,8 +30,8 @@ func runCreate(args []string) int {
 	// default of 1 so `--help` advertises the right value, then detect
 	// "user actually set the flag" via fs.Visit so that `-p 0` is not
 	// silently coerced to the default (dogfood-report.md finding #1).
-	priority := fs.Int("priority", 1, "issue priority (0..3, default 1)")
-	fs.IntVar(priority, "p", 1, "issue priority (shorthand)")
+	priority := fs.Int("priority", 2, "issue priority (0..3, default 2; lower = more urgent)")
+	fs.IntVar(priority, "p", 2, "issue priority (shorthand)")
 	parent := fs.String("parent", "", "parent issue id (full or unique prefix)")
 	typ := fs.String("type", "task", "issue type (task|bug|epic|chore)")
 	description := fs.String("description", "", "issue description")
