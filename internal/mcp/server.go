@@ -303,6 +303,8 @@ func (s *Server) invoke(name string, args json.RawMessage) (any, bool) {
 		return s.callFinish(args)
 	case "act_block":
 		return s.callBlock(args)
+	case "act_file_blocker":
+		return s.callFileBlocker(args)
 	default:
 		return errEnvelope("unknown_tool", fmt.Sprintf("unknown tool %q", name)), true
 	}
@@ -354,7 +356,7 @@ func (s *Server) writeToolError(enc *json.Encoder, id json.RawMessage, kind, msg
 func isWriteTool(name string) bool {
 	switch name {
 	case "act_init", "act_create", "act_update", "act_close", "act_dep_add",
-		"act_next", "act_finish", "act_block":
+		"act_next", "act_finish", "act_block", "act_file_blocker":
 		return true
 	}
 	return false
@@ -513,6 +515,19 @@ func (s *Server) tools() []toolDescriptor {
 				"blocked_by": schemaString("Issue that blocks (required)."),
 				"reason":     schemaString("Optional reason."),
 			}, []string{"id", "blocked_by"}),
+		},
+		{
+			Name:        "act_file_blocker",
+			Description: "Recommended: file a new issue with one or more `blocks`-edges attached in a single atomic git commit. Replaces the two-call sequence `act_create` + `act_dep_add`. Edge direction is new→<blocked_by> (the new issue is blocked by each target), matching `act_block`'s `blocked_by` semantic. For marking an EXISTING issue blocked by the new one, follow this with `act_block` separately.",
+			InputSchema: schemaObject(map[string]any{
+				"title":       schemaString("Issue title (required, ≤256 bytes)."),
+				"blocked_by":  schemaArrayOfString("Ids the new issue is blocked by; each becomes one blocks-edge (required, ≥1). Duplicates resolving to the same full id are folded to one edge."),
+				"description": schemaString("Optional free-text body."),
+				"accept":      schemaArrayOfString("Optional acceptance criteria, in order."),
+				"type":        schemaString("Optional issue type (task|bug|epic|chore; default task)."),
+				"priority":    schemaInteger("Optional priority 0–3 (default 2)."),
+				"parent":      schemaString("Optional parent issue id for hierarchy (not a dep edge; use blocked_by for blocks)."),
+			}, []string{"title", "blocked_by"}),
 		},
 	}
 }

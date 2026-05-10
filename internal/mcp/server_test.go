@@ -153,8 +153,8 @@ func TestToolsList(t *testing.T) {
 	}
 	m, _ := resp.Result.(map[string]any)
 	tools, _ := m["tools"].([]any)
-	if got := len(tools); got != 15 {
-		t.Fatalf("tools count = %d, want 15", got)
+	if got := len(tools); got != 16 {
+		t.Fatalf("tools count = %d, want 16", got)
 	}
 	want := map[string]bool{
 		"act_init": false, "act_create": false, "act_list": false,
@@ -162,6 +162,7 @@ func TestToolsList(t *testing.T) {
 		"act_dep_add": false, "act_ready": false, "act_search": false,
 		"act_log": false, "act_doctor": false, "act_version": false,
 		"act_next": false, "act_finish": false, "act_block": false,
+		"act_file_blocker": false,
 	}
 	for _, raw := range tools {
 		td, _ := raw.(map[string]any)
@@ -555,6 +556,196 @@ func countOpFiles(t *testing.T, root string) int {
 		return nil
 	})
 	return count
+}
+
+// TestActFileBlocker: file a new issue with one blocked_by id; verify the
+// composed tool writes create + add_dep in a single git commit and returns
+// the expected MCP response shape.
+func TestActFileBlocker(t *testing.T) {
+	root := makeRealRepo(t)
+	blocker := seedIssue(t, root, "blocker")
+
+	srv := NewServer(root, false, nil, nil)
+	body := fmt.Sprintf(`{"title":"new bug","blocked_by":[%q]}`, blocker)
+	out, isErr := srv.callFileBlocker(json.RawMessage(body))
+	if isErr {
+		t.Fatalf("callFileBlocker: %+v", out)
+	}
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("want map, got %T: %+v", out, out)
+	}
+	if ok, _ := m["ok"].(bool); !ok {
+		t.Errorf("ok=false; want true: %+v", m)
+	}
+	newID, _ := m["id"].(string)
+	if !strings.HasPrefix(newID, "act-") {
+		t.Errorf("id = %v; want act-... prefix", m["id"])
+	}
+	if m["title"] != "new bug" {
+		t.Errorf("title = %v", m["title"])
+	}
+
+	// Both op files must land in one commit.
+	files := gitOutput(t, root, "show", "--name-only", "--format=", "HEAD")
+	lines := strings.Split(files, "\n")
+	hasCreate := false
+	hasAddDep := false
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if !strings.HasSuffix(l, ".json") {
+			continue
+		}
+		if strings.Contains(l, "-create.json") {
+			hasCreate = true
+		}
+		if strings.Contains(l, "-add_dep.json") {
+			hasAddDep = true
+		}
+	}
+	if !hasCreate || !hasAddDep {
+		t.Errorf("HEAD must touch both create and add_dep ops; got %q", files)
+	}
+	subj := gitOutput(t, root, "log", "-1", "--format=%s")
+	if !strings.Contains(subj, "create +1") {
+		t.Errorf("subject %q missing batch suffix `create +1`", subj)
+	}
+}
+
+// TestActFileBlocker_MultipleBlockers: N blocked_by ids → N add_dep ops in
+// one commit; the response echoes the blocked_by list verbatim.
+func TestActFileBlocker_MultipleBlockers(t *testing.T) {
+	root := makeRealRepo(t)
+	a := seedIssue(t, root, "a")
+	b := seedIssue(t, root, "b")
+	c := seedIssue(t, root, "c")
+
+	srv := NewServer(root, false, nil, nil)
+	body := fmt.Sprintf(`{"title":"triple blocked","blocked_by":[%q,%q,%q]}`, a, b, c)
+	out, isErr := srv.callFileBlocker(json.RawMessage(body))
+	if isErr {
+		t.Fatalf("callFileBlocker: %+v", out)
+	}
+	// Round-trip through JSON so we observe the actual wire shape clients
+	// see (the in-memory map holds the Go []string; on the wire it becomes
+	// []any of strings). This catches type-shape regressions that would
+	// pass an in-process assertion.
+	wire, jerr := json.Marshal(out)
+	if jerr != nil {
+		t.Fatalf("marshal response: %v", jerr)
+	}
+	var clientView map[string]any
+	if uerr := json.Unmarshal(wire, &clientView); uerr != nil {
+		t.Fatalf("unmarshal response: %v", uerr)
+	}
+	blockedRaw, ok := clientView["blocked_by"].([]any)
+	if !ok {
+		t.Fatalf("blocked_by on wire = %T %v; want []any", clientView["blocked_by"], clientView["blocked_by"])
+	}
+	if len(blockedRaw) != 3 {
+		t.Errorf("blocked_by len = %d; want 3", len(blockedRaw))
+	}
+	gotIDs := map[string]bool{}
+	for _, raw := range blockedRaw {
+		s, _ := raw.(string)
+		gotIDs[s] = true
+	}
+	for _, want := range []string{a, b, c} {
+		if !gotIDs[want] {
+			t.Errorf("blocked_by missing %s; got %v", want, blockedRaw)
+		}
+	}
+
+	subj := gitOutput(t, root, "log", "-1", "--format=%s")
+	if !strings.Contains(subj, "create +3") {
+		t.Errorf("subject %q missing `create +3` (1 create + 3 deps)", subj)
+	}
+}
+
+// TestActFileBlocker_UnknownBlockedBy: an unknown id surfaces
+// issue_not_found and leaves NO partial state — no commit, no op files.
+// This is the AC-2 rollback path observed end-to-end through the MCP
+// entry point (the underlying cli.WriteOpsAndAutoCommit rollback is
+// tested separately at the act_block level).
+func TestActFileBlocker_UnknownBlockedBy(t *testing.T) {
+	root := makeRealRepo(t)
+
+	headBefore := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+	pre := countOpFiles(t, root)
+
+	srv := NewServer(root, false, nil, nil)
+	body := `{"title":"orphan","blocked_by":["act-deadbeef"]}`
+	out, isErr := srv.callFileBlocker(json.RawMessage(body))
+	if !isErr {
+		t.Fatalf("expected error envelope; got %+v", out)
+	}
+	m, _ := out.(map[string]any)
+	if m == nil {
+		// cli error envelope flows through unchanged.
+		if _, ok := out.(map[string]any); !ok {
+			// Some error shapes are map[string]any via toMap; both fine for the
+			// assertions below.
+		}
+	}
+
+	headAfter := strings.TrimSpace(gitOutput(t, root, "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Errorf("HEAD moved %s -> %s; want unchanged", headBefore, headAfter)
+	}
+	post := countOpFiles(t, root)
+	if post != pre {
+		t.Errorf("op files: pre=%d post=%d; want equal", pre, post)
+	}
+}
+
+// TestActFileBlocker_BadArgs: missing title or empty blocked_by list
+// surface bad_args, never reaching the cli layer.
+func TestActFileBlocker_BadArgs(t *testing.T) {
+	root := makeRealRepo(t)
+	blocker := seedIssue(t, root, "blocker")
+	srv := NewServer(root, false, nil, nil)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"missing title", fmt.Sprintf(`{"blocked_by":[%q]}`, blocker)},
+		{"missing blocked_by", `{"title":"x"}`},
+		{"empty blocked_by", `{"title":"x","blocked_by":[]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, isErr := srv.callFileBlocker(json.RawMessage(tc.body))
+			if !isErr {
+				t.Fatalf("expected error; got %+v", out)
+			}
+			m, ok := out.(map[string]any)
+			if !ok {
+				t.Fatalf("want map, got %T", out)
+			}
+			if m["error"] != "bad_args" {
+				t.Errorf("error = %v; want bad_args", m["error"])
+			}
+		})
+	}
+}
+
+// TestActFileBlocker_ReadOnlyViolation: a read-only server refuses the
+// write tool with the canonical read_only_violation envelope.
+func TestActFileBlocker_ReadOnlyViolation(t *testing.T) {
+	root := makeRealRepo(t)
+	blocker := seedIssue(t, root, "b")
+	srv := NewServer(root, true, nil, nil)
+
+	body := fmt.Sprintf(`{"title":"x","blocked_by":[%q]}`, blocker)
+	out, isErr := srv.callFileBlocker(json.RawMessage(body))
+	if !isErr {
+		t.Fatalf("expected error; got %+v", out)
+	}
+	m := out.(map[string]any)
+	if m["error"] != "read_only_violation" {
+		t.Errorf("error = %v; want read_only_violation", m["error"])
+	}
 }
 
 // runNextScheduleForTest simulates the act_next sleep schedule with the

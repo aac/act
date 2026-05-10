@@ -38,6 +38,8 @@ func runCreate(args []string) int {
 	descriptionFile := fs.String("description-file", "", "read description from file (UTF-8); use - for stdin")
 	var accept stringSlice
 	fs.Var(&accept, "accept", "acceptance criterion (repeatable)")
+	var blockedBy stringSlice
+	fs.Var(&blockedBy, "blocked-by", "id (full or prefix) the new issue is blocked by; writes a blocks-edge alongside the create op in a single atomic commit (repeatable)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
@@ -118,6 +120,7 @@ func runCreate(args []string) int {
 		NoCommit:    *noCommit,
 		Push:        *push,
 		Isolated:    *isolated,
+		BlockedBy:   []string(blockedBy),
 	})
 	if code != 0 {
 		m, _ := toMap(out)

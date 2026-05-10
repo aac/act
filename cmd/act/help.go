@@ -169,6 +169,21 @@ THE LOOP IN DETAIL
       $ act create "<follow-up title>" --type bug \
           --description "<repro>" --accept "<resolution criterion>"
 
+    To file a follow-up AND link it as blocked by an existing issue
+    in one atomic commit (replaces a separate 'act dep add' call):
+
+      $ act create "<title>" --blocked-by <id> [--blocked-by <id>...]
+
+    The flag is repeatable; duplicate ids fold to one edge. The
+    create + add_dep ops are written under the new issue's id and
+    bundled into a single commit; on any failure between op-write
+    and commit-success, the partial state rolls back so the new
+    issue never exists without its declared blocking edges. Same
+    semantic as 'act_block --blocked-by' (the new issue is the one
+    being blocked). For marking an EXISTING issue blocked by the
+    new one, follow up with 'act_block' (or 'act update --status
+    blocked' + 'act dep add' on the CLI).
+
   Closing
     $ act close <id> --reason "<one-liner>"
 

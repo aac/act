@@ -519,3 +519,77 @@ func writeBlockOpsViaInterface(envs []op.Envelope, bodies [][]byte, paths config
 func removeOpFile(path string) error {
 	return os.Remove(path)
 }
+
+// callFileBlocker implements the `act_file_blocker` composed tool: files a
+// new issue and atomically attaches one or more `blocks`-edges in a single
+// commit, mirroring `act create --blocked-by` on the CLI.
+//
+// The dep-edge direction is new→<blocked_by> (new is blocked by each
+// target), matching the semantic of `act_block`'s `blocked_by` parameter.
+// All ops in the batch are keyed to the new issue's id, so rollback on
+// commit failure cleanly removes the partial state — the new issue never
+// exists without its declared blocking edges.
+//
+// `block_parent` is intentionally not exposed: workflows where an
+// EXISTING issue needs to be flipped to status=blocked are already served
+// by `act_block` (and remain a separate call). Keeping this primitive's
+// surface narrow makes the direction unambiguous for cold-start agents
+// and avoids the asymmetry of one composed tool writing ops keyed to two
+// different issue ids.
+func (s *Server) callFileBlocker(raw json.RawMessage) (any, bool) {
+	var args struct {
+		Title       string   `json:"title"`
+		BlockedBy   []string `json:"blocked_by"`
+		Description string   `json:"description"`
+		Accept      []string `json:"accept"`
+		Type        string   `json:"type"`
+		Priority    *int     `json:"priority"`
+		Parent      string   `json:"parent"`
+		NoCommit    bool     `json:"no_commit"`
+		Push        bool     `json:"push"`
+		Isolated    bool     `json:"isolated"`
+		ReadOnly    bool     `json:"read_only"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return errEnvelope("bad_args", err.Error()), true
+	}
+	if args.ReadOnly || s.readOnly {
+		return errEnvelope("read_only_violation", "act_file_blocker: server or call is read-only"), true
+	}
+	if args.Title == "" {
+		return errEnvelope("bad_args", "act_file_blocker: title is required"), true
+	}
+	if len(args.BlockedBy) == 0 {
+		return errEnvelope("bad_args", "act_file_blocker: blocked_by must contain at least one id"), true
+	}
+
+	out, code := cli.RunCreate(s.repoRoot, cli.CreateOptions{
+		Title:       args.Title,
+		Type:        args.Type,
+		Priority:    args.Priority,
+		Parent:      args.Parent,
+		Description: args.Description,
+		Accept:      args.Accept,
+		AsJSON:      true,
+		NoCommit:    args.NoCommit,
+		Push:        args.Push,
+		Isolated:    args.Isolated,
+		BlockedBy:   args.BlockedBy,
+	})
+	if code != 0 {
+		return out, true
+	}
+	res, ok := out.(cli.CreateResult)
+	if !ok {
+		return errEnvelope("internal", fmt.Sprintf("create: unexpected type %T", out)), true
+	}
+	return map[string]any{
+		"ok":         true,
+		"id":         res.ID,
+		"short_id":   res.Prefix,
+		"title":      res.Title,
+		"blocked_by": args.BlockedBy,
+		"committed":  res.Committed,
+		"pushed":     res.Pushed,
+	}, false
+}
