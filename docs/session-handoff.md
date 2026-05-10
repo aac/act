@@ -1,63 +1,59 @@
-# Session handoff — 2026-05-10 (late evening)
+# Session handoff — 2026-05-10 (night)
 
-Two close cycles + one root-cause-of-CI-red fix. Bootstrap path settled in conversation: `go install` is the canonical pitch.
+Four close cycles. Bootstrap pitch documented (with one halt: the repo needs to flip public for the pitch to actually work for friends).
 
-> **Quick read:** Shipped act-75fd (eval refresh), act-c26a (`--blocked-by` + `act_file_blocker`), and act-8277 (hooks-never-fire root cause + gofmt drift). CI was red across 5+ runs because `.act/hooks/close` had been a silent no-op since it was created — resolver looked for `post-close`, file was named `close`. Bug fixed; gate now actually catches drift locally before push. Three follow-ups filed (act-c22b, act-c83a, plus act-9c8c still open from afternoon). Andrew settled the bootstrap direction: go install (uvx-style — one command from a fresh agent session). Ready to share with Sasank / Corey / Andrew Widdowson once act-6051 implements the README pitch + verifies the public module path works.
+> **Quick read:** Shipped act-6051 (README + `act help` lead with `go install github.com/aac/act/cmd/act@latest`), act-c83a (hook stderr now surfaces in close/create/update/reopen error envelopes), act-c22b (rollback unstages only successfully-staged paths, with regression test), and act-9c8c (`act show` lists work commits attributed via the `(act-XXXX)` marker). Verification on act-6051 surfaced a precondition: the canonical pitch only works for friends once the aac/act repo is public + a fresh release tag is cut. Filed as **act-2204** (p=1) with explicit verification AC. Andrew said in conversation "maybe there's no reason for it to stay private right now" — that decision is the next gate before sharing.
 
 ## What landed this session
 
-- **act-75fd closed (a52bdb7).** docs/act-evaluation.md refreshed: per_session + close-stages-into-work-commit approximate Dolt's "transaction = one commit" property in plain git; the "is per-op-commit load-bearing?" question (act-6018 once asked) is resolved (hideable).
-- **act-c26a closed (b4610f6).** Shipped `act create --blocked-by <id>` (repeatable, dedups) + `act_file_blocker` MCP composed tool. Single atomic commit via WriteOpsAndAutoCommit with rollback. 12 new tests, tools count 15→16. AC #4 deviation documented: `--block-parent` NOT implemented per Andrew's "single choice, not flags" design call; workflow A continues via act_block after create.
-- **act-8277 closed (2f8ddd2).** Two-cluster root cause fix for the persistent CI red:
-  1. `internal/hooks/hooks.go` ResolveHook map renamed `post-<op>` → bare `<op>` to match every doc + the actual `.act/hooks/close` file. Silently no-op'd hooks now actually fire.
-  2. hookTimeout bumped 5s → 120s. Original 5s was sized for quick lints; the act repo's close gate runs `gofmt + vet + go test ./...` (~50s). Even with the resolver fixed, 5s would have timed out every gate.
-  3. gofmt-cleaned close.go + config.go (the drift CI was failing on — would have been caught locally if the hook had ever fired).
-  Verified end-to-end: introduce deliberate drift → close exits 1 → close op rolled back. CI green on the fix commit.
-- **Filed follow-ups:** act-c22b (WriteOpsAndAutoCommit rollback unstage-noise, reviewer-derived from c26a), act-c83a (HookFailedError.Error() drops the captured StderrTail; users see "hook exited 1" with no signal about what failed). act-9c8c from the prior session is still open.
+- **act-6051 closed (0a006ed).** README rewritten: leads with `go install github.com/aac/act/cmd/act@latest && act init`. Status section refreshed (no longer "in progress"). Brew tap, prebuilt release, curl installer documented as alternates with their tradeoffs, not equally-promoted paths. `act help` got a matching `GETTING STARTED` section between WHAT THIS IS and THE CANONICAL WORK LOOP. Test (`TestRunHelpDefault`) asserts the section is present so README + help can't silently drift. AC #2 (end-to-end test from a fresh GOMODCACHE without auth) deferred to act-2204 — see "Bootstrap verification finding" below.
+- **act-c83a closed (facaf78).** New `HookFailureDetails` helper in `internal/cli/errors.go` extracts `*hooks.HookFailedError` into (human Message with last 10 stderr lines inline, Details map with full `hook_stderr` + `hook_exit_code` + `hook_truncated`). Wired into close.go's hook_failed path and create/update/reopen's write_failed split — hook failures now surface as `error: "hook_failed"` not `write_failed`, with the captured stderr available to JSON consumers. 7 new tests cover helper unit behavior + integration on close + create.
+- **act-c22b closed (7c95ead).** `WriteOpsAndAutoCommit` now tracks a `staged []string` slice separately from `written []string`; rollback unstages only paths that successfully passed `StageOpFile`. `runUnstage` indirected through a swappable `runUnstageFn` for testability. Two regression tests: commit-failure rollback unstages exactly the staged paths; ProbeAndWrite-failure on op 2 of 2 (triggered via shard-collision on a regular file masquerading as a directory) results in zero unstage calls — would have failed pre-fix.
+- **act-9c8c closed (ab70484).** New `gitops.WorkCommitsForIssue(prefix4, limit)` runs `git log --all --fixed-strings --grep='(act-<prefix4>'` and returns `[]WorkCommit{SHA, Subject, AuthorDate}`. `RunShow` populates `ShowResult.Commits` best-effort (git failure → empty, not error). Human renderer appends a `commits:` block when non-empty; `ShowJSON` always emits a `commits` key (empty array when none) so MCP consumers can rely on the key. Verified on this repo: `act show act-c83a` now displays facaf78 + the act-op claim/create commits inline.
 
-## Conclusions worth preserving
+## Bootstrap verification finding (act-2204)
 
-**Log noise question — practically settled.** Two-commit-per-issue lifecycle on per_session repos approximates the Dolt commit pattern in plain git. The act-evaluation doc captures this. Remaining open question (deprecate per_op outright?) genuinely needs another repo's data — not more thinking from inside act.
+The canonical pitch in README and `act help` is `go install github.com/aac/act/cmd/act@latest`. Verification done two ways:
 
-**`--blocked-by` design call (act-c26a).** Workflow C reduces to one call cleanly; workflow A (file a blocker for current work) continues via act_block after create. Single flag with a single semantic; no --block-parent. Worth defending if a future reviewer flags drift from the original AC.
+1. **From a fresh GOMODCACHE without auth** (what a friend's agent would have): FAILS. `sum.golang.org/lookup/github.com/aac/act@v0.1.0: 404 Not Found` because the proxy never mirrored a private module; falls back to `git ls-remote` which fails on the private repo with `terminal prompts disabled`.
+2. **With `GOPRIVATE=github.com/aac` + Andrew's git auth**: SUCCEEDS but installs `v0.1.0` from the proxy cache, which is **192 commits behind HEAD** as of c8ae75f. The cached binary is functional for `act init` / `create` / `ready` / `show` but missing every fix landed since (including act-8277's hook-resolver fix, the per_session bundling, all the act-c26a/c83a/c22b/9c8c work).
 
-**Hook gate must actually run (act-8277).** Every close hook fires now. The `.act/hooks/close` script is the local pre-flight gate that CI duplicates; both being green is the contract. The gate caught zero of the recent close commits because of the resolver bug, which is why a six-month-old drift made it to main.
+Conclusion: the README pitch is correct in shape, but actually working for a fresh agent in someone else's repo requires (a) flipping aac/act public so sum.golang.org can mirror the module, then (b) cutting a fresh release tag at or near HEAD so `@latest` resolves to current code. Both captured in act-2204 with verification AC: "From a fresh GOMODCACHE with no GOPRIVATE / no git auth, `go install …@latest` completes successfully."
 
-## Bootstrap decision (act-6051)
-
-Conversation settled on `go install github.com/aac/act/cmd/act@latest` as the canonical pitch — the Go equivalent of the uvx pattern Simon Willison uses. One command from a fresh agent session lands `act` on PATH; from there, the act skill auto-activates and the agent can self-bootstrap by running `act help` / `act ready`. Brew tap (act-e6a5) and a curl installer stay as alternates, not the primary pitch.
-
-Next session: implement the README pitch + verify the public Go module path actually works (`github.com/aac/act` — confirm the repo is public and `go install ...@latest` resolves cleanly from a fresh `$GOPATH`). Then act-6051 closes with the README documenting one-command install + `act init` to get a new repo going.
+Andrew's stance in conversation: "Do what you can while it's private, and do any other fixes we'd want to do before handing it to someone else. First thing we'll do is use it in another project on my machine. Unless there's no reason for it to stay private right now (which maybe there isn't). Making it public would let us do some stuff from CC on the web." Repo history is clean (no secrets in op-log JSON or docs).
 
 ## Where things stand
 
-- Backlog: 17 ready. Top of queue:
-  - **act-6051** (p=1) — canonical bootstrap; direction settled, implementation is next session's first task.
-  - **act-ff5c** (p=1) — doc-drift prevention process. act-8277 is exhibit A for why this matters; the test added (TestResolveHookMatchesDocs) is exhibit A for what the process should produce. Worth a brainstorming pass.
-  - **act-8416 / act-4fe6** (p=1) — Cowork / CC Web integrations. Need external-system context.
-  - **act-c83a** (p=2, new) — hook stderr surfacing. Trivial fix, clear regression test.
-  - **act-c22b** (p=2, new) — rollback unstage noise. Trivial fix.
-  - **act-9c8c** (p=2, carryover) — show work commits in `act show`. Smallest concrete win, ~30 min.
-- All worktrees clean. CI green on origin/main.
+- Backlog: 16 ready (act-9c8c, act-c83a, act-c22b, act-6051 closed; act-2204 added).
+- Top of queue:
+  - **act-2204** (p=1, new) — flip aac/act public + cut fresh release tag. Andrew's call, blocking the canonical-pitch verification.
+  - **act-ff5c** (p=1) — doc-drift prevention process. Brainstorm-first; act-8277 (this session's predecessor's discovery) is exhibit A, the new `TestRunHelpDefault` assertion that the GETTING STARTED section exists is exhibit B.
+  - **act-8416** (p=1) — Cowork integration. Needs external context.
+  - **act-4fe6** (p=1) — CC Web integration. Needs external context. Would benefit from act-2204 landing first (fewer install-path workarounds to document).
+  - **act-b90e** (p=2) — version-control the act skill file. Untracked at `~/.claude/skills/act/` — relevant once we share, since the skill is half the install story for friends' agents.
+  - **act-e6a5** (p=2) — brew tap / curl installer. Currently documented as alternates; lower urgency now that go install is the canonical path.
+- All worktrees clean. CI green on origin/main (act-9c8c push: ab70484).
+- Two issues filed mid-session: act-2204 (this session) and act-c83a / act-c22b (last session, both closed this one).
 
 ## What to look at first when resuming
 
-1. **act-6051 implementation.** Direction is decided; this is mechanical. Confirm public Go module path → README → close.
-2. **act-c83a then act-c22b.** Both are small, both make the next CI / close cycle quieter. Quick wins to bundle.
-3. **act-ff5c.** Brainstorm first. The doc-drift class spans resolver/doc mismatches (act-8277), unexercised invariants (the act-act-double-prefix bug Andrew mentioned earlier), and silent gate regressions. A doctor check + a test pattern + a CI guard is probably the shape. Don't over-engineer; the bar is "would this have caught act-8277 before merge?"
-4. **act-9c8c** if there's time. Read-side, isolated, smallest discrete win.
+1. **Decide on act-2204.** This is the gate before any external sharing. Two questions: (a) Is there any reason aac/act should stay private? Conversation suggested "maybe there isn't." History review found nothing sensitive. (b) Once flipped, cut a fresh release tag — `git tag v0.2.0 && git push --tags` plus publishing the existing v0.1.0 draft release should be enough; sum.golang.org will mirror once the repo is public.
+2. **act-b90e is more important now than its p=2 suggests.** The README + `act help` pitch lands the binary, but the skill at `~/.claude/skills/act/SKILL.md` does the canonical-loop heavy lifting in agent sessions. If a friend's agent installs the binary but the skill doesn't auto-activate (because it's not version-controlled and doesn't ship with anything), the install-and-go promise breaks. Probably worth bumping to p=1 before sharing.
+3. **act-ff5c brainstorm.** The handoff before this one already framed the bar: "would this have caught act-8277 before merge?" The two doc-test patterns this session demonstrated (the `TestRunHelpDefault` assertion that GETTING STARTED is present, and the act-8277 predecessor's `TestResolveHookMatchesDocs`) are concrete examples of what good drift-prevention tests look like — the brainstorm should generalize from those.
+4. **act-8416 / act-4fe6** when ready to expand beyond Andrew's machine. Would benefit from act-2204 landing first.
 
 ## Sharing readiness (Sasank / Corey / Andrew Widdowson)
 
-After act-6051 lands a working `go install` pitch:
-- Yes for personal-repo alpha trial. Workflow loop survives cold-start; log noise resolved on per_session; architecture good for solo-to-small-multi-agent.
-- **The friends aren't running the commands — their agents are.** What we're actually testing: can a cold-start agent in someone else's repo discover act exists, run `go install …@latest`, find the binary on PATH, fire the global act skill, run `act init`, and pick up the workflow without their human explaining anything. The pitch to a friend is "tell your agent to install act and try it on a real task" — the agent does the install/init/first-task; the friend reports back on what tripped the agent. This is the dogfood-memory pattern (agents are the primary user), now extrapolated to a repo we don't own.
-- Open questions a real alpha will answer that the dogfood can't: does the skill auto-discover from `.act/` in repos with their own CLAUDE.md? Does `go install` from a fresh `$HOME` produce a usable binary on the friend's platform (Linux, Mac, whatever)? What does the friend's git log look like after a week of agent-driven act use — readable, or did some per_session edge case re-noise it?
-- The act-evaluation doc's "what changes the read next" line — "a real alpha trial in another repo" — is exactly what this enables.
+Same conclusion as last session, sharpened by the verification finding:
+
+- **First dogfood is Andrew on another of his own projects** — works today via `GOPRIVATE=github.com/aac/act go install …@latest` (gets stale v0.1.0) OR `git clone && go install ./cmd/act` (gets HEAD).
+- **For friends' agents**: blocked on act-2204. Once that lands, the README pitch works as written.
+- **Companion concern**: the `act` skill needs to be findable by a friend's agent (act-b90e). The README mentions the skill auto-activates "from a Claude Code session" — true on Andrew's machine where the skill is installed, untrue on someone else's machine until act-b90e lands and the skill is published somewhere agents can pull.
 
 ## Operational notes
 
-- `bin/act` current as of 2f8ddd2.
-- `.act/hooks/close` now ACTUALLY runs on every close (act-8277). Be aware: introducing gofmt drift will block your closes locally now — that's the intended gate.
-- Two test issues (act-2434, act-498a) created during act-8277 hook verification were tombstoned via `act delete`; this is the first session that exercised `act delete` deliberately, and it worked cleanly.
-- The "default serial sub-agents in this repo" rule held. All work in `main` (no worktrees).
+- `bin/act` current as of ab70484.
+- `act show <id>` now displays both work commits (the agent's `(act-XXXX)`-tagged commits) and act-op commits (claim / create / close auto-commits) inline. Useful: scanning `act show` post-close shows the full git surface for an issue at a glance.
+- Hook failures now surface stderr — running into a `gofmt drift` or test failure during close shows the trailing 10 lines of the hook's stderr in the error message instead of just `hook exited 1`.
+- `WriteOpsAndAutoCommit` rollback no longer redundantly unstages never-staged files. No user-visible change today (the spurious stderr was already suppressed) but the structural fix matters if anyone ever wires `cmd.Stderr` through the runner.
+- All session work in `main` (no worktrees). Sub-agents not used — work was tightly coupled around `internal/cli/`.
