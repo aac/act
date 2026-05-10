@@ -1,0 +1,1 @@
+{"hlc":{"logical":0,"node_id":"4397b575","wall":"2026-05-10T16:23:00.242Z"},"issue_id":"act-a4d6","node_id":"4397b575","op_type":"tombstone","op_version":1,"payload":{"deleted_at":"2026-05-10T16:23:00.242Z"},"schema_version":1,"writer_version":"0.1.0"}
