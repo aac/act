@@ -47,7 +47,15 @@ Pattern: file it, keep working. If the discovery actually blocks the current iss
 
 ## Sub-agents
 
-Whether to spawn sub-agents is a harness decision, not an `act` rule. For this repo specifically: most v0.2 work touches `cmd/act/` and `internal/cli/` (argparser, error envelope, command dispatcher), so parallel agents will merge-conflict. Default serial. Spawn parallel only when issues are provably disjoint (e.g. one MCP-only change next to a CLI-only change with no overlapping files).
+Whether to spawn sub-agents is a harness decision, not an `act` rule. For this repo specifically:
+
+**Default: `isolation: "worktree"`.** Two un-isolated agents in the same working tree collide on git index even when their files don't overlap — `act update --claim` fails with `error: Please commit or stash them` while another agent has any uncommitted writes anywhere in the tree. Worktrees give each agent its own working directory and branch.
+
+When you spawn a worktree agent, override step 7 of the loop in their prompt: they push to their *worktree branch* (not main), and an integrator (you, or another agent) merges the branch in once their work returns clean. Step 7 in this file is for the main-tree work.
+
+The only safe exception to worktree-isolation is when you can guarantee no other writer will touch the tree until the spawn finishes — i.e. you're not also working at the same time. Otherwise: worktree.
+
+Parallelism is a separate concern. Even with worktrees, default serial when issues touch overlapping files (most v0.2 work touches `cmd/act/` and `internal/cli/` — argparser, error envelope, command dispatcher); merge time costs more than parallel time saves. Spawn parallel only when issues are provably disjoint (e.g. an MCP-only change next to a CLI-only change with no overlapping files).
 
 ## What this file is not
 
@@ -61,3 +69,4 @@ Each rule below is versioned so a later skill-extraction pass can decide what's 
 - *File mid-flight bugs as follow-ups, don't halt* (2026-05): the dogfood signal is the bug landing in the backlog with a clear repro, not a half-finished current task.
 - *Default serial sub-agents in this repo* (2026-05): v0.2 ergonomic issues all touch CLI code. Parallelism would cost more in merge time than it saves.
 - *Push after every close, not at session end* (2026-05): matches the dispatcher pattern, makes closes visible to concurrent agents immediately, and means a dropped session never silently swallows finished work. Verbose git history is the accepted cost. Discovered when the first dogfood agent (act-6bbd) followed the original loop and didn't push, leaving 3 commits local-only — see act-ac52.
+- *Sub-agents must use isolation:worktree by default* (2026-05): un-isolated agents collide on git index even with disjoint files because `git commit` serializes per working tree. Op-log file-level concurrency (the multi-writer thesis from the brief) only saves you when each writer has its own working tree. Discovered when sub-agent #2 on act-5467 blocked the parent session from claiming a different issue in the same tree — see act-6e2b.
