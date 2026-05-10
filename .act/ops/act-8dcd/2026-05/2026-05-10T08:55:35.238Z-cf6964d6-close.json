@@ -1,0 +1,1 @@
+{"hlc":{"logical":0,"node_id":"4397b575","wall":"2026-05-10T08:55:35.238Z"},"issue_id":"act-8dcd","node_id":"4397b575","op_type":"close","op_version":1,"payload":{"reason":"id_ambiguous now exits 2 across show/close/update/depadd/ready/log/create/delete/reopen; resolve_helpers.go comment corrected; tests pinned"},"schema_version":1,"writer_version":"0.1.0"}
