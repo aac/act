@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/config"
 )
 
 // runReady dispatches `act ready`. It resolves the repo root from cwd,
@@ -18,8 +19,14 @@ func runReady(args []string) int {
 	fs := flag.NewFlagSet("ready", flag.ContinueOnError)
 	under := fs.String("under", "", "restrict to descendants of the given issue id (prefix ok)")
 	limit := fs.Int("limit", 50, "maximum number of issues to return")
+	mine := fs.Bool("mine", false, "filter to issues already assigned to the calling node")
+	as := fs.String("as", "", "override identity for --mine; defaults to .act/config.json node_id")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *as != "" && !*mine {
+		emitBadFlag(*asJSON, "act ready: --as requires --mine")
 		return 2
 	}
 
@@ -32,10 +39,31 @@ func runReady(args []string) int {
 		return 3
 	}
 
+	// Resolve identity for --mine. Default reads .act/config.json node_id;
+	// --as <id> overrides without touching config (useful for ad-hoc
+	// "what's <agent-x> working on?" queries).
+	assigneeFilter := ""
+	if *mine {
+		assigneeFilter = *as
+		if assigneeFilter == "" {
+			paths := config.Layout(root)
+			cfg, cerr := config.ReadConfig(paths)
+			if cerr != nil {
+				emitReadyError(*asJSON, map[string]any{
+					"error":   "no_repo",
+					"message": fmt.Sprintf("act ready: --mine cannot read .act/config.json: %v; run 'act init' first or pass --as <id>", cerr),
+				})
+				return 3
+			}
+			assigneeFilter = cfg.NodeID
+		}
+	}
+
 	out, code := cli.RunReady(root, cli.ReadyOptions{
-		Under:  *under,
-		Limit:  *limit,
-		AsJSON: *asJSON,
+		Under:          *under,
+		Limit:          *limit,
+		AssigneeFilter: assigneeFilter,
+		AsJSON:         *asJSON,
 	})
 	if code != 0 {
 		m, _ := toMap(out)

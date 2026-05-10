@@ -24,6 +24,12 @@ type ReadyOptions struct {
 	// AsJSON is reserved for symmetry with other commands; the returned
 	// shape is identical and main.go decides how to render.
 	AsJSON bool
+	// AssigneeFilter restricts the ready set to issues whose assignee
+	// matches this exact string. Empty means no filter (status quo).
+	// Used by `act ready --mine` (which sets it to the current node id)
+	// and `--as <id>` (which sets it to an explicit override). The filter
+	// is a post-pass on the already-computed ready set; --under composes.
+	AssigneeFilter string
 }
 
 // ReadyIssue is one row of the ready set.
@@ -200,6 +206,19 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		filtered := ready[:0]
 		for _, r := range ready {
 			if descendants[r.ID] {
+				filtered = append(filtered, r)
+			}
+		}
+		ready = filtered
+	}
+
+	// Step 4b: --mine / --as filter. Restricts the ready set to issues
+	// whose assignee exactly matches AssigneeFilter. Empty filter means
+	// no restriction (the v0.1 default). Composes with --under.
+	if opts.AssigneeFilter != "" {
+		filtered := ready[:0]
+		for _, r := range ready {
+			if r.Assignee == opts.AssigneeFilter {
 				filtered = append(filtered, r)
 			}
 		}
