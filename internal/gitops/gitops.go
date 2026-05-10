@@ -148,6 +148,52 @@ func (g *GitOps) IsClean() (bool, error) {
 	return strings.TrimSpace(out) == "", nil
 }
 
+// HasNonActChanges reports whether the working tree has any staged or unstaged
+// changes outside the .act/ tree. Used by the close path to decide whether to
+// auto-commit standalone (clean elsewhere → standalone close commit) or leave
+// the staged close op for the agent's next git commit to subsume (act-a659).
+//
+// Detection: parse `git status --porcelain` and ignore any path with the
+// .act/ prefix. The porcelain v1 format puts paths in columns 4..N; rename
+// entries (`R `) use ` -> ` between old and new. We treat both endpoints as
+// .act/ if either is — a rename moving into or out of .act/ counts as an
+// act-only change for our purposes.
+func (g *GitOps) HasNonActChanges() (bool, error) {
+	out, err := g.run("status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		// Handle rename "old -> new"
+		if i := strings.Index(path, " -> "); i >= 0 {
+			oldPath := strings.TrimSpace(path[:i])
+			newPath := strings.TrimSpace(path[i+4:])
+			if !isActPath(oldPath) || !isActPath(newPath) {
+				return true, nil
+			}
+			continue
+		}
+		if !isActPath(strings.TrimSpace(path)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// isActPath reports whether p lives under the .act/ tree at the repo root.
+// Quoted paths (porcelain wraps paths containing unusual chars in double
+// quotes) are unwrapped first.
+func isActPath(p string) bool {
+	if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+		p = p[1 : len(p)-1]
+	}
+	return p == ".act" || strings.HasPrefix(p, ".act/")
+}
+
 // CurrentBranch returns the short-form current branch name (e.g. "main").
 // Detached-HEAD repositories return "HEAD"; callers that need to reject
 // detached-HEAD should check the returned value.

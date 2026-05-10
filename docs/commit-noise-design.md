@@ -55,7 +55,7 @@ The per-op-commit design is an **implementation convenience, not a load-bearing 
 
 **Concept:** `act` writes ops to `.act/` files but defers `git commit` until the session calls `act flush` (or a mode flag sets auto-flush on close). Default behavior in production mode: ops accumulate, one commit at session end groups them all.
 
-**Implementation cost:** Medium. `WriteOpAndAutoCommit` in `internal/store/` becomes `WriteOp` + conditional commit; `act flush` is a new command (~100 lines). Config flag `--no-auto-commit` or `BEADS_MODE=production`-analog. Estimated ~200 lines across 3 files: `internal/store/store.go`, `cmd/act/flush.go`, `internal/config/config.go`.
+**Implementation cost:** Medium. `WriteOpAndAutoCommit` in `internal/store/` becomes `WriteOp` + conditional commit; `act flush` is a new command (~100 lines). Config flag `--no-auto-commit` or `ACT_MODE=production`-analog. Estimated ~200 lines across 3 files: `internal/store/store.go`, `cmd/act/flush.go`, `internal/config/config.go`.
 
 **Audit-trail preservation:** Full. Op files retain per-op HLC timestamps. Flush commit message can enumerate which ops it contains (`act-op: flush 5 ops (claim act-6018, close act-5467, ...)`). Nothing lost from the ground truth.
 
@@ -158,8 +158,8 @@ The per-op-commit design is an **implementation convenience, not a load-bearing 
 Rationale: The per-op-commit design is not load-bearing — the op-log's audit trail lives in `.act/` files, not in git history. Bundling preserves every property of the multi-writer thesis while cutting git noise from ~3 act-op commits per issue to 1. This aligns with beads' effective design (Dolt as op-log, git as sync), adapted for act's simpler, git-native architecture.
 
 **Mode split:**
-- `dogfood/dev mode` (default when `BEADS_MODE` unset or `dev`): keep current behavior (auto-commit per op). Visibility matters during development and dogfood.
-- `production mode` (`BEADS_MODE=production` or `--production` flag): defer commits, flush explicitly or on `act close`. One commit per closed issue at minimum.
+- `dogfood/dev mode` (default when `ACT_MODE` unset or `dev`): keep current behavior (auto-commit per op). Visibility matters during development and dogfood.
+- `production mode` (`ACT_MODE=production` or `--production` flag): defer commits, flush explicitly or on `act close`. One commit per closed issue at minimum.
 
 A single flag is not the final answer — it's the test. If production mode sees adoption without complaints about lost audit trail, it becomes the default.
 
@@ -191,3 +191,19 @@ A single flag is not the final answer — it's the test. If production mode sees
 3. **Beads verification.** The beads comparison is grounded in documented behavior but not empirically validated. A 30-minute local run of the `create → claim → close` loop in beads would either confirm or complicate the recommendation.
 
 4. **Production-mode default timing.** When is the right moment to flip production mode to default? Probably not until the flag has been exercised in at least one non-dogfood repo — which means the alpha trial (act-evaluation.md) should explicitly test it.
+
+---
+
+## Post-implementation update — 2026-05-10 (act-728d shipped, then act-a659)
+
+**What act-728d did:** implemented Option 1 as a `bundle_strategy` config knob with `per_op` (legacy) and `per_session` (new default). Under `per_session`, claim/close auto-commit and intermediate ops within the claim window defer to the close commit.
+
+**What the post-shipping analysis found:** the typical lifecycle in this repo has _no_ intermediate ops between claim and close — agents claim, edit code, close. So `per_session` bundles 1 op (the close itself) into 1 commit. Net commit reduction: zero.
+
+**Forward fix (act-a659, shipped 2026-05-10):** under `per_session`, `act close` writes + stages the close op, but **defers the commit when the working tree has uncommitted non-`.act/` changes**. The agent's next `git commit -am '<msg> (act-XXXX)'` subsumes the staged close op into the work commit. Typical lifecycle now: 2 commits (claim + work-with-close) instead of 3 (claim + work + standalone close). No-code closes (clean working tree outside `.act/`) still commit standalone, preserving single-command UX for tracking-only or wrong-claim closes. `--push` errors when the close stays staged because there's nothing on HEAD yet to publish.
+
+**Naming note:** the original design draft proposed `BEADS_MODE` as the env var; `ACT_MODE` is the correct name for this project. The bundle_strategy field shipped with `per_op`/`per_session` rather than dev/production naming because the semantics are about op-vs-session granularity, not environment.
+
+**What's still uncertain:**
+- Whether to deprecate `per_op` once `per_session`+act-a659 has been exercised in another repo — keeping both is a small ongoing cost (test matrix, mental overhead) for an escape-hatch nobody may need.
+- Whether the canonical loop in CLAUDE.md should _require_ the close-then-commit order or accept commit-then-close as a 3-commit fallback for agents who haven't internalized the new ordering.

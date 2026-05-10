@@ -39,12 +39,23 @@ type CloseOptions struct {
 
 // CloseResult is the JSON-serialisable success envelope for a write that
 // actually emitted a new close op.
+//
+// Committed and StagedForCommit are mutually exclusive:
+//   - Committed=true, StagedForCommit=false: act close created its own commit
+//     (clean working tree outside .act/, or per_op strategy).
+//   - Committed=false, StagedForCommit=true: the close op file is staged but
+//     not yet committed; the agent's next git commit will subsume it together
+//     with their working-tree changes (act-a659).
+//   - Committed=false, StagedForCommit=false: --no-commit was set; nothing is
+//     staged.
 type CloseResult struct {
-	ID         string `json:"id"`
-	ShortID    string `json:"short_id"`
-	OpsWritten int    `json:"ops_written"`
-	Committed  bool   `json:"committed"`
-	Reason     string `json:"reason"`
+	ID              string `json:"id"`
+	ShortID         string `json:"short_id"`
+	OpsWritten      int    `json:"ops_written"`
+	Committed       bool   `json:"committed"`
+	StagedForCommit bool   `json:"staged_for_commit,omitempty"`
+	CommitMarker    string `json:"commit_marker,omitempty"`
+	Reason          string `json:"reason"`
 }
 
 // CloseAlreadyClosed is the JSON-serialisable envelope returned when the
@@ -79,9 +90,22 @@ const closeReasonMaxBytes = 4096
 //     no op.
 //  4. Build a close envelope carrying ClosePayload{Reason: opts.Reason}.
 //  5. Write the op file; run the post-close hook (pre-commit per the
-//     hooks contract); auto-commit unless --no-commit. The commit
-//     subject contains `(<short_id>)` so doctor's orphan-close grep
-//     can correlate.
+//     hooks contract); stage the op file. Then decide whether to commit:
+//
+//     - `--no-commit`: skip staging+commit entirely (op file written only).
+//     - `per_op` strategy: always commit standalone.
+//     - `per_session` strategy (default): if the working tree has any
+//     non-.act changes the agent's next `git commit -am '<msg>
+//     (act-XXXX)'` will subsume the staged close op (act-a659); this
+//     yields one work-commit-with-close instead of work + close. If the
+//     working tree is clean outside .act/, commit standalone (preserves
+//     the no-code-close UX).
+//
+//     The commit subject (when we commit) contains `(<short_id>)` so
+//     doctor's orphan-close grep can correlate. When the agent subsumes
+//     the staged op, their work-commit subject must carry the same
+//     marker — the FormatCloseHuman hint reminds them.
+//
 //  6. Return CloseResult on success.
 //
 // Returns:
@@ -302,6 +326,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	}
 
 	committed := false
+	stagedForCommit := false
 	if !opts.NoCommit {
 		gops := gitops.NewGitOps(repoRoot)
 
@@ -332,6 +357,8 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}
 
 		// Pre-commit hook: post-close per spec §Hooks contract.
+		// Runs even when we end up not committing (the close-op is staged
+		// either way) so .act/hooks/close still gates the close decision.
 		if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
 			opID, herr := env.Hash()
 			if herr != nil {
@@ -360,34 +387,79 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}
 		}
 
-		// Commit subject is built by BuildOpCommitMessage; canonical
-		// format is `act-op: (act-XXXX) close`. Doctor's orphan-close
-		// grep keys on the parenthesized short id. See act-d3a5.
-		// When bundling, include the count of bundled ops in the message
-		// (including the close op itself).
-		var msg string
-		if len(pendingPaths) > 0 {
-			msg = BuildBatchCommitMessage(env, len(pendingPaths)+1)
-		} else {
-			msg = BuildOpCommitMessage(env)
-		}
-		if err := gops.Commit(msg); err != nil {
-			rollbackPending()
-			_ = runUnstage(gops.RepoRoot, opPath)
-			return CloseErrorOutput{
-				Error:   "commit_failed",
-				Message: err.Error(),
-			}, 1
-		}
-		committed = true
-
-		if opts.Push {
-			if err := gops.Push(); err != nil {
+		// Commit decision (act-a659):
+		//   - per_op strategy: always commit standalone (legacy behavior).
+		//   - per_session: if the working tree has any non-.act changes
+		//     (staged or unstaged work), leave the close op staged so the
+		//     agent's next `git commit -am` subsumes it together with their
+		//     code change. Otherwise commit standalone (preserves the
+		//     no-code-close UX as a single command).
+		commitNow := true
+		if cfg.EffectiveBundleStrategy() == config.BundleStrategyPerSession {
+			hasOther, herr := gops.HasNonActChanges()
+			if herr != nil {
+				rollbackPending()
+				_ = runUnstage(gops.RepoRoot, opPath)
 				return CloseErrorOutput{
-					Error:   "push_failed",
+					Error:   "status_check_failed",
+					Message: herr.Error(),
+				}, 1
+			}
+			if hasOther {
+				commitNow = false
+			}
+		}
+
+		if commitNow {
+			// Commit subject is built by BuildOpCommitMessage; canonical
+			// format is `act-op: (act-XXXX) close`. Doctor's orphan-close
+			// grep keys on the parenthesized short id. See act-d3a5.
+			// When bundling, include the count of bundled ops in the message
+			// (including the close op itself).
+			var msg string
+			if len(pendingPaths) > 0 {
+				msg = BuildBatchCommitMessage(env, len(pendingPaths)+1)
+			} else {
+				msg = BuildOpCommitMessage(env)
+			}
+			if err := gops.Commit(msg); err != nil {
+				rollbackPending()
+				_ = runUnstage(gops.RepoRoot, opPath)
+				return CloseErrorOutput{
+					Error:   "commit_failed",
 					Message: err.Error(),
 				}, 1
 			}
+			committed = true
+
+			if opts.Push {
+				if err := gops.Push(); err != nil {
+					return CloseErrorOutput{
+						Error:   "push_failed",
+						Message: err.Error(),
+					}, 1
+				}
+			}
+		} else {
+			// Close op is staged; the agent's next `git commit -am` will
+			// pick it up alongside their code changes (one work commit
+			// instead of work + close). Push is meaningless here — there's
+			// nothing new on HEAD yet — so we surface a flag-conflict
+			// error to keep the contract crisp. Full rollback (unstage +
+			// remove the op file) so the issue is NOT folded as closed
+			// from on-disk ops; otherwise re-running `act close` would
+			// short-circuit to {already_closed:true} and the agent would
+			// have no way to recover.
+			if opts.Push {
+				rollbackPending()
+				_ = runUnstage(gops.RepoRoot, opPath)
+				_ = os.Remove(opPath)
+				return CloseErrorOutput{
+					Error:   "push_without_commit",
+					Message: "act close: --push requires the close to commit standalone, but the working tree has uncommitted non-.act changes. Commit your work first (git commit -am '<msg> (act-XXXX)'), then re-run `act close <id> --push` (or omit --push and push manually after the commit subsumes the close op).",
+				}, 2
+			}
+			stagedForCommit = true
 		}
 	}
 
@@ -404,20 +476,38 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	}
 
 	return CloseResult{
-		ID:         full,
-		ShortID:    short,
-		OpsWritten: 1,
-		Committed:  committed,
-		Reason:     opts.Reason,
+		ID:              full,
+		ShortID:         short,
+		OpsWritten:      1,
+		Committed:       committed,
+		StagedForCommit: stagedForCommit,
+		CommitMarker:    fmt.Sprintf("(%s)", short),
+		Reason:          opts.Reason,
 	}, 0
 }
 
-// FormatCloseHuman renders a CloseResult as a single human-friendly line.
+// FormatCloseHuman renders a CloseResult as a one-or-two-line human message.
+//
+// Three cases (mutually exclusive on Committed/StagedForCommit/neither):
+//   - Committed: "Closed act-XXXX[: reason]" (legacy single-commit close).
+//   - StagedForCommit: "Closed act-XXXX[: reason]" plus a hint line telling
+//     the agent to subsume the staged close op via `git commit -am '<msg>
+//     (act-XXXX)'`. This is the act-a659 work-commit-with-close path.
+//   - Neither (--no-commit): "Closed act-XXXX[: reason] (op file written, not
+//     staged)" so the user knows downstream staging is on them.
 func FormatCloseHuman(res CloseResult) string {
-	if res.Reason == "" {
-		return fmt.Sprintf("Closed %s\n", res.ShortID)
+	head := fmt.Sprintf("Closed %s", res.ShortID)
+	if res.Reason != "" {
+		head = fmt.Sprintf("Closed %s: %s", res.ShortID, res.Reason)
 	}
-	return fmt.Sprintf("Closed %s: %s\n", res.ShortID, res.Reason)
+	switch {
+	case res.StagedForCommit:
+		return fmt.Sprintf("%s\n  Close op staged. Include in your next commit:\n  git commit -am '<message> %s'\n", head, res.CommitMarker)
+	case !res.Committed:
+		return fmt.Sprintf("%s (op file written, not staged)\n", head)
+	default:
+		return head + "\n"
+	}
 }
 
 // FormatCloseAlreadyClosedHuman renders a CloseAlreadyClosed envelope.

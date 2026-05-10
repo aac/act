@@ -848,4 +848,214 @@ func TestPerSession_CloseWithoutClaim_DegradesProperly(t *testing.T) {
 	}
 }
 
+// ─── act-a659: close stages into work commit when working tree has changes ──
+
+// TestPerSession_CloseStagesIntoWorkCommit covers act-a659 AC1+AC2: under
+// per_session, a typical "claim → edit code → close → git commit -am" loop
+// must produce exactly +2 commits beyond the create commit (one claim, one
+// work-with-close-op), and the work commit's tree must contain BOTH the code
+// change AND the close op file. This is the load-bearing test for the
+// noise-reduction story; if it regresses, agents are back to ~3 commits per
+// task instead of ~2.
+func TestPerSession_CloseStagesIntoWorkCommit(t *testing.T) {
+	root := makePerSessionRepo(t)
+
+	// Seed: create the issue (this writes its own commit).
+	createOut, code := RunCreate(root, CreateOptions{Title: "stage-into-work", Type: "task"})
+	if code != 0 {
+		t.Fatalf("create: code = %d, out=%+v", code, createOut)
+	}
+	id := createOut.(CreateResult).ID
+
+	// Snapshot HEAD just before claim. The +2 invariant we check is
+	// against this baseline (claim commit + work-with-close commit).
+	headBeforeClaim := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	// Claim — auto-commits + pushes per per_session semantics.
+	if _, code := RunUpdate(root, UpdateOptions{ID: id, Claim: true, Isolated: true}); code != 0 {
+		t.Fatalf("claim: code = %d", code)
+	}
+
+	// Simulate the agent's code change: write a non-.act file. This is
+	// what triggers the "stage but don't commit" branch in close.
+	codePath := filepath.Join(root, "feature.go")
+	if err := os.WriteFile(codePath, []byte("package main\n\nfunc Feature() {}\n"), 0o644); err != nil {
+		t.Fatalf("write code file: %v", err)
+	}
+
+	// Close — under act-a659, this should stage the close op without
+	// creating a new commit, because the working tree has a non-.act
+	// change (feature.go).
+	closeOut, code := RunClose(root, CloseOptions{ID: id, Reason: "feature shipped"})
+	if code != 0 {
+		t.Fatalf("close: code = %d, out=%+v", code, closeOut)
+	}
+	res, ok := closeOut.(CloseResult)
+	if !ok {
+		t.Fatalf("close: type = %T, want CloseResult", closeOut)
+	}
+	if res.Committed {
+		t.Errorf("Committed = true, want false (close should defer to next git commit)")
+	}
+	if !res.StagedForCommit {
+		t.Errorf("StagedForCommit = false, want true")
+	}
+	if res.CommitMarker == "" {
+		t.Errorf("CommitMarker empty; agent has no canonical marker to embed")
+	}
+
+	// HEAD must not have advanced beyond the claim commit.
+	headAfterClose := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfterClaim := strings.TrimSpace(runOut(t, root, "git", "log", "--format=%H", "-2", "HEAD")) // top two
+	headAfterClaimLines := strings.Split(headAfterClaim, "\n")
+	if len(headAfterClaimLines) < 2 {
+		t.Fatalf("expected at least 2 commits after claim, got %v", headAfterClaimLines)
+	}
+	expectedClaimHead := headAfterClaimLines[0] // newest after claim is the claim commit itself
+	if headAfterClose != expectedClaimHead {
+		t.Errorf("HEAD advanced after staged close: %s -> %s; expected to stay at claim", expectedClaimHead, headAfterClose)
+	}
+
+	// The close op file must exist and be in the index.
+	closeOps, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-close.json"))
+	if len(closeOps) != 1 {
+		t.Fatalf("expected 1 close op file, got %d: %v", len(closeOps), closeOps)
+	}
+	statusOut := runOut(t, root, "git", "status", "--porcelain")
+	if !strings.Contains(statusOut, ".act/ops/"+id) {
+		t.Errorf("close op not staged; git status:\n%s", statusOut)
+	}
+
+	// Now simulate the agent's work commit: stage feature.go and commit
+	// with the canonical marker. The staged close op rides along.
+	runOut(t, root, "git", "add", "feature.go")
+	commitMsg := "implement Feature " + res.CommitMarker
+	runOut(t, root, "git", "commit", "-m", commitMsg)
+
+	// AC1: exactly +2 commits since pre-claim baseline (claim + work-with-close).
+	revList := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBeforeClaim+"..HEAD"))
+	if revList != "2" {
+		log := runOut(t, root, "git", "log", "--format=%h %s", headBeforeClaim+"..HEAD")
+		t.Errorf("commit count since pre-claim = %s, want 2. Log:\n%s", revList, log)
+	}
+
+	// AC2: the most recent commit's tree must contain BOTH feature.go and the close op file.
+	headTree := runOut(t, root, "git", "show", "--name-only", "--format=", "HEAD")
+	if !strings.Contains(headTree, "feature.go") {
+		t.Errorf("work commit missing feature.go; tree:\n%s", headTree)
+	}
+	closeOpRel, _ := filepath.Rel(root, closeOps[0])
+	if !strings.Contains(headTree, closeOpRel) {
+		t.Errorf("work commit missing close op %s; tree:\n%s", closeOpRel, headTree)
+	}
+
+	// AC4: doctor's orphan-close check must pass — the work commit
+	// carries the (act-XXXX) marker.
+	dout, dcode := RunDoctor(root, DoctorOptions{Check: "orphan-close"})
+	if dcode != 0 {
+		t.Fatalf("doctor: code = %d, out=%+v", dcode, dout)
+	}
+	dres, ok := dout.(DoctorResult)
+	if !ok {
+		t.Fatalf("doctor: type = %T, want DoctorResult", dout)
+	}
+	for _, f := range dres.Findings {
+		if f.Severity == "error" {
+			t.Errorf("doctor orphan-close error: %+v", f)
+		}
+	}
+}
+
+// TestPerSession_ClosePushErrorsWhenStaged verifies that --push errors
+// cleanly when the close stays staged for the agent's next commit. There's
+// nothing on HEAD yet to publish; the contract is that --push only succeeds
+// when act close itself produced a commit.
+func TestPerSession_ClosePushErrorsWhenStaged(t *testing.T) {
+	root := makePerSessionRepo(t)
+
+	createOut, code := RunCreate(root, CreateOptions{Title: "push-staged", Type: "task"})
+	if code != 0 {
+		t.Fatalf("create: code = %d", code)
+	}
+	id := createOut.(CreateResult).ID
+	if _, code := RunUpdate(root, UpdateOptions{ID: id, Claim: true, Isolated: true}); code != 0 {
+		t.Fatalf("claim: code = %d", code)
+	}
+	// Dirty the working tree outside .act/.
+	if err := os.WriteFile(filepath.Join(root, "feature.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write code: %v", err)
+	}
+
+	out, code := RunClose(root, CloseOptions{ID: id, Reason: "push test", Push: true})
+	if code != 2 {
+		t.Fatalf("code = %d, want 2 (push_without_commit); out=%+v", code, out)
+	}
+	e, ok := out.(CloseErrorOutput)
+	if !ok {
+		t.Fatalf("type = %T, want CloseErrorOutput", out)
+	}
+	if e.Error != "push_without_commit" {
+		t.Errorf("error = %q, want push_without_commit", e.Error)
+	}
+
+	// Full rollback invariant: no close op may remain on disk after the
+	// error, otherwise the issue would fold as closed and a follow-up
+	// `act close` would short-circuit to {already_closed:true}, leaving
+	// the agent stuck. This was a real bug pre-rollback fix.
+	closeOps, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-close.json"))
+	if len(closeOps) != 0 {
+		t.Errorf("--push error left close op on disk (issue would appear closed): %v", closeOps)
+	}
+
+	// Belt-and-braces: re-running close (without --push) must succeed,
+	// proving the rollback was complete and the issue is recoverable.
+	retryOut, retryCode := RunClose(root, CloseOptions{ID: id, Reason: "retry without push"})
+	if retryCode != 0 {
+		t.Fatalf("retry close: code = %d, out=%+v", retryCode, retryOut)
+	}
+	if _, ok := retryOut.(CloseAlreadyClosed); ok {
+		t.Errorf("retry close returned CloseAlreadyClosed; the rollback was incomplete")
+	}
+}
+
+// TestPerSession_NoCodeCloseCommitsStandalone verifies that under
+// per_session, a no-code close (working tree clean outside .act/) commits
+// standalone — the single-command UX is preserved for the no-code case so
+// that closing a tracking issue or a wrong-claim doesn't require a
+// follow-up `git commit -m` from the agent.
+func TestPerSession_NoCodeCloseCommitsStandalone(t *testing.T) {
+	root := makePerSessionRepo(t)
+
+	createOut, code := RunCreate(root, CreateOptions{Title: "no-code", Type: "task"})
+	if code != 0 {
+		t.Fatalf("create: code = %d", code)
+	}
+	id := createOut.(CreateResult).ID
+	if _, code := RunUpdate(root, UpdateOptions{ID: id, Claim: true, Isolated: true}); code != 0 {
+		t.Fatalf("claim: code = %d", code)
+	}
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunClose(root, CloseOptions{ID: id, Reason: "wrong claim"})
+	if code != 0 {
+		t.Fatalf("code = %d, out=%+v", code, out)
+	}
+	res, ok := out.(CloseResult)
+	if !ok {
+		t.Fatalf("type = %T, want CloseResult", out)
+	}
+	if !res.Committed {
+		t.Errorf("Committed = false, want true (clean tree → standalone commit)")
+	}
+	if res.StagedForCommit {
+		t.Errorf("StagedForCommit = true, want false")
+	}
+
+	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	if headAfter == headBefore {
+		t.Error("expected a new close commit; HEAD did not advance")
+	}
+}
+
 // strPtr is defined in update_test.go (package-level helper).
