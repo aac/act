@@ -34,25 +34,30 @@ func main() {
 	// list) plug in here.
 	if sub == "dep" {
 		if len(os.Args) < 3 {
-			// Pre-flag-parse usage error: there's no chance to read --json,
-			// so default to the human surface (stderr). Agents that pipe
-			// `act dep` with --json appended after `add` already have to
-			// dispatch through the verb branch below to see structured
-			// output, so this fallback is correct.
-			emitBadFlag(false, "act dep: usage: act dep <add> [args]")
+			// Bare `act dep` — surface the verb list, not "not implemented".
+			emitBadFlag(false, depUsageMsg())
 			os.Exit(2)
 		}
 		verb := os.Args[2]
 		rest := os.Args[3:]
+		// `act dep --help` / `act dep -h` / any flag-shaped first token
+		// route to the dep-level usage rather than the unknown-verb path,
+		// which would misleadingly say "act dep --help: not implemented yet".
+		if verb == "-h" || verb == "--help" || verb == "help" {
+			fmt.Fprintln(os.Stderr, depUsageMsg())
+			os.Exit(0)
+		}
+		if strings.HasPrefix(verb, "-") {
+			emitBadFlag(hasJSONFlag(rest), depUsageMsg())
+			os.Exit(2)
+		}
 		switch verb {
 		case "add":
 			os.Exit(runDepAdd(rest))
 		default:
-			// Same caveat as above: --json may live in `rest` but verb is
-			// unknown, so we cannot promise to honour it. Probe rest for a
-			// bare `--json` token to upgrade unknown-verb errors to the
-			// structured envelope, mirroring the rest of the CLI.
-			emitBadFlag(hasJSONFlag(rest), fmt.Sprintf("act dep %s: not implemented yet", verb))
+			// Unknown verb. --json may live in `rest`; honour it for the
+			// envelope, mirroring the rest of the CLI surface.
+			emitBadFlag(hasJSONFlag(rest), unknownDepVerbMsg(verb))
 			os.Exit(2)
 		}
 	}
@@ -98,7 +103,7 @@ func main() {
 	case "help":
 		os.Exit(runHelp(args))
 	default:
-		emitBadFlag(hasJSONFlag(args), fmt.Sprintf("act %s: not implemented yet", sub))
+		emitBadFlag(hasJSONFlag(args), unknownSubcommandMsg(sub))
 		os.Exit(2)
 	}
 }
@@ -106,6 +111,29 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
 	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, import, mcp")
+}
+
+// unknownSubcommandMsg returns the canonical "you typed a subcommand
+// I don't recognise" message. Distinct from "not implemented yet"
+// (which historically conflated unknown subcommands with stubs that
+// genuinely existed in plan but not in code) — for v0.1 the entire
+// subcommand surface is implemented, so any miss is a typo.
+func unknownSubcommandMsg(sub string) string {
+	return fmt.Sprintf("act: unknown subcommand %q; run 'act help' for the list", sub)
+}
+
+// depUsageMsg is the usage line shown when the dep family is invoked
+// without a verb or with a flag-shaped first token. Lists every
+// implemented verb so an agent knows what's available without
+// consulting docs.
+func depUsageMsg() string {
+	return "act dep: usage: act dep <verb> [args]\nverbs: add"
+}
+
+// unknownDepVerbMsg is the unknown-verb message under `act dep`,
+// kept in sync with unknownSubcommandMsg's tone.
+func unknownDepVerbMsg(verb string) string {
+	return fmt.Sprintf("act dep: unknown verb %q; run 'act dep --help' for the list", verb)
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
