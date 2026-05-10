@@ -35,6 +35,7 @@ func runCreate(args []string) int {
 	parent := fs.String("parent", "", "parent issue id (full or unique prefix)")
 	typ := fs.String("type", "task", "issue type (task|bug|epic|chore)")
 	description := fs.String("description", "", "issue description")
+	descriptionFile := fs.String("description-file", "", "read description from file (UTF-8); use - for stdin")
 	var accept stringSlice
 	fs.Var(&accept, "accept", "acceptance criterion (repeatable)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
@@ -53,6 +54,35 @@ func runCreate(args []string) int {
 		return 2
 	}
 	title := fs.Arg(0)
+
+	// --description-file is mutually exclusive with --description (per
+	// act-6bbd acceptance criterion). Both set ⇒ exit 2 before any I/O.
+	// Treat an empty --description as "user passed an empty string"
+	// only when fs.Visit reports it as set; otherwise the zero-value
+	// default does not collide with --description-file.
+	descSet := false
+	descFileSet := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "description":
+			descSet = true
+		case "description-file":
+			descFileSet = true
+		}
+	})
+	if descSet && descFileSet {
+		emitBadFlag(*asJSON, "act create: --description and --description-file are mutually exclusive")
+		return 2
+	}
+	if descFileSet {
+		body, code, errEnv := loadDescriptionFile(*descriptionFile)
+		if code != 0 {
+			errEnv["message"] = "act create: " + errEnv["message"].(string)
+			emitCreate(*asJSON, errEnv)
+			return code
+		}
+		*description = body
+	}
 
 	// Detect whether the user supplied -p/--priority so that an explicit
 	// -p 0 is propagated to the payload instead of being treated as unset.
