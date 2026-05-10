@@ -10,9 +10,15 @@ import (
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/fold"
+	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/ids"
 	"github.com/aac/act/internal/op"
 )
+
+// showCommitsLimit caps the number of work commits surfaced inline.
+// Typical issues land in 1–3 commits; a generous-but-not-noisy ceiling
+// keeps `act show` readable for outliers (review tasks, long refactors).
+const showCommitsLimit = 10
 
 // ShowOptions captures the flags accepted by `act show <id>`.
 type ShowOptions struct {
@@ -44,6 +50,11 @@ type ShowResult struct {
 	// presence of the `ops` key matches the flag exactly (an issue with
 	// zero ops never happens for a live id, but the contract is honest).
 	IncludeOps bool
+	// Commits is the list of work commits whose subject contains this
+	// issue's `(act-XXXX)` marker, most-recent-first, capped at
+	// showCommitsLimit. Empty (not nil) when the issue has no work commits
+	// or when the show was run outside a git working tree (act-9c8c).
+	Commits []gitops.WorkCommit
 }
 
 // ShowTombstoned is the success-shape returned by RunShow when the resolved
@@ -158,6 +169,17 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	}
 
 	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps}
+
+	// Step 6a: list work commits attributed to this issue via the
+	// `(act-XXXX)` marker. Read-side, no caching, single git invocation;
+	// best-effort — git failures here degrade to "no commits surfaced"
+	// rather than failing the whole show (act-9c8c).
+	if prefix4 := first4Hex(full); prefix4 != "" {
+		g := gitops.NewGitOps(repoRoot)
+		if commits, gerr := g.WorkCommitsForIssue(prefix4, showCommitsLimit); gerr == nil {
+			res.Commits = commits
+		}
+	}
 
 	// Step 7: optionally inline the op stream, sorted by HLC.
 	if opts.IncludeOps {
@@ -301,19 +323,45 @@ func formatShowFields(res ShowResult) string {
 	if closer, ok := f["closed_by_node"].(string); ok && closer != "" {
 		fmt.Fprintf(&b, "closed_by_node: %s\n", closer)
 	}
+	// Work commits attributed to this issue via the (act-XXXX) marker.
+	// Section omitted entirely when there are zero matches so issues
+	// closed without code (tracking issues, doc-only closes) don't carry
+	// an empty header (act-9c8c AC #4).
+	if len(res.Commits) > 0 {
+		fmt.Fprintf(&b, "commits:\n")
+		for _, c := range res.Commits {
+			fmt.Fprintf(&b, "  %s %s  %s\n", shortSHA(c.SHA), c.AuthorDate, c.Subject)
+		}
+	}
 	return b.String()
+}
+
+// shortSHA renders the first 7 hex chars of a 40-hex commit sha — the
+// canonical short form used by `git log --oneline`.
+func shortSHA(sha string) string {
+	if len(sha) < 7 {
+		return sha
+	}
+	return sha[:7]
 }
 
 // ShowJSON returns the JSON-shape map used by main.go to marshal a successful
 // ShowResult. The result is the rendered fields verbatim plus, when
 // IncludeOps is true, an `ops` key carrying the HLC-sorted envelope slice.
+// `commits` is always present (empty slice when none) so MCP consumers can
+// rely on the key existing (act-9c8c AC #4).
 func (r ShowResult) ShowJSON() map[string]any {
-	out := make(map[string]any, len(r.Fields)+1)
+	out := make(map[string]any, len(r.Fields)+2)
 	for k, v := range r.Fields {
 		out[k] = v
 	}
 	if r.IncludeOps {
 		out["ops"] = r.Ops
+	}
+	if r.Commits == nil {
+		out["commits"] = []gitops.WorkCommit{}
+	} else {
+		out["commits"] = r.Commits
 	}
 	return out
 }
@@ -324,3 +372,18 @@ func (r ShowResult) ShowJSON() map[string]any {
 // The compile-time reference below documents the dependency without
 // triggering a "declared but not used" warning.
 var _ = filepath.Separator
+
+// first4Hex returns the 4 hex characters after the "act-" prefix. Returns
+// "" for ids that don't start with "act-" or are too short. The 4-char
+// prefix is the doctor-grep key (act commit-marker invariants).
+func first4Hex(fullID string) string {
+	const prefix = "act-"
+	if !strings.HasPrefix(fullID, prefix) {
+		return ""
+	}
+	rest := fullID[len(prefix):]
+	if len(rest) < 4 {
+		return ""
+	}
+	return rest[:4]
+}
