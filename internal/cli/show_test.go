@@ -204,9 +204,12 @@ func TestRunShow_ShortPrefixAmbiguous(t *testing.T) {
 	writeOpFile(t, root, b, "2026-04", "b.json")
 
 	// "ab" prefix matches both — must surface id_ambiguous, not not_found.
+	// Exit 2 (usage error) per spec-v2.md universal exit-code table — see
+	// act-8dcd. The TestRunShow_ShortPrefixAmbiguous test was added by
+	// act-6fca's agent off pre-8dcd main and asserted the old exit 3.
 	out, code := RunShow(root, ShowOptions{ID: "ab"})
-	if code != 3 {
-		t.Fatalf("exit code = %d, want 3", code)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
 	}
 	e, ok := out.(ShowErrorOutput)
 	if !ok {
