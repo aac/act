@@ -242,6 +242,92 @@ func TestRunReady_BlockerSemanticsUnchanged(t *testing.T) {
 	}
 }
 
+// TestRunReady_AssigneeFilter asserts the --mine / --as filter restricts the
+// ready set to issues whose assignee equals the supplied string. Regression
+// coverage for act-c93b.
+func TestRunReady_AssigneeFilter(t *testing.T) {
+	root := makeRepoWithAct(t)
+	// Three open ready issues: one claimed by us, one claimed by another node,
+	// one unclaimed. Filter by our id should yield 1; by the other id, 1; by
+	// a third id, 0; with empty filter (status quo), 3.
+	seedIssueWithParent(t, root, "act-1aaa00000000aaaa", "mine-claimed", "task", "", 1, 1700000000000, "2026-04")
+	seedIssueWithParent(t, root, "act-2bbb00000000bbbb", "other-claimed", "task", "", 1, 1700000010000, "2026-04")
+	seedIssueWithParent(t, root, "act-3ccc00000000cccc", "unclaimed", "task", "", 1, 1700000020000, "2026-04")
+	// Note: claim sets status=in_progress, which (after act-d79b) excludes the
+	// issue from the ready candidate set. So instead we set assignee directly
+	// via an update_field op while leaving status=open. This isolates the
+	// AssigneeFilter logic from the status-filter logic.
+	seedAssignee(t, root, "act-1aaa00000000aaaa", "node-self", 1700000030000, 0, "2026-04")
+	seedAssignee(t, root, "act-2bbb00000000bbbb", "node-other", 1700000040000, 0, "2026-04")
+
+	// Empty filter: all 3 surface.
+	out, code := RunReady(root, ReadyOptions{})
+	if code != 0 {
+		t.Fatalf("empty filter: code=%d, out=%+v", code, out)
+	}
+	if got := out.(ReadyResult).Count; got != 3 {
+		t.Errorf("empty filter: count=%d, want 3", got)
+	}
+
+	// Filter by node-self: 1.
+	out, code = RunReady(root, ReadyOptions{AssigneeFilter: "node-self"})
+	if code != 0 || out.(ReadyResult).Count != 1 || out.(ReadyResult).Ready[0].ID != "act-1aaa00000000aaaa" {
+		t.Errorf("self filter: code=%d ready=%+v; want 1 issue act-1aaa...", code, out.(ReadyResult).Ready)
+	}
+
+	// Filter by node-other: 1.
+	out, code = RunReady(root, ReadyOptions{AssigneeFilter: "node-other"})
+	if code != 0 || out.(ReadyResult).Count != 1 || out.(ReadyResult).Ready[0].ID != "act-2bbb00000000bbbb" {
+		t.Errorf("other filter: code=%d ready=%+v; want 1 issue act-2bbb...", code, out.(ReadyResult).Ready)
+	}
+
+	// Filter by an id with no claims: 0.
+	out, code = RunReady(root, ReadyOptions{AssigneeFilter: "node-nobody"})
+	if code != 0 || out.(ReadyResult).Count != 0 {
+		t.Errorf("nobody filter: code=%d ready=%+v; want 0", code, out.(ReadyResult).Ready)
+	}
+}
+
+// seedAssignee writes an update_field op setting issue assignee. Used by
+// AssigneeFilter tests where we want the assignee set without flipping
+// status to in_progress (which would exclude from the ready candidate set
+// per act-d79b).
+func seedAssignee(t *testing.T, root, id, assignee string, wallMs int64, logical int, monthDir string) {
+	t.Helper()
+	valBytes, _ := json.Marshal(assignee)
+	pl := op.UpdateFieldPayload{Field: "assignee", Value: valBytes}
+	body, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal update_field payload: %v", err)
+	}
+	env := op.Envelope{
+		OpVersion:     op.CurrentOpVersion,
+		SchemaVersion: op.CurrentSchemaVersion,
+		WriterVersion: op.WriterVersion,
+		OpType:        "update_field",
+		IssueID:       id,
+		Payload:       body,
+		HLC: hlc.HLC{
+			Wall:    wallMs,
+			Logical: uint32(logical),
+			NodeID:  "0123abcd",
+		},
+		NodeID: "0123abcd",
+	}
+	envBody, err := env.Marshal()
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	dir := filepath.Join(root, ".act", "ops", id, monthDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, id+"-update-assignee.json")
+	if err := os.WriteFile(path, envBody, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 // TestRunReady_BlocksFiltersBlockedIssues seeds A blocked by B (open). Only
 // B should be ready. After closing B, A becomes ready as well.
 func TestRunReady_BlocksFiltersBlockedIssues(t *testing.T) {

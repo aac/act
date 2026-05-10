@@ -111,9 +111,14 @@ DEEPER DIVES
   act <subcommand> --help   # flag reference for any subcommand
 
   Subcommands:
-    init version log list search ready show
+    init version log list search ready mine show
     create close reopen delete update redact
     dep add doctor import mcp
+
+  'act mine' lists issues currently assigned to your node that are
+  in_progress or blocked. 'act ready --mine' filters the ready queue
+  to issues already assigned to you. Both default to identity from
+  .act/config.json node_id; --as <id> overrides.
 `
 
 const helpWorkflow = `act — workflow
