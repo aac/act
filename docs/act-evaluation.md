@@ -68,6 +68,12 @@ Mitigation paths (act-6018 tracks this):
 
 Recommendation: implement (1) behind a flag; default current behavior in dogfood/dev mode, default bundling in production mode. Beads-via-Dolt sidesteps this entirely because Dolt commits transactions, not per-row changes — that's the structural difference most worth borrowing the idea of.
 
+## Skill activation validated (2026-05-10)
+
+After the global skill at `~/.claude/skills/act/SKILL.md` shipped, a fresh sub-agent in a brand-new `/tmp/skill-test` repo (just `.act/` + the binary, no `CLAUDE.md`) was given a deliberately generic prompt — "look around, figure out how this project tracks work, complete the next thing." It self-bootstrapped: spotted `.act/`, triggered the skill, ran `act help`, walked the canonical loop end-to-end, committed with the marker, closed cleanly.
+
+The "drop into any repo" promise from the skill design holds up empirically. One harness wrinkle (Claude Code's auto-mode policy blocks `git push origin main` even when the loop authorizes it) is filed as `act-e5b8` — a small skill addendum advising the `.claude/settings.json` allow-rule.
+
 ## Honest readiness read
 
 **Yes for alpha trial in a small personal repo.** The named adoption blockers are gone; the workflow loop survives cold-start agents; the architecture is correct in the cases that matter for solo-to-small-multi-agent use.
