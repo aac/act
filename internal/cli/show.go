@@ -189,6 +189,38 @@ func FormatShowHuman(res any) string {
 	return ""
 }
 
+// truncateForShow renders a description for human-mode show output. Caps
+// at 400 chars or 5 lines (whichever hits first), appending an explicit
+// '… (truncated; see --json)' marker so the reader knows there's more.
+// Single-line short descriptions pass through unchanged.
+func truncateForShow(desc string) string {
+	const maxChars = 400
+	const maxLines = 5
+	const marker = "… (truncated; see --json for full text)"
+
+	// Single-line, short → pass through.
+	if !strings.Contains(desc, "\n") && len(desc) <= maxChars {
+		return desc
+	}
+	// Multi-line: indent continuation lines so the block is visibly part
+	// of the description value, not a sibling field.
+	lines := strings.Split(desc, "\n")
+	truncated := false
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		truncated = true
+	}
+	body := strings.Join(lines, "\n  ")
+	if len(body) > maxChars {
+		body = body[:maxChars]
+		truncated = true
+	}
+	if truncated {
+		body = body + "\n  " + marker
+	}
+	return body
+}
+
 // formatShowFields renders the rendered-state map as a multi-line key/value
 // summary. Field ordering is fixed so test assertions are deterministic.
 func formatShowFields(res ShowResult) string {
@@ -196,6 +228,13 @@ func formatShowFields(res ShowResult) string {
 	var b strings.Builder
 	if id, ok := f["id"].(string); ok {
 		fmt.Fprintf(&b, "id: %s\n", id)
+	}
+	// commit_marker is the canonical (act-XXXX) string an agent should
+	// embed in their work-commit message. Render it next to id so it's
+	// readable at a glance in act show. Skip on tombstoned issues
+	// (handled by ShowTombstoned branch above).
+	if id, ok := f["id"].(string); ok && id != "" {
+		fmt.Fprintf(&b, "commit_marker: (%s)\n", ShortIssueID(id))
 	}
 	if title, ok := f["title"].(string); ok {
 		fmt.Fprintf(&b, "title: %s\n", title)
@@ -214,6 +253,13 @@ func formatShowFields(res ShowResult) string {
 	}
 	if parent, ok := f["parent"].(string); ok && parent != "" {
 		fmt.Fprintf(&b, "parent: %s\n", parent)
+	}
+	// description: render in human mode with truncation guard (was
+	// hidden in v0.1 — agents reached for show --json | jq for routine
+	// reads; act-10f7). Long descriptions truncate at 5 lines or 400
+	// chars; use --json for the full text.
+	if desc, ok := f["description"].(string); ok && desc != "" {
+		fmt.Fprintf(&b, "description: %s\n", truncateForShow(desc))
 	}
 	if accept, ok := f["accept"]; ok {
 		switch a := accept.(type) {

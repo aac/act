@@ -120,6 +120,68 @@ func makeShowRedactEnv(t *testing.T, id string, wallMs int64, logical uint32, fi
 	}
 }
 
+// TestFormatShowHuman_CommitMarkerAndDescription asserts the show text mode
+// renders commit_marker (the canonical (act-XXXX) string) and description
+// (with truncation for long values). Regression coverage for act-10f7;
+// these fields were JSON-only in v0.1, forcing agents to reach for jq.
+func TestFormatShowHuman_CommitMarkerAndDescription(t *testing.T) {
+	res := ShowResult{Fields: map[string]any{
+		"id":          "act-1234567890abcdef",
+		"title":       "demo",
+		"status":      "open",
+		"priority":    1,
+		"type":        "task",
+		"description": "first line\nsecond line\nthird line",
+	}}
+	out := FormatShowHuman(res)
+
+	if !strings.Contains(out, "commit_marker: (act-1234)") {
+		t.Errorf("missing commit_marker line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "description: first line") {
+		t.Errorf("missing description line; got:\n%s", out)
+	}
+	// Multi-line descriptions: continuation lines must be indented so the
+	// block is visibly part of the description value, not sibling fields.
+	if !strings.Contains(out, "  second line") {
+		t.Errorf("multi-line description not indented; got:\n%s", out)
+	}
+}
+
+func TestFormatShowHuman_TruncatesLongDescription(t *testing.T) {
+	long := strings.Repeat("a really verbose paragraph that goes on and on and on. ", 50)
+	res := ShowResult{Fields: map[string]any{
+		"id":          "act-1234567890abcdef",
+		"title":       "demo",
+		"status":      "open",
+		"priority":    1,
+		"type":        "task",
+		"description": long,
+	}}
+	out := FormatShowHuman(res)
+	if !strings.Contains(out, "(truncated; see --json") {
+		t.Errorf("long description should be truncated with marker; got:\n%s", out)
+	}
+}
+
+func TestFormatShowHuman_ShortDescriptionPassthrough(t *testing.T) {
+	res := ShowResult{Fields: map[string]any{
+		"id":          "act-1234567890abcdef",
+		"title":       "demo",
+		"status":      "open",
+		"priority":    1,
+		"type":        "task",
+		"description": "short",
+	}}
+	out := FormatShowHuman(res)
+	if strings.Contains(out, "(truncated") {
+		t.Errorf("short description should not be truncated; got:\n%s", out)
+	}
+	if !strings.Contains(out, "description: short") {
+		t.Errorf("short description missing; got:\n%s", out)
+	}
+}
+
 func TestRunShow_HappyPath(t *testing.T) {
 	root := makeRepoWithAct(t)
 
