@@ -25,11 +25,11 @@ type HLCState struct {
 // BundleStrategy controls when act-op files are committed to git.
 //
 //   - "per_op"      — every op write auto-commits immediately (original behavior;
-//                     default for repos initialized before this feature).
+//     default for repos initialized before this feature).
 //   - "per_session" — claim and close auto-commit/push; all other ops written
-//                     during a claim→close window ride the close commit (deferred).
-//                     Ops written outside a claim→close window auto-commit as today.
-//                     Default for newly-initialized repos.
+//     during a claim→close window ride the close commit (deferred).
+//     Ops written outside a claim→close window auto-commit as today.
+//     Default for newly-initialized repos.
 const (
 	BundleStrategyPerOp      = "per_op"
 	BundleStrategyPerSession = "per_session"
