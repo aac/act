@@ -24,11 +24,10 @@ func TestResolvePrefix_AmbiguousReportsCandidates(t *testing.T) {
 	root := makeRepoWithAct(t)
 
 	// Three issues whose hex tails all start with the 4-hex prefix
-	// "8abc". `ResolvePrefix` requires a hex prefix of at least
-	// MinShortHexLen (=4) characters before it considers a match (a
-	// 1-2 char "prefix" would be reported as not_found, not ambiguous,
-	// to keep the disambiguation surface bounded). With a 4-char prefix
-	// shared by all three issues, the resolver MUST report ambiguous.
+	// "8abc". With the prefix "8abc" shared by all three issues the
+	// resolver MUST report ambiguous. Note: after act-6fca, shorter
+	// prefixes like "8a" also report ambiguous (not not_found) when they
+	// match multiple issues; MinInputHexLen=1 is the only floor.
 	envA := makeShowCreateEnv(t, "act-8abc1234", 1700000000000, 0, "alpha")
 	envB := makeShowCreateEnv(t, "act-8abc5678", 1700000000001, 0, "bravo")
 	envC := makeShowCreateEnv(t, "act-8abcfeed", 1700000000002, 0, "charlie")
