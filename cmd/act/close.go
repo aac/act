@@ -16,8 +16,8 @@ func runClose(args []string) int {
 	fs := flag.NewFlagSet("close", flag.ContinueOnError)
 	reason := fs.String("reason", "", "closed reason (stored as closed_reason; max 500 bytes — see 'act help workflow' for cap rationale)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
-	push := fs.Bool("push", false, "push after the commit")
+	noCommit := fs.Bool("no-commit", false, "write op file but skip staging and the auto-commit")
+	push := fs.Bool("push", false, "push after the commit (errors if the close stays staged for the agent's next commit)")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
