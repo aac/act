@@ -169,6 +169,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		var amb *ids.ErrAmbiguousID
 		if errors.As(rerr, &amb) {
 			candidates := amb.Candidates()
+			// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
 			return DeleteErrorOutput{
 				Error:   "id_ambiguous",
 				Message: fmt.Sprintf("act delete: prefix %q matches %d issues", opts.ID, len(candidates)),
@@ -177,7 +178,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 					"candidates": candidates,
 				},
 				Candidates: candidates,
-			}, 3
+			}, 2
 		}
 		return DeleteErrorOutput{
 			Error:   "issue_not_found",

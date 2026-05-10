@@ -14,11 +14,12 @@ import (
 // sharing a prefix that satisfies the MinShortHexLen=4 floor) and asserts
 // both the in-process envelope and the on-the-wire JSON shape.
 //
-// Exit code: per the spec's universal error table (§1 "Error handling"),
-// `id_ambiguous` lives at exit 3. The older per-section text at line 529
-// said exit 2; we follow the universal table for both `id_ambiguous` and
-// `issue_not_found` because consistency between two near-identical id
-// failures lets agents handle them with a single branch.
+// Exit code: per the spec's universal exit-code table (§"Universal exit
+// codes", lines 515-519) and §"Pre-import id resolution" (line 529),
+// `id_ambiguous` is a usage error → exit 2 (the caller supplied a
+// non-unique argument). `issue_not_found` stays at exit 3 (environment
+// error: the world doesn't contain what was asked for). The two cases
+// intentionally diverge — see resolve_helpers.go and act-8dcd.
 func TestResolvePrefix_AmbiguousReportsCandidates(t *testing.T) {
 	root := makeRepoWithAct(t)
 
@@ -37,8 +38,8 @@ func TestResolvePrefix_AmbiguousReportsCandidates(t *testing.T) {
 
 	// `act show act-8abc` -------------------------------------------------
 	out, code := RunShow(root, ShowOptions{ID: "act-8abc"})
-	if code != 3 {
-		t.Fatalf("show: exit code = %d, want 3", code)
+	if code != 2 {
+		t.Fatalf("show: exit code = %d, want 2 (id_ambiguous is a usage error)", code)
 	}
 	e, ok := out.(ShowErrorOutput)
 	if !ok {
@@ -88,8 +89,8 @@ func TestResolvePrefix_AmbiguousReportsCandidates(t *testing.T) {
 
 	// `act log act-8abc` --------------------------------------------------
 	lout, lcode := RunLog(root, "act-8abc", false)
-	if lcode != 3 {
-		t.Fatalf("log: exit code = %d, want 3", lcode)
+	if lcode != 2 {
+		t.Fatalf("log: exit code = %d, want 2 (id_ambiguous is a usage error)", lcode)
 	}
 	le, ok := lout.(LogErrorOutput)
 	if !ok {
