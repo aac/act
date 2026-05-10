@@ -242,6 +242,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		var amb *ids.ErrAmbiguousID
 		if errors.As(rerr, &amb) {
 			candidates := amb.Candidates()
+			// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
 			return UpdateErrorOutput{
 				Error:   "id_ambiguous",
 				Message: fmt.Sprintf("act update: prefix %q matches %d issues", opts.ID, len(candidates)),
@@ -250,7 +251,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 					"candidates": candidates,
 				},
 				Candidates: candidates,
-			}, 3
+			}, 2
 		}
 		return UpdateErrorOutput{
 			Error:   "issue_not_found",
@@ -586,7 +587,8 @@ func resolveDepIDForUpdate(arg string, knownIDs []string) (string, int, any) {
 	var amb *ids.ErrAmbiguousID
 	if errors.As(rerr, &amb) {
 		candidates := amb.Candidates()
-		return "", 3, UpdateErrorOutput{
+		// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
+		return "", 2, UpdateErrorOutput{
 			Error:   "id_ambiguous",
 			Message: fmt.Sprintf("act update: --dep-rm %q matches %d issues", arg, len(candidates)),
 			Details: map[string]any{
