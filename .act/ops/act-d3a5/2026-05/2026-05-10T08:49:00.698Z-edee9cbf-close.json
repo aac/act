@@ -1,0 +1,1 @@
+{"hlc":{"logical":0,"node_id":"4397b575","wall":"2026-05-10T08:49:00.698Z"},"issue_id":"act-d3a5","node_id":"4397b575","op_type":"close","op_version":1,"payload":{"reason":"canonicalised act-op: (act-XXXX) <op_type>; killed [:4] truncation and act-act- double-prefix; doctor grep unchanged"},"schema_version":1,"writer_version":"0.1.0"}
