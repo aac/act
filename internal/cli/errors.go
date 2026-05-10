@@ -20,8 +20,11 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+
+	"github.com/aac/act/internal/hooks"
 )
 
 // Error code slugs. The first block matches the spec table verbatim; the
@@ -260,4 +263,68 @@ func Emit(env Envelope, asJSON bool, stdout, stderr io.Writer) {
 	if env.Error != "" {
 		fmt.Fprintln(stderr, env.Error)
 	}
+}
+
+// hookStderrExcerptLines is the number of trailing stderr lines surfaced
+// inline in the human message. The full StderrTail (up to MaxStderrTail
+// bytes) still lands in Details["hook_stderr"] so JSON consumers get the
+// complete diagnostic.
+const hookStderrExcerptLines = 10
+
+// HookFailureDetails extracts a structured envelope from an error returned
+// by a write-op path that ran a hook. When err wraps *hooks.HookFailedError
+// (which carries the hook's exit code + last 4096 bytes of its stderr),
+// the human Message includes the last hookStderrExcerptLines of that
+// stderr so the user can diagnose without re-running the hook, and the
+// returned details map carries hook_stderr / hook_exit_code /
+// hook_truncated for JSON consumers. isHookFailure==false means err was
+// not a HookFailedError; callers should fall back to err.Error() under
+// their existing error code.
+func HookFailureDetails(err error) (message string, details map[string]any, isHookFailure bool) {
+	var herr *hooks.HookFailedError
+	if !errors.As(err, &herr) {
+		return err.Error(), nil, false
+	}
+	details = map[string]any{
+		"hook_exit_code": herr.Code,
+		"hook_truncated": herr.Truncated,
+	}
+	tail := herr.StderrTail
+	if tail != "" {
+		details["hook_stderr"] = tail
+	}
+	excerpt := lastLines(tail, hookStderrExcerptLines)
+	if excerpt == "" {
+		return fmt.Sprintf("hook exited %d", herr.Code), details, true
+	}
+	return fmt.Sprintf("hook exited %d:\n%s", herr.Code, excerpt), details, true
+}
+
+// lastLines returns the last n lines of s, joined by '\n'. Trailing newlines
+// in s are trimmed before splitting so the excerpt never has a hanging blank
+// line. If s has ≤ n lines, all lines are returned. Empty s → empty result.
+func lastLines(s string, n int) string {
+	if s == "" || n <= 0 {
+		return ""
+	}
+	// Trim a single trailing newline so a hook that ends its stderr with
+	// "\n" doesn't produce a phantom empty last line.
+	for len(s) > 0 && s[len(s)-1] == '\n' {
+		s = s[:len(s)-1]
+	}
+	if s == "" {
+		return ""
+	}
+	// Walk backward counting newlines; cheaper than splitting + slicing
+	// and avoids a strings dependency consistent with indexLast above.
+	count := 0
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '\n' {
+			count++
+			if count == n {
+				return s[i+1:]
+			}
+		}
+	}
+	return s
 }
