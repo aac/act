@@ -26,7 +26,7 @@ func makeRepo(t *testing.T) string {
 
 func TestRunInit_HappyPath(t *testing.T) {
 	root := makeRepo(t)
-	out, code := RunInit(root, false, "machine-abc", "alice@example.com",
+	out, code := RunInit(root, false, false, "machine-abc", "alice@example.com",
 		fakeNow(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)))
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
@@ -84,7 +84,7 @@ func TestRunInit_NoGit(t *testing.T) {
 	if hasGitDir(root) {
 		t.Skip("test host has .git/ on an ancestor of the temp dir")
 	}
-	out, code := RunInit(root, false, "m", "e", nil)
+	out, code := RunInit(root, false, false, "m", "e", nil)
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3", code)
 	}
@@ -99,10 +99,10 @@ func TestRunInit_NoGit(t *testing.T) {
 
 func TestRunInit_RejectsReinitWithoutForce(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, false, false, "m", "e", nil); code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
-	out, code := RunInit(root, false, "m", "e", nil)
+	out, code := RunInit(root, false, false, "m", "e", nil)
 	if code != 1 {
 		t.Fatalf("second init code = %d, want 1", code)
 	}
@@ -118,12 +118,12 @@ func TestRunInit_RejectsReinitWithoutForce(t *testing.T) {
 func TestRunInit_ForceReinitOverwrites(t *testing.T) {
 	root := makeRepo(t)
 	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, code := RunInit(root, false, "m", "e", fakeNow(t1)); code != 0 {
+	if _, code := RunInit(root, false, false, "m", "e", fakeNow(t1)); code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
 
 	t2 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	_, code := RunInit(root, true, "m2", "e2", fakeNow(t2))
+	_, code := RunInit(root, true, false, "m2", "e2", fakeNow(t2))
 	if code != 0 {
 		t.Fatalf("force re-init code = %d, want 0", code)
 	}
@@ -142,7 +142,7 @@ func TestRunInit_ForceReinitOverwrites(t *testing.T) {
 
 func TestRunInit_GitignoreAppendIdempotent(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, false, false, "m", "e", nil); code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
 	gi := filepath.Join(root, ".gitignore")
@@ -155,7 +155,7 @@ func TestRunInit_GitignoreAppendIdempotent(t *testing.T) {
 	}
 
 	// Second init with --force should not duplicate the entry.
-	if _, code := RunInit(root, true, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, true, false, "m", "e", nil); code != 0 {
 		t.Fatalf("second init code = %d", code)
 	}
 	second, err := os.ReadFile(gi)
@@ -173,7 +173,7 @@ func TestRunInit_GitignorePreservesExisting(t *testing.T) {
 	if err := os.WriteFile(gi, []byte("node_modules/\n"), 0o644); err != nil {
 		t.Fatalf("seed gitignore: %v", err)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, false, false, "m", "e", nil); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	got, err := os.ReadFile(gi)
@@ -190,7 +190,7 @@ func TestRunInit_GitignorePreservesExisting(t *testing.T) {
 
 func TestRunInit_OutputJSONShape(t *testing.T) {
 	root := makeRepo(t)
-	out, code := RunInit(root, false, "m", "alice@example.com", nil)
+	out, code := RunInit(root, false, false, "m", "alice@example.com", nil)
 	if code != 0 {
 		t.Fatalf("code = %d", code)
 	}
@@ -222,7 +222,7 @@ func TestRunInit_ErrorJSONShape(t *testing.T) {
 	if hasGitDir(root) {
 		t.Skip("temp dir has ancestor .git")
 	}
-	out, code := RunInit(root, false, "m", "e", nil)
+	out, code := RunInit(root, false, false, "m", "e", nil)
 	if code != 3 {
 		t.Fatalf("code = %d", code)
 	}

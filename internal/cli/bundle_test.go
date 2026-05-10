@@ -161,7 +161,7 @@ func TestNewRepoDefaultsToPerSession(t *testing.T) {
 	mustGit(t, root, "commit", "-q", "--no-verify", "-m", "init")
 
 	// Simulate `act init` using RunInit.
-	_, code := RunInit(root, false, "machine-1", "test@example.com", nil)
+	_, code := RunInit(root, false, false, "machine-1", "test@example.com", nil)
 	if code != 0 {
 		t.Fatalf("RunInit: code = %d", code)
 	}
