@@ -185,6 +185,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			var amb *ids.ErrAmbiguousID
 			if errors.As(rerr, &amb) {
 				candidates := amb.Candidates()
+				// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
 				return CreateErrorOutput{
 					Error:   "id_ambiguous",
 					Message: fmt.Sprintf("act create: --parent %q matches %d issues", opts.Parent, len(candidates)),
@@ -193,7 +194,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 						"candidates": candidates,
 					},
 					Candidates: candidates,
-				}, 3
+				}, 2
 			}
 			return CreateErrorOutput{
 				Error:   "issue_not_found",

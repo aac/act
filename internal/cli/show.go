@@ -73,7 +73,8 @@ type ShowErrorOutput struct {
 // Returns:
 //   - output: ShowResult on success, ShowTombstoned for a tombstoned issue,
 //     ShowErrorOutput on failure.
-//   - exitCode: 0 success; 3 missing .act/, unknown id, or ambiguous prefix.
+//   - exitCode: 0 success; 2 ambiguous prefix (usage); 3 missing .act/ or
+//     unknown id.
 func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	paths := config.Layout(repoRoot)
 
@@ -103,6 +104,8 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	full, ambiguous, found := ids.ResolvePrefix(allIDs, opts.ID)
 	if ambiguous {
 		candidates := ambiguousCandidates(allIDs, opts.ID)
+		// Exit 2 (usage): per spec universal-exit-code table, ambiguous
+		// prefix is a non-unique caller argument. See resolve_helpers.go.
 		return ShowErrorOutput{
 			Error:   "id_ambiguous",
 			Message: fmt.Sprintf("act show: prefix %q matches %d issues", opts.ID, len(candidates)),
@@ -111,7 +114,7 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 				"candidates": candidates,
 			},
 			Candidates: candidates,
-		}, 3
+		}, 2
 	}
 	if !found {
 		return ShowErrorOutput{

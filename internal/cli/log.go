@@ -38,7 +38,8 @@ type LogErrorOutput struct {
 //
 // Returns:
 //   - output: LogResult on success, LogErrorOutput on failure.
-//   - exitCode: 0 success; 3 missing .act/, unknown id, or ambiguous prefix.
+//   - exitCode: 0 success; 2 ambiguous prefix (usage); 3 missing .act/ or
+//     unknown id.
 func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int) {
 	_ = asJSON // reserved: asJSON shapes the human renderer in main.go, not here.
 
@@ -68,6 +69,7 @@ func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int)
 	full, ambiguous, found := ids.ResolvePrefix(allIDs, idOrPrefix)
 	if ambiguous {
 		candidates := ambiguousCandidates(allIDs, idOrPrefix)
+		// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
 		return LogErrorOutput{
 			Error:   "id_ambiguous",
 			Message: fmt.Sprintf("act log: prefix %q matches %d issues", idOrPrefix, len(candidates)),
@@ -76,7 +78,7 @@ func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int)
 				"candidates": candidates,
 			},
 			Candidates: candidates,
-		}, 3
+		}, 2
 	}
 	if !found {
 		return LogErrorOutput{
