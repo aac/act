@@ -538,6 +538,7 @@ func runShow(args []string) int {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	includeOps := fs.Bool("include-ops", false, "inline the HLC-sorted op stream alongside the snapshot")
+	commitMarker := fs.Bool("commit-marker", false, "emit just the (act-XXXX) commit-message marker for this issue and exit")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -546,7 +547,7 @@ func runShow(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		emitBadFlag(*asJSON, "act show: usage: act show <id> [--json] [--include-ops]")
+		emitBadFlag(*asJSON, "act show: usage: act show <id> [--json] [--include-ops] [--commit-marker]")
 		return 2
 	}
 	idArg := fs.Arg(0)
@@ -569,6 +570,29 @@ func runShow(args []string) int {
 		m, _ := toMap(out)
 		emitShowError(*asJSON, m)
 		return code
+	}
+
+	// --commit-marker emits just the (act-XXXX) marker string the caller
+	// can paste into a work-commit message. Tombstoned issues have no
+	// commit marker (the issue is gone), so we surface a clear error.
+	if *commitMarker {
+		switch v := out.(type) {
+		case cli.ShowResult:
+			short, _ := v.Fields["short_id"].(string)
+			if short == "" {
+				if id, ok := v.Fields["id"].(string); ok {
+					short = id
+				}
+			}
+			fmt.Println("(" + short + ")")
+			return 0
+		case cli.ShowTombstoned:
+			emitShowError(*asJSON, map[string]any{
+				"error":   "tombstoned",
+				"message": fmt.Sprintf("act show: %s is tombstoned; no commit marker", v.ID),
+			})
+			return 3
+		}
 	}
 
 	if *asJSON {
