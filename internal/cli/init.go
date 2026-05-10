@@ -72,10 +72,11 @@ func RunInit(repoRoot string, force bool, machineID, gitEmail string, now func()
 	}
 
 	cfg := config.Config{
-		NodeID:    nodeID,
-		CreatedAt: now().UTC().Format(rfc3339Millis),
-		Version:   writerVersion,
-		LastHLC:   config.HLCState{},
+		NodeID:         nodeID,
+		BundleStrategy: config.BundleStrategyPerSession,
+		CreatedAt:      now().UTC().Format(rfc3339Millis),
+		Version:        writerVersion,
+		LastHLC:        config.HLCState{},
 	}
 	if err := config.WriteConfig(paths, cfg); err != nil {
 		return errorOutput{

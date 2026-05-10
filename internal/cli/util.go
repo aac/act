@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/gitops"
+	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/hooks"
 	"github.com/aac/act/internal/ids"
 	"github.com/aac/act/internal/index"
@@ -290,6 +293,80 @@ func RefreshIndexForIssue(paths config.LayoutPaths, issueID string) error {
 		return fmt.Errorf("cli: refresh index: upsert %s: %w", issueID, err)
 	}
 	return nil
+}
+
+// InClaimWindowForNode reports whether the given issue currently has an active
+// claim from the given nodeID, meaning a claim op from this node exists and no
+// close op has been written since that claim.
+//
+// Detection algorithm: walk all op files for the issue. Find the latest close
+// HLC (if any). Then check for any claim op from nodeID with HLC strictly
+// greater than the latest close. If found, the issue is in an active claim
+// window for this node.
+//
+// Returns (true, nil) when in a claim window, (false, nil) when not, and
+// (false, err) on a read/parse error. Missing issue dir returns (false, nil).
+func InClaimWindowForNode(opsDir, issueID, nodeID string) (bool, error) {
+	pattern := filepath.Join(opsDir, issueID, "*", "*.json")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return false, fmt.Errorf("cli: glob ops for %s: %w", issueID, err)
+	}
+
+	var latestCloseHLC hlc.HLC
+	haveClose := false
+	var claimHLC hlc.HLC
+	haveClaim := false
+
+	for _, path := range matches {
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return false, fmt.Errorf("cli: read op %s: %w", path, rerr)
+		}
+		env, uerr := op.Unmarshal(body)
+		if uerr != nil {
+			continue // skip unparseable files; fold does the same
+		}
+		switch env.OpType {
+		case "close":
+			if !haveClose || latestCloseHLC.Less(env.HLC) {
+				latestCloseHLC = env.HLC
+				haveClose = true
+			}
+		case "claim":
+			var p op.ClaimPayload
+			if jerr := json.Unmarshal(env.Payload, &p); jerr != nil {
+				continue
+			}
+			if p.Assignee != nodeID {
+				continue
+			}
+			if !haveClaim || claimHLC.Less(env.HLC) {
+				claimHLC = env.HLC
+				haveClaim = true
+			}
+		}
+	}
+
+	if !haveClaim {
+		return false, nil
+	}
+	// A claim exists from our node; check that no close has happened
+	// after it.
+	if haveClose && !latestCloseHLC.Less(claimHLC) {
+		// latestCloseHLC >= claimHLC: the claim is closed
+		return false, nil
+	}
+	return true, nil
+}
+
+// ListPendingOpFilesForIssue returns all untracked op files for a specific
+// issue under opsDir. Only files under .act/ops/<issueID>/ are returned.
+//
+// This is used by the per_session close path to collect the batch of
+// deferred op files for this issue that should be bundled into the close commit.
+func ListPendingOpFilesForIssue(repoRoot, opsDir, issueID string) ([]string, error) {
+	return runListPendingOpFilesForIssue(repoRoot, opsDir, issueID)
 }
 
 // unstage runs `git restore --staged <opPath>` via the gitops runner. The
