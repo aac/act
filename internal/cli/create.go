@@ -48,11 +48,20 @@ type CreateOptions struct {
 // CreateResult is the JSON shape returned on success. Field order is
 // irrelevant for the JSON encoder; the spec example renders id, prefix,
 // title, warnings (when present).
+// CreateResult is the JSON shape returned on success. Spec-v2.md §"act
+// create" mandates the {ok, id, prefix, op_id, committed, pushed} core;
+// title and warnings are additive (the spec doesn't forbid extras and
+// they're load-bearing for human-readable output and op-rejection
+// signaling).
 type CreateResult struct {
-	ID       string   `json:"id"`
-	ShortID  string   `json:"short_id"`
-	Title    string   `json:"title"`
-	Warnings []string `json:"warnings,omitempty"`
+	Ok        bool     `json:"ok"`
+	ID        string   `json:"id"`
+	Prefix    string   `json:"prefix"`
+	OpID      string   `json:"op_id"`
+	Committed bool     `json:"committed"`
+	Pushed    bool     `json:"pushed"`
+	Title     string   `json:"title"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // CreateErrorOutput is the structured shape returned on failure. Candidates
@@ -335,14 +344,21 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Step 8: success envelope. The short id mirrors the marker that
+	// Step 8: success envelope. Prefix mirrors the marker that
 	// BuildOpCommitMessage embeds in the auto-commit subject so doctor's
-	// orphan-close grep stays aligned with the JSON output.
+	// orphan-close grep stays aligned with the JSON output. op_id is the
+	// short hash form (env.Hash); for the full sha256, callers can refold
+	// the op file.
+	opID, _ := env.Hash()
 	return CreateResult{
-		ID:       issueID,
-		ShortID:  ShortIssueID(issueID),
-		Title:    opts.Title,
-		Warnings: warnings,
+		Ok:        true,
+		ID:        issueID,
+		Prefix:    ShortIssueID(issueID),
+		OpID:      opID,
+		Committed: !opts.NoCommit,
+		Pushed:    opts.Push && !opts.Isolated,
+		Title:     opts.Title,
+		Warnings:  warnings,
 	}, 0
 }
 
@@ -350,7 +366,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 // `Created <short> "<title>"\n`. A trailing newline is included so the
 // caller can pipe directly to stdout.
 func FormatCreateHuman(res CreateResult) string {
-	return fmt.Sprintf("Created %s %q\n", res.ShortID, res.Title)
+	return fmt.Sprintf("Created %s %q\n", res.Prefix, res.Title)
 }
 
 // parentIsClosed reports whether parentID resolves to a closed issue. It
