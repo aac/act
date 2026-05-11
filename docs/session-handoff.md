@@ -1,59 +1,80 @@
-# Session handoff — 2026-05-10 (night)
+# Session handoff — 2026-05-11
 
-Four close cycles. Bootstrap pitch documented (with one halt: the repo needs to flip public for the pitch to actually work for friends).
+This session was strategic design + processing the first alpha-trial dogfood result, not landing code in act. Predecessor handoff (2026-05-10 night) is in git history; its top-of-queue items are still open and rolled forward below.
 
-> **Quick read:** Shipped act-6051 (README + `act help` lead with `go install github.com/aac/act/cmd/act@latest`), act-c83a (hook stderr now surfaces in close/create/update/reopen error envelopes), act-c22b (rollback unstages only successfully-staged paths, with regression test), and act-9c8c (`act show` lists work commits attributed via the `(act-XXXX)` marker). Verification on act-6051 surfaced a precondition: the canonical pitch only works for friends once the aac/act repo is public + a fresh release tag is cut. Filed as **act-2204** (p=1) with explicit verification AC. Andrew said in conversation "maybe there's no reason for it to stay private right now" — that decision is the next gate before sharing.
+> **Quick read:** First real alpha trial of act ran in `~/Workspace/aac-website` — overnight Ralph Loop drained 23 issues across 20 iterations with 0 halts. Resulting meta-debrief produced 7 new act backlog issues (1 correctness gap + 6 UX), 5 sections of global act skill updates, 4 new process-learnings entries, and a parked design note (`docs/orchestration-design.md`) on Mode A vs Mode B and the orchestrator integration question. Top action when resuming: `act-5d6a` (worktree-subagent `--push` correctness gap) is the highest-leverage technical item from this session's batch; `act-2204` (flip repo public + cut release tag) remains the sharing gate from the predecessor session.
 
-## What landed this session
+## What happened this session
 
-- **act-6051 closed (0a006ed).** README rewritten: leads with `go install github.com/aac/act/cmd/act@latest && act init`. Status section refreshed (no longer "in progress"). Brew tap, prebuilt release, curl installer documented as alternates with their tradeoffs, not equally-promoted paths. `act help` got a matching `GETTING STARTED` section between WHAT THIS IS and THE CANONICAL WORK LOOP. Test (`TestRunHelpDefault`) asserts the section is present so README + help can't silently drift. AC #2 (end-to-end test from a fresh GOMODCACHE without auth) deferred to act-2204 — see "Bootstrap verification finding" below.
-- **act-c83a closed (facaf78).** New `HookFailureDetails` helper in `internal/cli/errors.go` extracts `*hooks.HookFailedError` into (human Message with last 10 stderr lines inline, Details map with full `hook_stderr` + `hook_exit_code` + `hook_truncated`). Wired into close.go's hook_failed path and create/update/reopen's write_failed split — hook failures now surface as `error: "hook_failed"` not `write_failed`, with the captured stderr available to JSON consumers. 7 new tests cover helper unit behavior + integration on close + create.
-- **act-c22b closed (7c95ead).** `WriteOpsAndAutoCommit` now tracks a `staged []string` slice separately from `written []string`; rollback unstages only paths that successfully passed `StageOpFile`. `runUnstage` indirected through a swappable `runUnstageFn` for testability. Two regression tests: commit-failure rollback unstages exactly the staged paths; ProbeAndWrite-failure on op 2 of 2 (triggered via shard-collision on a regular file masquerading as a directory) results in zero unstage calls — would have failed pre-fix.
-- **act-9c8c closed (ab70484).** New `gitops.WorkCommitsForIssue(prefix4, limit)` runs `git log --all --fixed-strings --grep='(act-<prefix4>'` and returns `[]WorkCommit{SHA, Subject, AuthorDate}`. `RunShow` populates `ShowResult.Commits` best-effort (git failure → empty, not error). Human renderer appends a `commits:` block when non-empty; `ShowJSON` always emits a `commits` key (empty array when none) so MCP consumers can rely on the key. Verified on this repo: `act show act-c83a` now displays facaf78 + the act-op claim/create commits inline.
+Two interleaved threads:
 
-## Bootstrap verification finding (act-2204)
+**1. Strategic design — act + orchestrator integration.** Wrote `docs/orchestration-design.md`. Maps act onto Anthropic's managed-agents abstractions (session/harness/sandbox), names the two operating modes (Mode A: standalone loop where act is its own harness; Mode B: external orchestrator drives act-as-session), identifies layered ownership (act owns work-unit + claim atomicity + op log; orchestrator owns lifecycle + environment + dispatch; project CLAUDE.md owns how-to-work conventions), proposes a halt-signal contract (`HALT:` note prefix + nonzero exit + issue stays `in_progress`), enumerates three test cases (aac-website code work, Cowork tasks, Plugin Library business processes), and sequences what to do now vs. defer. No code changes — design only.
 
-The canonical pitch in README and `act help` is `go install github.com/aac/act/cmd/act@latest`. Verification done two ways:
+**2. Dogfood processing.** A separate aac-website session ran the canonical loop overnight (Ralph Loop, 20 iterations, 23 closes, 0 halts). After `BACKLOG_DRAINED` it produced a meta-debrief (`docs/aac-website-dogfood-debrief.md`) covering where the skill creaked, review signal-to-noise, near-misses, CLI friction, and one wrong-in-skill thing. This session turned the debrief into concrete outputs:
 
-1. **From a fresh GOMODCACHE without auth** (what a friend's agent would have): FAILS. `sum.golang.org/lookup/github.com/aac/act@v0.1.0: 404 Not Found` because the proxy never mirrored a private module; falls back to `git ls-remote` which fails on the private repo with `terminal prompts disabled`.
-2. **With `GOPRIVATE=github.com/aac` + Andrew's git auth**: SUCCEEDS but installs `v0.1.0` from the proxy cache, which is **192 commits behind HEAD** as of c8ae75f. The cached binary is functional for `act init` / `create` / `ready` / `show` but missing every fix landed since (including act-8277's hook-resolver fix, the per_session bundling, all the act-c26a/c83a/c22b/9c8c work).
+- **7 new act backlog issues filed and pushed:**
+  - `act-5d6a` (p1, bug) — `--branch <ref>` for `create/update/close` to decouple op-writing from current working tree HEAD. Real correctness gap: a worktree subagent's `act create --push` landed ops on `origin/main` because `--push` follows branch tracking config, not commit target. Caused real damage in aac-website's `act-8808` (three op commits jumped ahead of work commit, required cherry-pick recovery).
+  - `act-3c89` (p2) — `act show --full` to disable truncation.
+  - `act-7ecd` (p2) — `act close --reason` validates length upfront, not on rejection.
+  - `act-4b45` (p2) — `act ready` columns include `assignee` and `claimed_at`.
+  - `act-f800` (p2) — `act log` needs `--since`, `--by-issue`, `--type` filters for retrospectives.
+  - `act-f2ea` (p2) — `act doctor` as part of close to verify commit-marker correlation.
+  - `act-dfa5` (p2, bug) — investigate why `per_session` bundling didn't collapse the close+commit two-step in aac-website (the agent ran it 15+ times during the loop). Either aac-website isn't on `per_session` (config gap → onboarding update) or there's a bundling logic gap.
 
-Conclusion: the README pitch is correct in shape, but actually working for a fresh agent in someone else's repo requires (a) flipping aac/act public so sum.golang.org can mirror the module, then (b) cutting a fresh release tag at or near HEAD so `@latest` resolves to current code. Both captured in act-2204 with verification AC: "From a fresh GOMODCACHE with no GOPRIVATE / no git auth, `go install …@latest` completes successfully."
+- **Global act skill updated** (`~/.claude/skills/act/SKILL.md`, 5 sections):
+  - Auto-mode caveat extended to cover `git merge --ff-only origin/worktree-*:*` and `git checkout main:*`, not just `git push origin main:*`. The aac-website loop tripped the classifier on the merge step even though `git push` was already whitelisted.
+  - Reviewer prompts upgraded from "should pin commit hash" to **MUST** include "I read commit X at paths Y" as the first line of output before any findings. A reviewer that can't actually read the diff produces confidence numbers calibrated against nothing — they are speculative findings dressed up as analysis. Real damage in aac-website's `act-a9d0`: reviewer couldn't read worktree blobs and confidently flagged concerns at 80%+ that the actual code already handled.
+  - Backlog-check generalized: required before any `act create` (mid-flight discovery, external-list translation, retrospective finding, anything), not just external-list translation.
+  - Worktree subagent `--push` trap warning added until `act-5d6a` lands, with three explicit workarounds.
+  - `bundle_strategy=per_session` referenced as the answer for projects that want quieter git history.
 
-Andrew's stance in conversation: "Do what you can while it's private, and do any other fixes we'd want to do before handing it to someone else. First thing we'll do is use it in another project on my machine. Unless there's no reason for it to stay private right now (which maybe there isn't). Making it public would let us do some stuff from CC on the web." Repo history is clean (no secrets in op-log JSON or docs).
+- **Andrew's `~/Workspace/knowledge/_guides/process-learnings.md` updated** (4 new entries):
+  - Assert at the user-visible boundary, not at a proxy for it.
+  - Repo-level guardrails are institutional memory.
+  - Don't claim verification of what you couldn't read.
+  - Check the backlog before filing.
 
-## Where things stand
+## Key artifacts produced (all under `docs/`)
 
-- Backlog: 16 ready (act-9c8c, act-c83a, act-c22b, act-6051 closed; act-2204 added).
-- Top of queue:
-  - **act-2204** (p=1, new) — flip aac/act public + cut fresh release tag. Andrew's call, blocking the canonical-pitch verification.
-  - **act-ff5c** (p=1) — doc-drift prevention process. Brainstorm-first; act-8277 (this session's predecessor's discovery) is exhibit A, the new `TestRunHelpDefault` assertion that the GETTING STARTED section exists is exhibit B.
-  - **act-8416** (p=1) — Cowork integration. Needs external context.
-  - **act-4fe6** (p=1) — CC Web integration. Needs external context. Would benefit from act-2204 landing first (fewer install-path workarounds to document).
-  - **act-b90e** (p=2) — version-control the act skill file. Untracked at `~/.claude/skills/act/` — relevant once we share, since the skill is half the install story for friends' agents.
-  - **act-e6a5** (p=2) — brew tap / curl installer. Currently documented as alternates; lower urgency now that go install is the canonical path.
-- All worktrees clean. CI green on origin/main (act-9c8c push: ab70484).
-- Two issues filed mid-session: act-2204 (this session) and act-c83a / act-c22b (last session, both closed this one).
+- `orchestration-design.md` — design synthesis (this session)
+- `aac-website-dogfood-debrief.md` — first alpha trial debrief (written by the aac-website session, lives here for cross-reference)
+
+Both are added to this commit.
+
+## Backlog state
+
+Top of queue includes predecessor items + this session's 7 additions. Run `act ready` for current actual ordering.
+
+**From predecessor (still open, unchanged):**
+- `act-2204` (p=1, blocking) — flip aac/act public + cut fresh release tag. The canonical-pitch verification gate. Andrew's call.
+- `act-ff5c` (p=1) — doc-drift prevention process. Brainstorm-first.
+- `act-b90e` (p=2 but probably p=1) — version-control the act skill file. Important for sharing; skill updates landed this session, making this more urgent.
+- `act-8416` (p=1) — Cowork integration. Needs external context.
+- `act-4fe6` (p=1) — CC Web integration. Needs external context. Benefits from act-2204 landing first.
+- `act-e6a5` (p=2) — brew tap / curl installer. Lower urgency now that go install is canonical.
+
+**From this session:**
+- `act-5d6a` (p=1, bug) — the highest-leverage technical item from this batch. Mode B prerequisite.
+- `act-3c89`, `act-7ecd`, `act-4b45`, `act-f800`, `act-f2ea`, `act-dfa5` (p=2) — small CLI improvements + the per_session investigation.
 
 ## What to look at first when resuming
 
-1. **Decide on act-2204.** This is the gate before any external sharing. Two questions: (a) Is there any reason aac/act should stay private? Conversation suggested "maybe there isn't." History review found nothing sensitive. (b) Once flipped, cut a fresh release tag — `git tag v0.2.0 && git push --tags` plus publishing the existing v0.1.0 draft release should be enough; sum.golang.org will mirror once the repo is public.
-2. **act-b90e is more important now than its p=2 suggests.** The README + `act help` pitch lands the binary, but the skill at `~/.claude/skills/act/SKILL.md` does the canonical-loop heavy lifting in agent sessions. If a friend's agent installs the binary but the skill doesn't auto-activate (because it's not version-controlled and doesn't ship with anything), the install-and-go promise breaks. Probably worth bumping to p=1 before sharing.
-3. **act-ff5c brainstorm.** The handoff before this one already framed the bar: "would this have caught act-8277 before merge?" The two doc-test patterns this session demonstrated (the `TestRunHelpDefault` assertion that GETTING STARTED is present, and the act-8277 predecessor's `TestResolveHookMatchesDocs`) are concrete examples of what good drift-prevention tests look like — the brainstorm should generalize from those.
-4. **act-8416 / act-4fe6** when ready to expand beyond Andrew's machine. Would benefit from act-2204 landing first.
+1. **`act-5d6a`** — highest-leverage technical work from this session's batch. Fixes the worktree-subagent op-targeting bug; required for Mode B to be robust. Could be the next dogfood loop's target if another act-on-act session runs.
+2. **`act-2204` still the sharing gate.** Andrew was deep in act work today but didn't make the public/release decision. Conversation in earlier sessions suggested "maybe there isn't a reason for it to stay private" — re-decide and act.
+3. **`act-dfa5` is a near-zero-cost check on the aac-website side.** Is the repo on `bundle_strategy=per_session` or not? Could be done by the aac-website session next time it's active. If yes → real bundling gap to fix in act. If no → config-onboarding gap to fix in the skill / `act init` default.
+4. **Non-code stress test of act parked** until Andrew sets up Plugin Library work. The orchestration-design note flags this as the strongest unresolved test of generality; aac-website only validated code work.
+5. **`act-b90e` worth promoting to p=1.** This session updated the global act skill significantly; the install-and-go promise depends on the skill being available to a friend's agent, and it currently isn't version-controlled.
 
-## Sharing readiness (Sasank / Corey / Andrew Widdowson)
+## Cross-references
 
-Same conclusion as last session, sharpened by the verification finding:
-
-- **First dogfood is Andrew on another of his own projects** — works today via `GOPRIVATE=github.com/aac/act go install …@latest` (gets stale v0.1.0) OR `git clone && go install ./cmd/act` (gets HEAD).
-- **For friends' agents**: blocked on act-2204. Once that lands, the README pitch works as written.
-- **Companion concern**: the `act` skill needs to be findable by a friend's agent (act-b90e). The README mentions the skill auto-activates "from a Claude Code session" — true on Andrew's machine where the skill is installed, untrue on someone else's machine until act-b90e lands and the skill is published somewhere agents can pull.
+- Predecessor handoff: in git history (`5713cae docs: session handoff captures act-6051 + 3 follow-ups + act-2204 finding`).
+- Orchestration design note: `docs/orchestration-design.md`
+- Dogfood debrief: `docs/aac-website-dogfood-debrief.md`
+- Global act skill (updated this session): `~/.claude/skills/act/SKILL.md`
+- Andrew's process-learnings: `~/Workspace/knowledge/_guides/process-learnings.md`
 
 ## Operational notes
 
-- `bin/act` current as of ab70484.
-- `act show <id>` now displays both work commits (the agent's `(act-XXXX)`-tagged commits) and act-op commits (claim / create / close auto-commits) inline. Useful: scanning `act show` post-close shows the full git surface for an issue at a glance.
-- Hook failures now surface stderr — running into a `gofmt drift` or test failure during close shows the trailing 10 lines of the hook's stderr in the error message instead of just `hook exited 1`.
-- `WriteOpsAndAutoCommit` rollback no longer redundantly unstages never-staged files. No user-visible change today (the spurious stderr was already suppressed) but the structural fix matters if anyone ever wires `cmd.Stderr` through the runner.
-- All session work in `main` (no worktrees). Sub-agents not used — work was tightly coupled around `internal/cli/`.
+- All session work outside the act repo, plus 7 `act create` calls inside it (+ their auto-commits, all pushed). No code touched in `internal/` or `cmd/`.
+- Auto-memory written from this session: `feedback_solo_repo_merge_policy.md` — for solo/personal repos with agent loops + in-session review, prefer direct ff-merge to main over GitHub PRs (PR review is theater in that context).
+- The aac-website session may still be running; its handoff was refreshed mid-loop and is stale relative to the rest of its closes. It'll refresh on its own when next active; not this session's job to refresh.
