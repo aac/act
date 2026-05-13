@@ -1,80 +1,73 @@
-# Session handoff — 2026-05-11
+# Session handoff — 2026-05-13
 
-This session was strategic design + processing the first alpha-trial dogfood result, not landing code in act. Predecessor handoff (2026-05-10 night) is in git history; its top-of-queue items are still open and rolled forward below.
+This session was a design-refinement pass: processed the sift/ alpha-trial output, did a long-form design discussion with Andrew about how the canonical loop interacts with the Claude Code auto-mode classifier, extended `docs/orchestration-design.md` with three new sections, ran a multi-modal review pass on those additions, and filed three derivatives. Predecessor handoff (2026-05-11) is in git history; its top-of-queue items are still open and rolled forward below.
 
-> **Quick read:** First real alpha trial of act ran in `~/Workspace/aac-website` — overnight Ralph Loop drained 23 issues across 20 iterations with 0 halts. Resulting meta-debrief produced 7 new act backlog issues (1 correctness gap + 6 UX), 5 sections of global act skill updates, 4 new process-learnings entries, and a parked design note (`docs/orchestration-design.md`) on Mode A vs Mode B and the orchestrator integration question. Top action when resuming: `act-5d6a` (worktree-subagent `--push` correctness gap) is the highest-leverage technical item from this session's batch; `act-2204` (flip repo public + cut release tag) remains the sharing gate from the predecessor session.
+> **Quick read:** sift/ ran an earlier act prompt and reported back two things: (1) it produced a clean 10-issue seeded backlog with PR #14 open, and (2) the act skill's "auto-mode caveat" section is wrong — Claude Code's auto-mode classifier rejects worker pushes to main regardless of the settings.json allowlist, because the classifier and the permissions system are independent gates. That triggered a design discussion: the cleanest fix is to stop having workers push to main at all and route integration through an *orchestrator role* (Claude Code with sub-agents is the reference impl available today; gas town on beads is another candidate; a future built-in could be a third). `docs/orchestration-design.md` got three new sections capturing this — Orchestrator implementations, push asymmetry in the worker kernel, and log noise as a control surface. Reviewed via three parallel subagents (`act-334e`); inline-resolved seven findings and filed three derivatives (`act-d264` branch-discovery, `act-b5f8` stale-claim recovery, `act-208e` orchestrator-scoped bundling). The session itself produced live evidence the design is correct — the auto-mode classifier blocked a push mid-session, exactly the failure mode the proposed skill change is designed to remove. Top action when resuming: execute "Do now" item 4 in `orchestration-design.md` — update the act skill's three named sections (canonical-loop step 7, worktree `--push` trap reframing, auto-mode caveat reduced cost) so the new framing lands. `act-2204` (publish + release tag) and `act-b90e` (version-control the skill) remain the sharing-gate items from earlier sessions.
 
 ## What happened this session
 
-Two interleaved threads:
+Three interleaved threads:
 
-**1. Strategic design — act + orchestrator integration.** Wrote `docs/orchestration-design.md`. Maps act onto Anthropic's managed-agents abstractions (session/harness/sandbox), names the two operating modes (Mode A: standalone loop where act is its own harness; Mode B: external orchestrator drives act-as-session), identifies layered ownership (act owns work-unit + claim atomicity + op log; orchestrator owns lifecycle + environment + dispatch; project CLAUDE.md owns how-to-work conventions), proposes a halt-signal contract (`HALT:` note prefix + nonzero exit + issue stays `in_progress`), enumerates three test cases (aac-website code work, Cowork tasks, Plugin Library business processes), and sequences what to do now vs. defer. No code changes — design only.
+**1. Processing the sift/ session output.** An earlier session's prompt was given to sift/ and produced a clean alpha-trial: `act init`, `.claude/settings.json` with the skill-recommended carveout, and 10 seeded issues. PR #14 is open in sift's repo, CI green, awaiting review. The session correctly stopped per instructions rather than running the loop. The meta-finding from that session was load-bearing: the settings allowlist did not actually opt the agent out of auto-mode's classifier — the classifier rejected the push with "bypasses PR review" reasoning regardless of the permission grant. Two independent gates, not one. The skill's claim that the settings entry is sufficient is out of date.
 
-**2. Dogfood processing.** A separate aac-website session ran the canonical loop overnight (Ralph Loop, 20 iterations, 23 closes, 0 halts). After `BACKLOG_DRAINED` it produced a meta-debrief (`docs/aac-website-dogfood-debrief.md`) covering where the skill creaked, review signal-to-noise, near-misses, CLI friction, and one wrong-in-skill thing. This session turned the debrief into concrete outputs:
+**2. Design discussion (Andrew + me, in conversation).** The implication of #1 is that the canonical act loop's "push after every close" step is at war with auto-mode in fresh projects. Two paths: drop the push-after-close property (loses multi-writer visibility) or stop having workers push to main and route integration through a separate orchestrator. We landed on the second: workers push to assigned branches; orchestrators handle main on their own cadence. The orchestrator is a *role*, not a specific tool — implementations include Claude Code with sub-agents (the parent session is the orchestrator, available today with documented workarounds), an external harness like gas town on beads, or a future built-in act-orchestrator. Mode A's "worker pushes main" becomes the degenerate case where worker and orchestrator are the same process. As a side benefit, an orchestrator that owns assignment can centralize dedup and batch claim/close ops, which directly reduces log noise — that's not act policy, it's orchestrator policy. Andrew sharpened one piece: act is and will remain git-coupled (the op log lives in git, full stop); the right question for non-developer-tools environments isn't "act on non-VCS substrate" but "where does act's git repo come from when the project being tracked doesn't have one."
 
-- **7 new act backlog issues filed and pushed:**
-  - `act-5d6a` (p1, bug) — `--branch <ref>` for `create/update/close` to decouple op-writing from current working tree HEAD. Real correctness gap: a worktree subagent's `act create --push` landed ops on `origin/main` because `--push` follows branch tracking config, not commit target. Caused real damage in aac-website's `act-8808` (three op commits jumped ahead of work commit, required cherry-pick recovery).
-  - `act-3c89` (p2) — `act show --full` to disable truncation.
-  - `act-7ecd` (p2) — `act close --reason` validates length upfront, not on rejection.
-  - `act-4b45` (p2) — `act ready` columns include `assignee` and `claimed_at`.
-  - `act-f800` (p2) — `act log` needs `--since`, `--by-issue`, `--type` filters for retrospectives.
-  - `act-f2ea` (p2) — `act doctor` as part of close to verify commit-marker correlation.
-  - `act-dfa5` (p2, bug) — investigate why `per_session` bundling didn't collapse the close+commit two-step in aac-website (the agent ran it 15+ times during the loop). Either aac-website isn't on `per_session` (config gap → onboarding update) or there's a bundling logic gap.
+**3. Documentation + review.** Wrote three new sections into `docs/orchestration-design.md` capturing the above. Filed `act-334e` to track external review. Dispatched three parallel subagent reviewers (abstraction soundness, implementation feasibility, test-case stress) all anchored at commit `94cbdf2` per skill discipline (pinned commit hash, "I read commit X" first-line requirement, >70% confidence floor, "what's working well" closing). Reviewers returned substantive findings; synthesized into:
+- **7 inline edits** (commit `2d16efe`): softened three overclaims ("available today," "dissolves the classifier problem," "log noise is orchestrator policy not act policy"); expanded "Do now" item 4 to enumerate the three specific skill sections needing same-pass revision; split the multi-op-per-write open question into atomicity vs batching (two related but independent affordances); refined the Cowork open question per Andrew's git-coupled clarification; fixed a double-#4 numbering typo.
+- **3 derivative issues**: `act-d264` (orchestrator branch-discovery surface — no act API today for "what branch is issue X being worked on"), `act-b5f8` (stale-claim recovery in Mode B — Mode A's "human notices" collapses to "orchestrator must algorithmically decide" but no policy is specified), `act-208e` (`bundle_strategy=per_session` is worker-scoped today; Mode B needs an orchestrator-scoped equivalent).
+- Closed `act-334e` referencing the reviewers and derivatives.
 
-- **Global act skill updated** (`~/.claude/skills/act/SKILL.md`, 5 sections):
-  - Auto-mode caveat extended to cover `git merge --ff-only origin/worktree-*:*` and `git checkout main:*`, not just `git push origin main:*`. The aac-website loop tripped the classifier on the merge step even though `git push` was already whitelisted.
-  - Reviewer prompts upgraded from "should pin commit hash" to **MUST** include "I read commit X at paths Y" as the first line of output before any findings. A reviewer that can't actually read the diff produces confidence numbers calibrated against nothing — they are speculative findings dressed up as analysis. Real damage in aac-website's `act-a9d0`: reviewer couldn't read worktree blobs and confidently flagged concerns at 80%+ that the actual code already handled.
-  - Backlog-check generalized: required before any `act create` (mid-flight discovery, external-list translation, retrospective finding, anything), not just external-list translation.
-  - Worktree subagent `--push` trap warning added until `act-5d6a` lands, with three explicit workarounds.
-  - `bundle_strategy=per_session` referenced as the answer for projects that want quieter git history.
+## Real-time validation of the design
 
-- **Andrew's `~/Workspace/knowledge/_guides/process-learnings.md` updated** (4 new entries):
-  - Assert at the user-visible boundary, not at a proxy for it.
-  - Repo-level guardrails are institutional memory.
-  - Don't claim verification of what you couldn't read.
-  - Check the backlog before filing.
+The auto-mode classifier blocked `act close --push` mid-session despite earlier pushes in the same session succeeding — the classifier got more conservative once the conversation context contained discussion of the issue. Andrew pushed manually as workaround. This is exactly the failure mode the push-asymmetry design dissolves: if the worker (this session) hadn't been the one trying to push to main, the classifier wouldn't have flagged it. Worth referencing in the skill update prose when "Do now" item 4 lands.
 
-## Key artifacts produced (all under `docs/`)
+## Process note
 
-- `orchestration-design.md` — design synthesis (this session)
-- `aac-website-dogfood-debrief.md` — first alpha trial debrief (written by the aac-website session, lives here for cross-reference)
+The reviewer agent claimed "gas town wouldn't [know the branch]" as a specific assertion about a not-yet-built system. I relayed it without verification despite the auto-memory `feedback_verify_specific_factual_claims.md` covering exactly this pattern. Andrew caught it. Lesson: the memory's reach should extend to relayed reviewer findings, not just first-person claims. The same discipline applies when a subagent makes a specific named-system claim; the orchestrator (this agent) should verify or hedge before passing it on.
 
-Both are added to this commit.
+## Key artifacts produced
+
+All under `/Users/andrewcove/Workspace/act/`:
+- `docs/orchestration-design.md` — three new sections (Orchestrator implementations, push-asymmetry note in worker kernel, Log noise as control surface) + Do-now item 4 + open-question refinements. Two commits: `94cbdf2` (initial additions) and `2d16efe` (review-driven refinements).
+- `.act/ops/act-334e/` — review task, claimed and closed in this session.
+- `.act/ops/act-d264/`, `.act/ops/act-b5f8/`, `.act/ops/act-208e/` — three derivative issues filed this session.
 
 ## Backlog state
 
-Top of queue includes predecessor items + this session's 7 additions. Run `act ready` for current actual ordering.
+Top of queue includes predecessor items + this session's 3 additions. Run `act ready` for current actual ordering.
 
-**From predecessor (still open, unchanged):**
-- `act-2204` (p=1, blocking) — flip aac/act public + cut fresh release tag. The canonical-pitch verification gate. Andrew's call.
+**Still open from predecessor sessions (unchanged):**
+- `act-2204` (p=1) — flip aac/act public + cut fresh release tag. Sharing gate. Andrew's call.
 - `act-ff5c` (p=1) — doc-drift prevention process. Brainstorm-first.
-- `act-b90e` (p=2 but probably p=1) — version-control the act skill file. Important for sharing; skill updates landed this session, making this more urgent.
-- `act-8416` (p=1) — Cowork integration. Needs external context.
-- `act-4fe6` (p=1) — CC Web integration. Needs external context. Benefits from act-2204 landing first.
-- `act-e6a5` (p=2) — brew tap / curl installer. Lower urgency now that go install is canonical.
+- `act-b90e` (p=2, probably should be p=1) — version-control the act skill. The "Do now" item 4 in orchestration-design (next session's planned work) edits the skill substantially; this would let the change be tracked.
+- `act-8416` / `act-4fe6` (p=1) — Cowork / CC Web integration. Need external context.
+- `act-5d6a` (p=1) — worktree subagent `--push` targeting bug. Still load-bearing for Mode B; the new framing in orchestration-design explains why it's a *contract clarification* rather than a workaround.
+- `act-3c89`, `act-7ecd`, `act-4b45`, `act-f800`, `act-f2ea`, `act-dfa5`, `act-e6a5`, `act-8d67` (p=2/3) — small CLI improvements + investigations.
 
 **From this session:**
-- `act-5d6a` (p=1, bug) — the highest-leverage technical item from this batch. Mode B prerequisite.
-- `act-3c89`, `act-7ecd`, `act-4b45`, `act-f800`, `act-f2ea`, `act-dfa5` (p=2) — small CLI improvements + the per_session investigation.
+- `act-d264` (p=2) — orchestrator branch-discovery surface design call. Required before any non-CC orchestrator runs.
+- `act-b5f8` (p=2) — stale-claim recovery semantics for Mode B. Required before any orchestrator handles a worker crash.
+- `act-208e` (p=2) — orchestrator-scoped bundle_strategy. Required before the orchestrator-batched-claims pattern reduces noise in practice.
 
 ## What to look at first when resuming
 
-1. **`act-5d6a`** — highest-leverage technical work from this session's batch. Fixes the worktree-subagent op-targeting bug; required for Mode B to be robust. Could be the next dogfood loop's target if another act-on-act session runs.
-2. **`act-2204` still the sharing gate.** Andrew was deep in act work today but didn't make the public/release decision. Conversation in earlier sessions suggested "maybe there isn't a reason for it to stay private" — re-decide and act.
-3. **`act-dfa5` is a near-zero-cost check on the aac-website side.** Is the repo on `bundle_strategy=per_session` or not? Could be done by the aac-website session next time it's active. If yes → real bundling gap to fix in act. If no → config-onboarding gap to fix in the skill / `act init` default.
-4. **Non-code stress test of act parked** until Andrew sets up Plugin Library work. The orchestration-design note flags this as the strongest unresolved test of generality; aac-website only validated code work.
-5. **`act-b90e` worth promoting to p=1.** This session updated the global act skill significantly; the install-and-go promise depends on the skill being available to a friend's agent, and it currently isn't version-controlled.
+1. **Execute "Do now" item 4 in `docs/orchestration-design.md`.** This is the immediate concrete work: update three specific sections of `~/.claude/skills/act/SKILL.md` to land the push-asymmetry framing — the canonical-loop step 7 (push-to-main becomes mode-specific), the worktree-subagent `--push` trap section (reframe from "bug to work around" to "correct behavior"), and the auto-mode caveat section (reduced cost under orchestrator-owned pushes). Skill change only, no act code change. Probably also revise the review-policy section per "Do now" item 1.
+2. **`act-b90e` (version-control the skill) probably worth promoting to p=1 and doing in the same pass.** The Do-now-item-4 changes are non-trivial; tracking them is more valuable than the recent skill-update history suggests.
+3. **`act-2204` (publish + release tag).** Still the sharing gate from earlier sessions. Andrew was deep in act work the last two sessions but didn't make the public/release call. Re-decide.
+4. **Review and merge sift PR #14** when the skill update lands — sift is the alpha-trial project for the new framing.
+5. **Non-code stress test of act still parked** until Plugin Library work is set up. Strongest unresolved test of generality per orchestration-design.
 
 ## Cross-references
 
-- Predecessor handoff: in git history (`5713cae docs: session handoff captures act-6051 + 3 follow-ups + act-2204 finding`).
-- Orchestration design note: `docs/orchestration-design.md`
-- Dogfood debrief: `docs/aac-website-dogfood-debrief.md`
-- Global act skill (updated this session): `~/.claude/skills/act/SKILL.md`
+- Predecessor handoff: in git history (`...docs/session-handoff.md` at HEAD~N).
+- Orchestration design (this session's main artifact): `docs/orchestration-design.md`
+- Dogfood debrief (predecessor): `docs/aac-website-dogfood-debrief.md`
+- Global act skill (target of next session's work): `~/.claude/skills/act/SKILL.md`
 - Andrew's process-learnings: `~/Workspace/knowledge/_guides/process-learnings.md`
+- sift/ project: `~/Workspace/sift/` (PR #14 open, awaiting review)
 
 ## Operational notes
 
-- All session work outside the act repo, plus 7 `act create` calls inside it (+ their auto-commits, all pushed). No code touched in `internal/` or `cmd/`.
-- Auto-memory written from this session: `feedback_solo_repo_merge_policy.md` — for solo/personal repos with agent loops + in-session review, prefer direct ff-merge to main over GitHub PRs (PR review is theater in that context).
-- The aac-website session may still be running; its handoff was refreshed mid-loop and is stale relative to the rest of its closes. It'll refresh on its own when next active; not this session's job to refresh.
+- All session work was inside the act repo: 1 doc commit + 1 review-refinement doc commit + 3 derivative `act create` auto-commits + 1 `act close` auto-commit. All five pushed by Andrew manually after the in-session `act close --push` was rejected by the Claude Code auto-mode classifier.
+- The auto-mode classifier blocked the close-push despite earlier session pushes succeeding, citing transcript context (the discussion of the classifier blocking pushes had sensitized it). Resolved by Andrew running `git push origin main` directly.
+- No new auto-memory entries written this session — the existing `feedback_verify_specific_factual_claims.md` already covers the lesson about relayed reviewer findings; that file's scope just needs to be applied more broadly, not rewritten.
