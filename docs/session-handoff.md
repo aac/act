@@ -1,91 +1,76 @@
-# Session handoff — 2026-05-13
+# Session handoff — 2026-05-13 (evening)
 
-This session was a design-refinement pass: processed the sift/ alpha-trial output, did a long-form design discussion with Andrew about how the canonical loop interacts with the Claude Code auto-mode classifier, extended `docs/orchestration-design.md` with three new sections, ran a multi-modal review pass on those additions, and filed three derivatives. Predecessor handoff (2026-05-11) is in git history; its top-of-queue items are still open and rolled forward below.
+Short session, late-day: looked at downstream commit-log noise data from inbox-triage, filed a new act core issue + a cleanup chore in inbox-triage, and sketched a four-phase plan for moving act forward. **Top priority for the next session has not changed from the predecessor handoff** — it is still agent-push-to-main. The work below is supporting context that arrived in flight; nothing in it should redirect tomorrow's session away from Phase 1.
 
-## TOP PRIORITY for next session — solve the agent-push-to-main failure mode
+## TOP PRIORITY for next session — still agent-push-to-main
 
-Andrew explicitly flagged this as the highest-leverage next-session work: **agents running an act loop need to push to main without operator intervention.** This session demonstrated the failure live — the Claude Code auto-mode classifier blocked an `act close --push` mid-session, requiring Andrew to run `git push origin main` manually. That's not workable as a steady state; if the human is the one pushing, the agent-driven loop premise breaks.
+Unchanged from the 2026-05-13 (afternoon) handoff. Re-stated here so this handoff is self-contained.
 
-The structural fix in `orchestration-design.md` ("Do now" item 4 — workers push to assigned branches, orchestrators handle main) **is necessary but not sufficient**. Mode A solo (one CC session as collapsed worker+orchestrator) still has a single process pushing to main, and that's what the classifier blocks. The session's mid-loop block was Mode A solo, not Mode B worker.
+Agents running an act loop must be able to push to main without operator intervention. Today's afternoon session demonstrated the failure live; the Claude Code auto-mode classifier blocks `act close --push` mid-session, forcing Andrew to push manually. That's incompatible with the agent-driven loop premise. Two deliverables:
 
-So the next session has two related deliverables:
-1. **Land the structural fix** — execute "Do now" item 4 (update three skill sections — canonical-loop step 7, worktree `--push` trap reframing, auto-mode caveat reduced cost). This makes Mode B workers cleanly avoid the classifier and is load-bearing for the long-term design.
-2. **Solve the Mode A solo case.** The structural fix doesn't help here. Options to investigate, none verified yet:
-   - Is there a classifier opt-out beyond `settings.json` permissions that we haven't tried? (`settings.json` is proven insufficient — see the sift/ finding below.)
-   - Does invoking `act` via its MCP server (`act_next`/`act_finish`) bypass the classifier's Bash-tool-level checks? Worth empirically testing — the MCP path may have different gating than direct Bash invocation.
-   - Can pushes happen outside the agent's tool-use surface entirely — e.g. an `act` post-close hook that runs `git push` as a subprocess outside Claude Code's permission layer? Investigate Claude Code's hook surface for this.
-   - Is `--dangerously-skip-permissions` the only blanket answer, and if so, what's the smallest scope it can be applied to (a single command? a whole session? a specific tool?)?
-   - Can the classifier be informed in-context that a push is loop-authorized — e.g. a specific comment-marker on the commit, a known commit-message pattern, a session-level declaration?
-3. **Validate with a real loop.** Run an actual `/act:loop` against sift's existing backlog (10 seeded issues, PR #14 still open at session end) or a fresh test project. The agent should drain the backlog including pushes, with zero operator intervention. If it can't, the fix isn't done.
+1. **Land the structural fix** — execute "Do now" item 4 from `docs/orchestration-design.md`: update three skill sections (canonical-loop step 7, worktree `--push` trap reframing, auto-mode caveat reduced cost). This makes Mode B workers cleanly avoid the classifier.
+2. **Solve the Mode A solo case.** The structural fix doesn't help here. Investigation territory; unverified options from the afternoon handoff:
+   - Classifier opt-outs beyond `settings.json` permissions (settings.json proven insufficient — see sift/ finding in predecessor handoff).
+   - Whether invoking act via its MCP server (`act_next`/`act_finish`) bypasses Bash-tool-level classifier gating.
+   - Whether pushes can happen outside the agent's tool-use surface via an act post-close hook running `git push` as a subprocess outside Claude Code's permission layer.
+   - Whether `--dangerously-skip-permissions` is the only blanket answer, and the smallest scope it can be applied to.
+   - Whether the classifier can be informed in-context that a push is loop-authorized via commit-marker / message pattern / session declaration.
+3. **Validate with a real loop.** Run an actual `/act:loop` against sift's existing backlog (10 seeded issues, PR #14 still open) or a fresh test project. Zero operator intervention is the bar.
 
-This is the unblocking item for sift's alpha trial and any future Mode A or solo-orchestrator deployment. Other items in the backlog can wait.
+`act-b90e` (version-control the act skill) should probably be promoted to p1 and done in the same pass — whatever skill changes ship from item 1 are non-trivial and warrant tracking.
 
-> **Quick read:** sift/ ran an earlier act prompt and reported back two things: (1) it produced a clean 10-issue seeded backlog with PR #14 open, and (2) the act skill's "auto-mode caveat" section is wrong — Claude Code's auto-mode classifier rejects worker pushes to main regardless of the settings.json allowlist, because the classifier and the permissions system are independent gates. That triggered a design discussion: the cleanest fix is to stop having workers push to main at all and route integration through an *orchestrator role* (Claude Code with sub-agents is the reference impl available today; gas town on beads is another candidate; a future built-in could be a third). `docs/orchestration-design.md` got three new sections capturing this — Orchestrator implementations, push asymmetry in the worker kernel, and log noise as a control surface. Reviewed via three parallel subagents (`act-334e`); inline-resolved seven findings and filed three derivatives (`act-d264` branch-discovery, `act-b5f8` stale-claim recovery, `act-208e` orchestrator-scoped bundling). The session itself produced live evidence the design is correct *and* incomplete — the auto-mode classifier blocked a push mid-session, which the structural fix would resolve for Mode B but not for Mode A solo. Top action when resuming: see the **TOP PRIORITY** block above.
+## Four-phase plan beyond Phase 1
+
+Established in conversation this session; not yet filed as umbrella issues. If Phase 1 lands tomorrow and there's still session time, Phase 2 is the natural next move. Otherwise these queue for following sessions.
+
+- **Phase 2 — noise-reduction synthesis.** Consolidate `act-6c73` + `act-208e` + `act-dfa5` into one design pass. They overlap enough that doing them serially produces inconsistent recommendations. Output: updated `docs/commit-noise-design.md` (or new note) and one implementation issue.
+- **Phase 3 — CLI polish + data-model bugs.** Parallelizable across sub-agents because the items are disjoint — though per CLAUDE.md, watch for `cmd/act/internal/cli` merge conflicts. Items: act-4b45, act-7ecd, act-3c89, act-b891, act-982a, act-56a0, act-f800 (CLI polish); act-8c78, act-b7ad, act-492e, act-7574 (deeper bugs).
+- **Phase 4 — sharing/adoption (gated on Phase 1 working).** act-2204 (publish), act-e6a5 (brew/curl), act-8416 (Cowork), act-4fe6 (CC Web). Should not happen until the loop actually runs autonomously, or we'd onboard others into a known-broken thing.
+
+The longer design tasks (`act-d264` branch-discovery, `act-b5f8` stale-claim recovery, `act-8d67` separate-repo model) slot in around Phase 2/3 as Andrew-availability permits.
 
 ## What happened this session
 
-Three interleaved threads:
+Three things, in order:
 
-**1. Processing the sift/ session output.** An earlier session's prompt was given to sift/ and produced a clean alpha-trial: `act init`, `.claude/settings.json` with the skill-recommended carveout, and 10 seeded issues. PR #14 is open in sift's repo, CI green, awaiting review. The session correctly stopped per instructions rather than running the loop. The meta-finding from that session was load-bearing: the settings allowlist did not actually opt the agent out of auto-mode's classifier — the classifier rejected the push with "bypasses PR review" reasoning regardless of the permission grant. Two independent gates, not one. The skill's claim that the settings entry is sufficient is out of date.
+1. **Reviewed inbox-triage commit-log noise data.** Another Claude session evaluated inbox-triage's git log at Andrew's request: 69 of 99 commits (~70%) are pure act-op metadata. Dominant ops are NOT close — they're create (32), close (10), tombstone (6), add_dep (6), add_accept (6, with 5 consecutive on a single ticket), claim (5), update_field/reopen (3). Diagnosis: act's existing close-time bundling assumes claim → work → close, but the actual noise is from metadata-only ops that have no work commit to fold into — pre-claim grooming runs (create + add_dep + add_accept) and same-field rewrite bursts.
 
-**2. Design discussion (Andrew + me, in conversation).** The implication of #1 is that the canonical act loop's "push after every close" step is at war with auto-mode in fresh projects. Two paths: drop the push-after-close property (loses multi-writer visibility) or stop having workers push to main and route integration through a separate orchestrator. We landed on the second: workers push to assigned branches; orchestrators handle main on their own cadence. The orchestrator is a *role*, not a specific tool — implementations include Claude Code with sub-agents (the parent session is the orchestrator, available today with documented workarounds), an external harness like gas town on beads, or a future built-in act-orchestrator. Mode A's "worker pushes main" becomes the degenerate case where worker and orchestrator are the same process. As a side benefit, an orchestrator that owns assignment can centralize dedup and batch claim/close ops, which directly reduces log noise — that's not act policy, it's orchestrator policy. Andrew sharpened one piece: act is and will remain git-coupled (the op log lives in git, full stop); the right question for non-developer-tools environments isn't "act on non-VCS substrate" but "where does act's git repo come from when the project being tracked doesn't have one."
+2. **Filed `act-6c73`** (p2 bug) in this repo: "handle pure-metadata act-op runs that close-time bundling can't fold (inbox-triage downstream data)." Includes the full inbox-triage stats, the two structural patterns close-time bundling can't help with (pre-claim runs + same-field bursts), and proposed-scope-for-investigation (amend-on-write vs explicit-batch-mode vs do-nothing). Linked as `relates` to act-208e, act-dfa5, act-6018.
 
-**3. Documentation + review.** Wrote three new sections into `docs/orchestration-design.md` capturing the above. Filed `act-334e` to track external review. Dispatched three parallel subagent reviewers (abstraction soundness, implementation feasibility, test-case stress) all anchored at commit `94cbdf2` per skill discipline (pinned commit hash, "I read commit X" first-line requirement, >70% confidence floor, "what's working well" closing). Reviewers returned substantive findings; synthesized into:
-- **7 inline edits** (commit `2d16efe`): softened three overclaims ("available today," "dissolves the classifier problem," "log noise is orchestrator policy not act policy"); expanded "Do now" item 4 to enumerate the three specific skill sections needing same-pass revision; split the multi-op-per-write open question into atomicity vs batching (two related but independent affordances); refined the Cowork open question per Andrew's git-coupled clarification; fixed a double-#4 numbering typo.
-- **3 derivative issues**: `act-d264` (orchestrator branch-discovery surface — no act API today for "what branch is issue X being worked on"), `act-b5f8` (stale-claim recovery in Mode B — Mode A's "human notices" collapses to "orchestrator must algorithmically decide" but no policy is specified), `act-208e` (`bundle_strategy=per_session` is worker-scoped today; Mode B needs an orchestrator-scoped equivalent).
-- Closed `act-334e` referencing the reviewers and derivatives.
+3. **Filed `act-5704`** in `~/Workspace/inbox-triage`'s own backlog: "reduce commit-log noise from act-op runs (local cleanup pending core fix in act-6c73)." Two parts: one-time history rewrite (inbox-triage has no git remote, fully safe to squash consecutive metadata-op runs); going-forward wrapper script under `.claude/` that amends instead of new-commit when HEAD is a same-session metadata-only act-op. Closes when act-6c73 lands proper core support. This means the noise problem is tracked where it can actually be fixed today, without waiting for act core changes.
 
-## Real-time validation of the design
+## Why we did NOT kick off Phase 1 work tonight
 
-The auto-mode classifier blocked `act close --push` mid-session despite earlier pushes in the same session succeeding — the classifier got more conservative once the conversation context contained discussion of the issue. Andrew pushed manually as workaround. This is exactly the failure mode the push-asymmetry design dissolves: if the worker (this session) hadn't been the one trying to push to main, the classifier wouldn't have flagged it. Worth referencing in the skill update prose when "Do now" item 4 lands.
-
-## Process note
-
-The reviewer agent claimed "gas town wouldn't [know the branch]" as a specific assertion about a not-yet-built system. I relayed it without verification despite the auto-memory `feedback_verify_specific_factual_claims.md` covering exactly this pattern. Andrew caught it. Lesson: the memory's reach should extend to relayed reviewer findings, not just first-person claims. The same discipline applies when a subagent makes a specific named-system claim; the orchestrator (this agent) should verify or hedge before passing it on.
+Andrew was at end-of-day. Phase 1 needs investigation + verification + a real loop run; not fire-and-forget. The history-rewrite + wrapper in inbox-triage (act-5704) is the one near-term cleanup we identified, but it touches inbox-triage's history and the wrapper design has edge cases (pushed-status detection, session identity, concurrent worktrees) — also wanting Andrew awake. Both queued.
 
 ## Key artifacts produced
 
-All under `/Users/andrewcove/Workspace/act/`:
-- `docs/orchestration-design.md` — three new sections (Orchestrator implementations, push-asymmetry note in worker kernel, Log noise as control surface) + Do-now item 4 + open-question refinements. Two commits: `94cbdf2` (initial additions) and `2d16efe` (review-driven refinements).
-- `.act/ops/act-334e/` — review task, claimed and closed in this session.
-- `.act/ops/act-d264/`, `.act/ops/act-b5f8/`, `.act/ops/act-208e/` — three derivative issues filed this session.
+- `~/Workspace/act/.act/ops/act-6c73/` — new bug, links to act-208e/dfa5/6018, includes inbox-triage stats.
+- `~/Workspace/inbox-triage/.act/ops/act-5704/` — new chore in inbox-triage's backlog covering both the rewrite and the wrapper.
+- This handoff (the previous afternoon handoff is in git history; its content is rolled forward into the TOP PRIORITY block above).
 
 ## Backlog state
 
-Top of queue includes predecessor items + this session's 3 additions. Run `act ready` for current actual ordering.
-
-**Still open from predecessor sessions (unchanged):**
-- `act-2204` (p=1) — flip aac/act public + cut fresh release tag. Sharing gate. Andrew's call.
-- `act-ff5c` (p=1) — doc-drift prevention process. Brainstorm-first.
-- `act-b90e` (p=2, probably should be p=1) — version-control the act skill. The "Do now" item 4 in orchestration-design (next session's planned work) edits the skill substantially; this would let the change be tracked.
-- `act-8416` / `act-4fe6` (p=1) — Cowork / CC Web integration. Need external context.
-- `act-5d6a` (p=1) — worktree subagent `--push` targeting bug. Still load-bearing for Mode B; the new framing in orchestration-design explains why it's a *contract clarification* rather than a workaround.
-- `act-3c89`, `act-7ecd`, `act-4b45`, `act-f800`, `act-f2ea`, `act-dfa5`, `act-e6a5`, `act-8d67` (p=2/3) — small CLI improvements + investigations.
-
-**From this session:**
-- `act-d264` (p=2) — orchestrator branch-discovery surface design call. Required before any non-CC orchestrator runs.
-- `act-b5f8` (p=2) — stale-claim recovery semantics for Mode B. Required before any orchestrator handles a worker crash.
-- `act-208e` (p=2) — orchestrator-scoped bundle_strategy. Required before the orchestrator-batched-claims pattern reduces noise in practice.
+Run `act ready` in this repo for current ordering. Nothing this session changed Phase 1 priority. The afternoon handoff's "still open from predecessor sessions" block remains accurate. New this evening: `act-6c73` (p2, this repo).
 
 ## What to look at first when resuming
 
-1. **TOP PRIORITY — solve agent-push-to-main as described in the block above.** Two deliverables: land "Do now" item 4 (structural fix for Mode B) and find a Mode A solo answer (investigation territory; multiple unverified options listed above). Validate by running an actual `/act:loop` against sift or a fresh project and confirming zero operator intervention is needed.
-2. **`act-b90e` (version-control the skill) probably worth promoting to p=1 and doing in the same pass.** Whatever change ends up in the skill from item 1 above is non-trivial; tracking it is more valuable than the recent skill-update history suggests.
-3. **`act-2204` (publish + release tag).** Still the sharing gate from earlier sessions. Andrew was deep in act work the last two sessions but didn't make the public/release call. Re-decide.
-4. **Review and merge sift PR #14** when the skill update lands — sift is the alpha-trial project for the new framing.
-5. **Non-code stress test of act still parked** until Plugin Library work is set up. Strongest unresolved test of generality per orchestration-design.
+1. **Phase 1: agent-push-to-main.** Top priority. Re-read the TOP PRIORITY block above and the predecessor 2026-05-13 (afternoon) handoff in git history if more context is needed.
+2. **Sub-task: promote `act-b90e` to p1** and pair it with Phase 1 so the skill changes from "Do now item 4" are tracked.
+3. If Phase 1 is fully landed: Phase 2 (noise-reduction synthesis — `act-6c73` + `act-208e` + `act-dfa5` consolidated design pass).
+4. `act-2204` (publish + release tag) is still the sharing gate. Re-decide once Phase 1 validates.
+5. **Review and merge sift PR #14** when the skill update lands — sift is the alpha-trial project for the new framing.
 
 ## Cross-references
 
-- Predecessor handoff: in git history (`...docs/session-handoff.md` at HEAD~N).
-- Orchestration design (this session's main artifact): `docs/orchestration-design.md`
-- Dogfood debrief (predecessor): `docs/aac-website-dogfood-debrief.md`
-- Global act skill (target of next session's work): `~/.claude/skills/act/SKILL.md`
-- Andrew's process-learnings: `~/Workspace/knowledge/_guides/process-learnings.md`
-- sift/ project: `~/Workspace/sift/` (PR #14 open, awaiting review)
+- Afternoon predecessor handoff: in git history (`docs/session-handoff.md` at HEAD~N).
+- Orchestration design: `docs/orchestration-design.md` (Do-now item 4 is the structural fix for Phase 1).
+- Commit-noise design note: `docs/commit-noise-design.md` (predates today's inbox-triage data; Phase 2 should refresh it).
+- Global act skill (target of Phase 1 changes): `~/.claude/skills/act/SKILL.md`
+- inbox-triage's own act backlog: `~/Workspace/inbox-triage/.act/`
+- sift/: `~/Workspace/sift/` (PR #14 open, awaiting review)
 
 ## Operational notes
 
-- All session work was inside the act repo: 1 doc commit + 1 review-refinement doc commit + 3 derivative `act create` auto-commits + 1 `act close` auto-commit. All five pushed by Andrew manually after the in-session `act close --push` was rejected by the Claude Code auto-mode classifier.
-- The auto-mode classifier blocked the close-push despite earlier session pushes succeeding, citing transcript context (the discussion of the classifier blocking pushes had sensitized it). Resolved by Andrew running `git push origin main` directly.
-- No new auto-memory entries written this session — the existing `feedback_verify_specific_factual_claims.md` already covers the lesson about relayed reviewer findings; that file's scope just needs to be applied more broadly, not rewritten.
+- Work this session: 1 `act create` in this repo (act-6c73), 3 `act dep add` ops linking it, 1 `act create` in inbox-triage (act-5704). All auto-committed; this repo's commits pushed to origin/main; inbox-triage has no remote.
+- No `act close` ops this session — none of the work this session was a tracked issue.
