@@ -50,6 +50,20 @@ type CreateOptions struct {
 	// matching the semantic of `act_block`'s `blocked_by` parameter — so
 	// agents who already know `act_block` read the flag the same way.
 	BlockedBy []string
+	// Blocks, when non-empty, attaches one add_dep (type=blocks) op per
+	// id alongside the create op, mirroring BlockedBy in the inverse
+	// direction: the new issue blocks each <id>. Each add_dep envelope is
+	// written under the existing target's shard (IssueID=<existing>,
+	// payload.parent=<new>) because the existing issue's deps[] is what
+	// grows — symmetric to `act dep add <existing> --blocks <new>`.
+	//
+	// Mutual constraints:
+	//   - An id appearing in BOTH Blocks and BlockedBy is bad_flag (would
+	//     record a 2-cycle and immediately deadlock both issues in ready).
+	//   - Self-loop guard: an id resolving to the new issue's id is
+	//     bad_flag, matching the BlockedBy guard.
+	//   - Duplicates within Blocks fold to a single edge.
+	Blocks []string
 }
 
 // CreateResult is the JSON shape returned on success. Field order is
@@ -318,114 +332,157 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Step 6b: resolve --blocked-by ids (if any). Each becomes an add_dep
-	// op writing IssueID=<new>, parent=<resolved>, type=blocks. Duplicates
-	// resolving to the same full id are folded to one edge (the dep itself
-	// is idempotent — writing it twice would just create two ops the
-	// applier dedups, but agents reading the op log shouldn't see noise).
-	var blockedByEnvs []op.Envelope
-	var blockedByBodies [][]byte
-	if len(opts.BlockedBy) > 0 {
-		seen := make(map[string]bool, len(opts.BlockedBy))
-		for _, raw := range opts.BlockedBy {
-			if raw == "" {
-				return CreateErrorOutput{
-					Error:   "bad_flag",
-					Message: "act create: --blocked-by: id is required and must be non-empty",
-				}, 2
-			}
-			parent, rerr := ids.Resolve(raw, knownIDs)
-			if rerr != nil {
-				if errors.Is(rerr, ids.ErrNotFound) {
-					return CreateErrorOutput{
-						Error:   "issue_not_found",
-						Message: fmt.Sprintf("act create: --blocked-by %q: no matching id", raw),
-						Details: map[string]any{"query": raw},
-					}, 3
-				}
-				var amb *ids.ErrAmbiguousID
-				if errors.As(rerr, &amb) {
-					candidates := amb.Candidates()
-					return CreateErrorOutput{
-						Error:   "id_ambiguous",
-						Message: fmt.Sprintf("act create: --blocked-by %q matches %d issues", raw, len(candidates)),
-						Details: map[string]any{
-							"prefix":     raw,
-							"candidates": candidates,
-						},
-						Candidates: candidates,
-					}, 2
-				}
-				return CreateErrorOutput{
+	// Step 6b: resolve --blocked-by and --blocks ids (if any) into add_dep
+	// envelopes that ride alongside the create op in a single atomic batch.
+	//
+	// Direction is the only thing that differs between the two flags:
+	//   --blocked-by <id>: new issue's deps grow → envelope.IssueID=<new>,
+	//                      payload.parent=<id> (the new issue is blocked by id)
+	//   --blocks <id>:     existing issue's deps grow → envelope.IssueID=<id>,
+	//                      payload.parent=<new> (the new issue blocks id)
+	//
+	// Duplicates within each flag are folded; an id appearing in BOTH
+	// flags is bad_flag (a 2-cycle: new blocks X AND X blocks new would
+	// deadlock both in `act ready`). Resolution errors and self-loop
+	// guard match for symmetry — see the inlined helper.
+	var depEnvs []op.Envelope
+	var depBodies [][]byte
+	seenBlockedBy := make(map[string]bool, len(opts.BlockedBy))
+	seenBlocks := make(map[string]bool, len(opts.Blocks))
+
+	resolveDepID := func(flagName, raw string) (string, *CreateErrorOutput, int) {
+		if raw == "" {
+			return "", &CreateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act create: %s: id is required and must be non-empty", flagName),
+			}, 2
+		}
+		full, rerr := ids.Resolve(raw, knownIDs)
+		if rerr != nil {
+			if errors.Is(rerr, ids.ErrNotFound) {
+				return "", &CreateErrorOutput{
 					Error:   "issue_not_found",
-					Message: rerr.Error(),
+					Message: fmt.Sprintf("act create: %s %q: no matching id", flagName, raw),
 					Details: map[string]any{"query": raw},
 				}, 3
 			}
-			if seen[parent] {
-				continue
-			}
-			seen[parent] = true
-			// Defensive: reject a self-loop. Under the single-writer model
-			// this is unreachable because knownIDs is snapshotted before
-			// PickUnique generates issueID — ids.Resolve cannot return
-			// issueID. But a concurrent writer writing a create op between
-			// the snapshot and PickUnique could theoretically smuggle our
-			// new id into a future call's knownIDs; guarding here matches
-			// the parity check in act_block (composed.go:339) and is the
-			// kind of cheap invariant doctor's correctness story relies on.
-			if parent == issueID {
-				return CreateErrorOutput{
-					Error:   "bad_flag",
-					Message: "act create: --blocked-by cannot reference the issue being created (self-loop)",
+			var amb *ids.ErrAmbiguousID
+			if errors.As(rerr, &amb) {
+				candidates := amb.Candidates()
+				return "", &CreateErrorOutput{
+					Error:   "id_ambiguous",
+					Message: fmt.Sprintf("act create: %s %q matches %d issues", flagName, raw, len(candidates)),
+					Details: map[string]any{
+						"prefix":     raw,
+						"candidates": candidates,
+					},
+					Candidates: candidates,
 				}, 2
 			}
-
-			depPayload := op.AddDepPayload{Parent: parent, EdgeType: "blocks"}
-			if verr := depPayload.Validate(); verr != nil {
-				return CreateErrorOutput{
-					Error:   "payload_invalid",
-					Message: verr.Error(),
-				}, 1
-			}
-			depBody, perr := canonicaljson.Marshal(depPayload)
-			if perr != nil {
-				return CreateErrorOutput{
-					Error:   "marshal_failed",
-					Message: perr.Error(),
-				}, 1
-			}
-			depStamp := clock.Send()
-			depStamp.NodeID = cfg.NodeID
-			depEnv := op.Envelope{
-				OpVersion:     op.CurrentOpVersion,
-				SchemaVersion: op.CurrentSchemaVersion,
-				WriterVersion: op.WriterVersion,
-				OpType:        "add_dep",
-				IssueID:       issueID,
-				Payload:       depBody,
-				HLC:           depStamp,
-				NodeID:        cfg.NodeID,
-			}
-			if verr := depEnv.Validate(); verr != nil {
-				return CreateErrorOutput{
-					Error:   "envelope_invalid",
-					Message: verr.Error(),
-				}, 1
-			}
-			depEnvBody, merr := depEnv.Marshal()
-			if merr != nil {
-				return CreateErrorOutput{
-					Error:   "marshal_failed",
-					Message: merr.Error(),
-				}, 1
-			}
-			blockedByEnvs = append(blockedByEnvs, depEnv)
-			blockedByBodies = append(blockedByBodies, depEnvBody)
+			return "", &CreateErrorOutput{
+				Error:   "issue_not_found",
+				Message: rerr.Error(),
+				Details: map[string]any{"query": raw},
+			}, 3
 		}
+		// Defensive self-loop guard. Under the single-writer model this
+		// is unreachable because knownIDs is snapshotted before PickUnique
+		// generates issueID — ids.Resolve cannot return issueID. But a
+		// concurrent writer's create op between the snapshot and PickUnique
+		// could theoretically smuggle our new id into a future call's
+		// knownIDs; guarding here matches act_block (composed.go:339).
+		if full == issueID {
+			return "", &CreateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act create: %s cannot reference the issue being created (self-loop)", flagName),
+			}, 2
+		}
+		return full, nil, 0
 	}
 
-	// Step 7: write + auto-commit. With no --blocked-by, take the
+	// buildDepEnvelope constructs the add_dep envelope+body pair. issueID
+	// of the envelope is the issue whose deps[] is growing; payload.parent
+	// is the OTHER side of the edge.
+	buildDepEnvelope := func(envIssueID, parentID string) (op.Envelope, []byte, *CreateErrorOutput, int) {
+		depPayload := op.AddDepPayload{Parent: parentID, EdgeType: "blocks"}
+		if verr := depPayload.Validate(); verr != nil {
+			return op.Envelope{}, nil, &CreateErrorOutput{Error: "payload_invalid", Message: verr.Error()}, 1
+		}
+		depBody, perr := canonicaljson.Marshal(depPayload)
+		if perr != nil {
+			return op.Envelope{}, nil, &CreateErrorOutput{Error: "marshal_failed", Message: perr.Error()}, 1
+		}
+		depStamp := clock.Send()
+		depStamp.NodeID = cfg.NodeID
+		depEnv := op.Envelope{
+			OpVersion:     op.CurrentOpVersion,
+			SchemaVersion: op.CurrentSchemaVersion,
+			WriterVersion: op.WriterVersion,
+			OpType:        "add_dep",
+			IssueID:       envIssueID,
+			Payload:       depBody,
+			HLC:           depStamp,
+			NodeID:        cfg.NodeID,
+		}
+		if verr := depEnv.Validate(); verr != nil {
+			return op.Envelope{}, nil, &CreateErrorOutput{Error: "envelope_invalid", Message: verr.Error()}, 1
+		}
+		depEnvBody, merr := depEnv.Marshal()
+		if merr != nil {
+			return op.Envelope{}, nil, &CreateErrorOutput{Error: "marshal_failed", Message: merr.Error()}, 1
+		}
+		return depEnv, depEnvBody, nil, 0
+	}
+
+	for _, raw := range opts.BlockedBy {
+		parent, errOut, code := resolveDepID("--blocked-by", raw)
+		if errOut != nil {
+			return *errOut, code
+		}
+		if seenBlockedBy[parent] {
+			continue
+		}
+		seenBlockedBy[parent] = true
+		depEnv, depEnvBody, errOut, code := buildDepEnvelope(issueID, parent)
+		if errOut != nil {
+			return *errOut, code
+		}
+		depEnvs = append(depEnvs, depEnv)
+		depBodies = append(depBodies, depEnvBody)
+	}
+
+	// blocksTargets tracks the existing issues whose deps[] grew, so we
+	// can refresh the index for each after the batch commits. The new
+	// issue's index refresh is unconditional (see below).
+	var blocksTargets []string
+	for _, raw := range opts.Blocks {
+		existing, errOut, code := resolveDepID("--blocks", raw)
+		if errOut != nil {
+			return *errOut, code
+		}
+		// Reject if this id is already on the --blocked-by side: would
+		// be a 2-cycle (new blocks X and X blocks new), immediately
+		// deadlocking both issues in `act ready`.
+		if seenBlockedBy[existing] {
+			return CreateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act create: id %s appears in both --blocked-by and --blocks (would record a 2-cycle)", ShortIssueID(existing)),
+			}, 2
+		}
+		if seenBlocks[existing] {
+			continue
+		}
+		seenBlocks[existing] = true
+		depEnv, depEnvBody, errOut, code := buildDepEnvelope(existing, issueID)
+		if errOut != nil {
+			return *errOut, code
+		}
+		depEnvs = append(depEnvs, depEnv)
+		depBodies = append(depBodies, depEnvBody)
+		blocksTargets = append(blocksTargets, existing)
+	}
+
+	// Step 7: write + auto-commit. With no dep flags, take the
 	// hook-aware single-op path. With one or more, batch the create +
 	// add_dep ops into a single atomic commit; on any failure between
 	// op-write and commit-success, rollback unstages and removes every
@@ -433,21 +490,21 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	//
 	// Multi-op batches do not fire per-op-type hooks (matching the
 	// composed `act_block` pattern); projects with a `create` hook will
-	// observe it on the no-blocked-by path only.
+	// observe it on the no-dep-flag path only.
 	var gops *gitops.GitOps
 	if !opts.NoCommit {
 		gops = gitops.NewGitOps(repoRoot)
 	}
 	var werr error
-	if len(blockedByEnvs) == 0 {
+	if len(depEnvs) == 0 {
 		werr = WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
 			NoCommit: opts.NoCommit,
 			Push:     opts.Push,
 			Isolated: opts.Isolated,
 		})
 	} else {
-		envs := append([]op.Envelope{env}, blockedByEnvs...)
-		bodies := append([][]byte{body}, blockedByBodies...)
+		envs := append([]op.Envelope{env}, depEnvs...)
+		bodies := append([][]byte{body}, depBodies...)
 		commitMsg := BuildBatchCommitMessage(env, len(envs))
 		werr = WriteOpsAndAutoCommit(envs, bodies, paths, gops, WriteOpts{
 			NoCommit: opts.NoCommit,
@@ -483,6 +540,21 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Error:   "index_update_failed",
 			Message: err.Error(),
 		}, 1
+	}
+	// --blocks targets' deps[] grew; their cached rows must be refreshed
+	// too or `act ready` will continue to surface them until the next
+	// rebuild. Skip in --no-commit (consistent with the rest: --no-commit
+	// is the bootstrap/migration escape hatch where the caller drives
+	// indexing).
+	if !opts.NoCommit {
+		for _, target := range blocksTargets {
+			if err := RefreshIndexForIssue(paths, target); err != nil {
+				return CreateErrorOutput{
+					Error:   "index_update_failed",
+					Message: err.Error(),
+				}, 1
+			}
+		}
 	}
 
 	// Step 8: success envelope. Prefix mirrors the marker that

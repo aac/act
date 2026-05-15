@@ -196,9 +196,21 @@ THE LOOP IN DETAIL
     and commit-success, the partial state rolls back so the new
     issue never exists without its declared blocking edges. Same
     semantic as 'act_block --blocked-by' (the new issue is the one
-    being blocked). For marking an EXISTING issue blocked by the
-    new one, follow up with 'act_block' (or 'act update --status
-    blocked' + 'act dep add' on the CLI).
+    being blocked).
+
+    For the inverse direction — a follow-up that BLOCKS an existing
+    issue (e.g. a critic-review finding that must land before its
+    parent fanout meta-ticket runs) — use --blocks, the mirror flag:
+
+      $ act create "<title>" --blocks <id> [--blocks <id>...]
+
+    Direction is unambiguous from the flag name. --blocks records
+    "new ticket blocks <id>", so <id> drops out of 'act ready' until
+    the new ticket closes. The add_dep op lands under <id>'s shard
+    (its deps[] is what grew), not the new issue's. The two flags
+    compose on a single create call when the new issue both is
+    blocked by some prereqs and gates some downstream work; an id
+    appearing in both is rejected as a 2-cycle.
 
   Closing
     $ act close <id> --reason "<one-liner>"
