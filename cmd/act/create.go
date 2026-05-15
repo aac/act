@@ -40,6 +40,8 @@ func runCreate(args []string) int {
 	fs.Var(&accept, "accept", "acceptance criterion (repeatable)")
 	var blockedBy stringSlice
 	fs.Var(&blockedBy, "blocked-by", "id (full or prefix) the new issue is blocked by; writes a blocks-edge alongside the create op in a single atomic commit (repeatable)")
+	var blocks stringSlice
+	fs.Var(&blocks, "blocks", "id (full or prefix) the new issue blocks; writes a blocks-edge in the inverse direction alongside the create op in a single atomic commit (repeatable). Symmetric to --blocked-by; use this when filing a follow-up that must gate an existing issue (e.g. a critic review that should land before a fanout meta-ticket runs).")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
@@ -121,6 +123,7 @@ func runCreate(args []string) int {
 		Push:        *push,
 		Isolated:    *isolated,
 		BlockedBy:   []string(blockedBy),
+		Blocks:      []string(blocks),
 	})
 	if code != 0 {
 		m, _ := toMap(out)
