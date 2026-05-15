@@ -1,0 +1,1 @@
+{"hlc":{"logical":7,"node_id":"4397b575","wall":"2026-05-15T20:15:07.498Z"},"issue_id":"act-979f","node_id":"4397b575","op_type":"add_accept","op_version":1,"payload":{"criterion":"Help text on 'act create --help' lists --blocks alongside --blocked-by with the direction primer from act dep add's help."},"schema_version":1,"writer_version":"0.1.0"}
