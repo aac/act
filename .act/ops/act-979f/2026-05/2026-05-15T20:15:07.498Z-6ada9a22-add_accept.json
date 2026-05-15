@@ -1,0 +1,1 @@
+{"hlc":{"logical":6,"node_id":"4397b575","wall":"2026-05-15T20:15:07.498Z"},"issue_id":"act-979f","node_id":"4397b575","op_type":"add_accept","op_version":1,"payload":{"criterion":"Resolution errors (not_found, ambiguous_prefix) surface in the same error_envelope shape used by --blocked-by, with --blocks named in the message."},"schema_version":1,"writer_version":"0.1.0"}
