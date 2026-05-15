@@ -688,3 +688,455 @@ func TestRunCreate_BlockedBy_NoCommit(t *testing.T) {
 		t.Errorf("expected 1 create + 1 add_dep on disk, got %d + %d", len(createMatches), len(depMatches))
 	}
 }
+
+// TestRunCreate_Blocks_InverseDirectionRepro is the user-reported trap:
+// when an agent files "a new follow-up that BLOCKS an existing fanout",
+// reaching for the create-side --blocked-by flag records the inverse
+// direction. The new issue gets blocked, the fanout stays in `ready`,
+// and the gating is silently inverted.
+//
+// This test pins both halves of the contract:
+//
+//	A) --blocked-by <existing>  records "new is blocked by existing" → fanout still in ready.
+//	B) --blocks <existing>      records "new blocks existing"        → fanout NOT in ready.
+//
+// (A) was always the behavior; (B) is what this issue ships.
+func TestRunCreate_Blocks_InverseDirectionRepro(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	// Seed the "fanout meta-ticket" — the existing issue that the agent
+	// wants the new follow-up to gate.
+	fanoutOut, code := RunCreate(root, CreateOptions{Title: "fanout meta-ticket"})
+	if code != 0 {
+		t.Fatalf("seed fanout: %d", code)
+	}
+	fanoutID := fanoutOut.(CreateResult).ID
+
+	// ---- Scenario A: the trap. Agent reaches for --blocked-by. ----
+	trapOut, code := RunCreate(root, CreateOptions{
+		Title:     "critic finding (intended to gate fanout)",
+		BlockedBy: []string{fanoutID},
+	})
+	if code != 0 {
+		t.Fatalf("scenario A: %d", code)
+	}
+	trapNewID := trapOut.(CreateResult).ID
+
+	readyOut, code := RunReady(root, ReadyOptions{Limit: 50})
+	if code != 0 {
+		t.Fatalf("ready after A: %d", code)
+	}
+	readyIDsA := map[string]bool{}
+	for _, r := range readyOut.(ReadyResult).Ready {
+		readyIDsA[r.ID] = true
+	}
+	if !readyIDsA[fanoutID] {
+		t.Errorf("scenario A: fanout %s should still be in ready (its deps were not modified); this is the trap", fanoutID)
+	}
+	if readyIDsA[trapNewID] {
+		t.Errorf("scenario A: new issue %s should be hidden from ready (it's blocked by fanout); this is the trap's inverted gating", trapNewID)
+	}
+
+	// ---- Scenario B: the fix. Agent reaches for --blocks. ----
+	fixOut, code := RunCreate(root, CreateOptions{
+		Title:  "second critic finding (gates fanout, correctly this time)",
+		Blocks: []string{fanoutID},
+	})
+	if code != 0 {
+		t.Fatalf("scenario B (the new --blocks flag): %d; out=%+v", code, fixOut)
+	}
+	fixNewID := fixOut.(CreateResult).ID
+
+	readyOut, code = RunReady(root, ReadyOptions{Limit: 50})
+	if code != 0 {
+		t.Fatalf("ready after B: %d", code)
+	}
+	readyIDsB := map[string]bool{}
+	for _, r := range readyOut.(ReadyResult).Ready {
+		readyIDsB[r.ID] = true
+	}
+	if readyIDsB[fanoutID] {
+		t.Errorf("scenario B: fanout %s should be hidden from ready (now blocked by the new issue); fix is not working", fanoutID)
+	}
+	if !readyIDsB[fixNewID] {
+		t.Errorf("scenario B: new issue %s should be in ready (it has no incoming blocks); fix should leave it unblocked", fixNewID)
+	}
+}
+
+// TestRunCreate_Blocks_SingleAtomicCommit mirrors the --blocked-by atomic
+// commit guarantee but for the inverse direction. With --blocks, the
+// add_dep op lands under the EXISTING issue's shard (its deps[] is what
+// grows), not under the new issue's. The commit subject still keys the
+// new issue's short id so doctor's orphan-close correlates correctly.
+func TestRunCreate_Blocks_SingleAtomicCommit(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	existingOut, code := RunCreate(root, CreateOptions{Title: "fanout", Type: "task"})
+	if code != 0 {
+		t.Fatalf("seed: %d", code)
+	}
+	existingID := existingOut.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "follow-up blocker",
+		Type:   "task",
+		Blocks: []string{existingID},
+	})
+	if code != 0 {
+		t.Fatalf("create with --blocks: %d; out=%+v", code, out)
+	}
+	newID := out.(CreateResult).ID
+
+	// Exactly one new commit.
+	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	if commitsAfter != "1" {
+		t.Errorf("expected 1 new commit, got %s", commitsAfter)
+	}
+
+	// Subject carries `create +1` and keys the NEW issue (not the existing).
+	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	if !strings.Contains(subj, "create +1") {
+		t.Errorf("subject %q missing `create +1`", subj)
+	}
+	if !strings.Contains(subj, "("+ShortIssueID(newID)+")") {
+		t.Errorf("subject %q does not embed new issue short id; doctor's orphan-close grep will not match", subj)
+	}
+
+	// Create op lives under newID's shard; add_dep op lives under
+	// existingID's shard (because the dep belongs to the existing
+	// issue — its deps[] is what grew).
+	createMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", newID, "*", "*-create.json"))
+	if len(createMatches) != 1 {
+		t.Errorf("expected 1 create op under new id, got %d", len(createMatches))
+	}
+	depUnderExisting, _ := filepath.Glob(filepath.Join(root, ".act", "ops", existingID, "*", "*-add_dep.json"))
+	if len(depUnderExisting) != 1 {
+		t.Errorf("expected 1 add_dep op under existing id (its deps grew), got %d", len(depUnderExisting))
+	}
+	depUnderNew, _ := filepath.Glob(filepath.Join(root, ".act", "ops", newID, "*", "*-add_dep.json"))
+	if len(depUnderNew) != 0 {
+		t.Errorf("expected 0 add_dep ops under new id (its deps unchanged), got %d", len(depUnderNew))
+	}
+
+	// Folded state of the EXISTING issue has the new issue in deps[].
+	paths := config.Layout(root)
+	existingState, err := fold.FoldIssue(paths.Ops, existingID, fold.ApplyDispatch)
+	if err != nil {
+		t.Fatalf("FoldIssue existing: %v", err)
+	}
+	existingDeps, _ := existingState.Fields["deps"].([]map[string]string)
+	if len(existingDeps) != 1 {
+		t.Fatalf("existing.deps len = %d; want 1; got %v", len(existingDeps), existingState.Fields["deps"])
+	}
+	if existingDeps[0]["parent"] != newID || existingDeps[0]["edge_type"] != "blocks" {
+		t.Errorf("existing.deps[0] = %v; want parent=%s edge_type=blocks", existingDeps[0], newID)
+	}
+
+	// Folded state of the NEW issue has empty deps[] (--blocks doesn't
+	// modify the new issue's deps, only the existing one's).
+	newState, err := fold.FoldIssue(paths.Ops, newID, fold.ApplyDispatch)
+	if err != nil {
+		t.Fatalf("FoldIssue new: %v", err)
+	}
+	newDeps, _ := newState.Fields["deps"].([]map[string]string)
+	if len(newDeps) != 0 {
+		t.Errorf("new.deps should be empty; got %v", newDeps)
+	}
+}
+
+// TestRunCreate_Blocks_MultipleDeps verifies that N --blocks ids each
+// produce a distinct add_dep op (one per existing issue's shard), all
+// bundled into one commit.
+func TestRunCreate_Blocks_MultipleDeps(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	a, _ := RunCreate(root, CreateOptions{Title: "a"})
+	b, _ := RunCreate(root, CreateOptions{Title: "b"})
+	c, _ := RunCreate(root, CreateOptions{Title: "c"})
+	aID := a.(CreateResult).ID
+	bID := b.(CreateResult).ID
+	cID := c.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "blocks three",
+		Blocks: []string{aID, bID, cID},
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	newID := out.(CreateResult).ID
+
+	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	if commitsAfter != "1" {
+		t.Errorf("expected 1 commit, got %s", commitsAfter)
+	}
+	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	if !strings.Contains(subj, "create +3") {
+		t.Errorf("subject %q missing `create +3`", subj)
+	}
+
+	// One add_dep op file under each existing issue's shard.
+	for _, existing := range []string{aID, bID, cID} {
+		matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", existing, "*", "*-add_dep.json"))
+		if len(matches) != 1 {
+			t.Errorf("expected 1 add_dep under %s, got %d", existing, len(matches))
+		}
+		state, err := fold.FoldIssue(filepath.Join(root, ".act", "ops"), existing, fold.ApplyDispatch)
+		if err != nil {
+			t.Fatalf("FoldIssue %s: %v", existing, err)
+		}
+		deps, _ := state.Fields["deps"].([]map[string]string)
+		if len(deps) != 1 || deps[0]["parent"] != newID || deps[0]["edge_type"] != "blocks" {
+			t.Errorf("%s.deps = %v; want one entry pointing at %s", existing, deps, newID)
+		}
+	}
+}
+
+// TestRunCreate_Blocks_DuplicateTargetsDedup verifies that --blocks
+// values resolving to the same full id fold to one edge.
+func TestRunCreate_Blocks_DuplicateTargetsDedup(t *testing.T) {
+	root := makeCreateRepo(t)
+	eOut, _ := RunCreate(root, CreateOptions{Title: "existing"})
+	eID := eOut.(CreateResult).ID
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "new",
+		Blocks: []string{eID, eID, eID},
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	_ = out.(CreateResult).ID
+
+	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", eID, "*", "*-add_dep.json"))
+	if len(matches) != 1 {
+		t.Errorf("expected 1 add_dep (dedup), got %d", len(matches))
+	}
+}
+
+// TestRunCreate_Blocks_UnknownTarget verifies that an unknown id
+// surfaces issue_not_found (exit 3) and leaves NO ops on disk — the
+// new issue must not exist with a missing edge.
+func TestRunCreate_Blocks_UnknownTarget(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "would-be orphan",
+		Blocks: []string{"act-deadbeef"},
+	})
+	if code != 3 {
+		t.Fatalf("code = %d; want 3; out=%+v", code, out)
+	}
+	e, ok := out.(CreateErrorOutput)
+	if !ok || e.Error != "issue_not_found" {
+		t.Fatalf("error envelope = %+v (type %T)", out, out)
+	}
+	// Message must name --blocks so the operator knows which flag failed.
+	if !strings.Contains(e.Message, "--blocks") {
+		t.Errorf("message %q does not mention --blocks", e.Message)
+	}
+
+	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Errorf("HEAD moved on unknown-target failure")
+	}
+	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", "act-*"))
+	if len(matches) != 0 {
+		t.Errorf("expected no issue directories, got %v", matches)
+	}
+}
+
+// TestRunCreate_Blocks_EmptyValue verifies that --blocks "" is rejected
+// as bad_flag (exit 2).
+func TestRunCreate_Blocks_EmptyValue(t *testing.T) {
+	root := makeCreateRepo(t)
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "x",
+		Blocks: []string{""},
+	})
+	if code != 2 {
+		t.Fatalf("code = %d; want 2; out=%+v", code, out)
+	}
+	e, ok := out.(CreateErrorOutput)
+	if !ok || e.Error != "bad_flag" {
+		t.Errorf("error envelope = %+v (type %T)", out, out)
+	}
+}
+
+// TestRunCreate_Blocks_NoCommit verifies that --no-commit writes the
+// create op AND each add_dep op under the existing issue's shard, but
+// does not commit. This matches the --blocked-by --no-commit contract.
+func TestRunCreate_Blocks_NoCommit(t *testing.T) {
+	root := makeCreateRepo(t)
+	eOut, _ := RunCreate(root, CreateOptions{Title: "existing"})
+	eID := eOut.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	out, code := RunCreate(root, CreateOptions{
+		Title:    "new",
+		Blocks:   []string{eID},
+		NoCommit: true,
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	newID := out.(CreateResult).ID
+
+	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
+	}
+	createMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", newID, "*", "*-create.json"))
+	depMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", eID, "*", "*-add_dep.json"))
+	if len(createMatches) != 1 || len(depMatches) != 1 {
+		t.Errorf("expected 1 create (under new) + 1 add_dep (under existing) on disk, got %d + %d", len(createMatches), len(depMatches))
+	}
+}
+
+// TestRunCreate_Blocks_MixedWithBlockedBy verifies that --blocks and
+// --blocked-by are usable on the same create call. The new issue is
+// simultaneously gated by some prereqs (--blocked-by) and gating some
+// downstream work (--blocks); all 1 create + N+M add_dep ops land in
+// one commit.
+func TestRunCreate_Blocks_MixedWithBlockedBy(t *testing.T) {
+	root := makeCreateRepo(t)
+	prereqOut, _ := RunCreate(root, CreateOptions{Title: "prereq"})
+	downstreamOut, _ := RunCreate(root, CreateOptions{Title: "downstream"})
+	prereqID := prereqOut.(CreateResult).ID
+	downstreamID := downstreamOut.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "middle",
+		BlockedBy: []string{prereqID},
+		Blocks:    []string{downstreamID},
+	})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	newID := out.(CreateResult).ID
+
+	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	if commitsAfter != "1" {
+		t.Errorf("expected 1 commit, got %s", commitsAfter)
+	}
+	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	if !strings.Contains(subj, "create +2") {
+		t.Errorf("subject %q missing `create +2` (1 create + 1 blocked-by + 1 blocks = 3 ops)", subj)
+	}
+
+	// --blocked-by add_dep is under the NEW issue's shard.
+	bbMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", newID, "*", "*-add_dep.json"))
+	if len(bbMatches) != 1 {
+		t.Errorf("expected 1 add_dep under new id (--blocked-by), got %d", len(bbMatches))
+	}
+	// --blocks add_dep is under the DOWNSTREAM (existing) issue's shard.
+	bkMatches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", downstreamID, "*", "*-add_dep.json"))
+	if len(bkMatches) != 1 {
+		t.Errorf("expected 1 add_dep under downstream id (--blocks), got %d", len(bkMatches))
+	}
+
+	// Folded state: new.deps[0].parent = prereqID; downstream.deps[0].parent = newID.
+	paths := config.Layout(root)
+	newState, _ := fold.FoldIssue(paths.Ops, newID, fold.ApplyDispatch)
+	newDeps, _ := newState.Fields["deps"].([]map[string]string)
+	if len(newDeps) != 1 || newDeps[0]["parent"] != prereqID {
+		t.Errorf("new.deps = %v; want one entry pointing at %s", newDeps, prereqID)
+	}
+	dsState, _ := fold.FoldIssue(paths.Ops, downstreamID, fold.ApplyDispatch)
+	dsDeps, _ := dsState.Fields["deps"].([]map[string]string)
+	if len(dsDeps) != 1 || dsDeps[0]["parent"] != newID {
+		t.Errorf("downstream.deps = %v; want one entry pointing at %s", dsDeps, newID)
+	}
+}
+
+// TestRunCreate_Blocks_SharedIDWithBlockedBy_Rejected verifies that the
+// same existing id cannot appear in both --blocked-by and --blocks on
+// one call (it would record a 2-cycle: new blocks X and X blocks new).
+func TestRunCreate_Blocks_SharedIDWithBlockedBy_Rejected(t *testing.T) {
+	root := makeCreateRepo(t)
+	xOut, _ := RunCreate(root, CreateOptions{Title: "x"})
+	xID := xOut.(CreateResult).ID
+
+	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	out, code := RunCreate(root, CreateOptions{
+		Title:     "would-be cycle",
+		BlockedBy: []string{xID},
+		Blocks:    []string{xID},
+	})
+	if code != 2 {
+		t.Fatalf("code = %d; want 2 (bad_flag for 2-cycle); out=%+v", code, out)
+	}
+	e, ok := out.(CreateErrorOutput)
+	if !ok || e.Error != "bad_flag" {
+		t.Errorf("error envelope = %+v (type %T)", out, out)
+	}
+	// HEAD must not move on a rejected create.
+	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	if headAfter != headBefore {
+		t.Errorf("HEAD moved on rejected 2-cycle create")
+	}
+}
+
+// TestRunCreate_Blocks_AmbiguousPrefix verifies that a prefix matching
+// multiple existing issues surfaces id_ambiguous (exit 2), with --blocks
+// named in the message and candidates populated.
+func TestRunCreate_Blocks_AmbiguousPrefix(t *testing.T) {
+	root := makeCreateRepo(t)
+	seedCreateOpForAmbiguousTest(t, root, "act-abcd1111", "alpha", 1700000000000, 0)
+	seedCreateOpForAmbiguousTest(t, root, "act-abcd2222", "bravo", 1700000000001, 0)
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "new",
+		Blocks: []string{"act-abcd"},
+	})
+	if code != 2 {
+		t.Fatalf("code = %d; want 2 (id_ambiguous); out=%+v", code, out)
+	}
+	e, ok := out.(CreateErrorOutput)
+	if !ok || e.Error != "id_ambiguous" {
+		t.Fatalf("error envelope = %+v (type %T)", out, out)
+	}
+	if !strings.Contains(e.Message, "--blocks") {
+		t.Errorf("message %q does not mention --blocks", e.Message)
+	}
+	if len(e.Candidates) != 2 {
+		t.Errorf("candidates = %v; want 2", e.Candidates)
+	}
+}
+
+// TestRunCreate_Blocks_JSONEnvelopeRoundTrip verifies the success envelope
+// for --blocks marshals through a JSON round-trip without losing fields
+// (paranoid check for the act-c22b-style rollback noise; matches the
+// implicit contract of --blocked-by tests).
+func TestRunCreate_Blocks_JSONEnvelopeRoundTrip(t *testing.T) {
+	root := makeCreateRepo(t)
+	eOut, _ := RunCreate(root, CreateOptions{Title: "e"})
+	eID := eOut.(CreateResult).ID
+
+	out, code := RunCreate(root, CreateOptions{
+		Title:  "n",
+		Blocks: []string{eID},
+	})
+	if code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var roundTrip CreateResult
+	if err := json.Unmarshal(body, &roundTrip); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !roundTrip.Ok || roundTrip.ID == "" || roundTrip.Prefix == "" || roundTrip.Title != "n" {
+		t.Errorf("round-trip = %+v", roundTrip)
+	}
+}
