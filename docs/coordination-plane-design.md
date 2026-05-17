@@ -1,6 +1,6 @@
 # Coordination Plane Design — act-f048
 
-_2026-05-17. Design note for the coordination-plane reframe. Supersedes the multi-env research issue (act-8d67). Subsumes the deferred quiet-the-op-log brainstorm; obviates most of `docs/commit-noise-design.md`'s residual Phase-2 territory. v2 reflects findings from the three-reviewer pass on commit 73ff71c (see "Review trail" at the end of this doc)._
+_2026-05-17. Design note for the coordination-plane reframe. Supersedes the multi-env research issue (act-8d67). Subsumes the deferred quiet-the-op-log brainstorm; obviates most of `docs/commit-noise-design.md`'s residual Phase-2 territory. v2 reflected findings from the three-reviewer pass on commit 73ff71c. v2.1 (this version) drops backward-compat machinery per Andrew's explicit guidance — fewer than 10 act-using projects exist, all his, all on this machine, so config knobs / gating flags / vestigial fields written to ease migration for a public userbase aren't load-bearing here. See "Review trail" at the end._
 
 ## Reframe
 
@@ -42,10 +42,10 @@ Phase 2 is where the harder design questions live (sync failure semantics, two-r
 These hold under both phases:
 
 - **No act state in shared project history.** No `.act/ops/*` files committed to the host repo, no `act-op:` commits in the host repo's history going forward. The host project's `.gitignore` includes `.act/`. This is the load-bearing property; the design exists to enforce it structurally, with defense-in-depth (see "Public-repo concerns").
-- **Work-commit marker convention survives.** Work commits authored by agents continue to include a marker. Default placement is subject-line `(act-XXXX)` (status quo); per-repo config can switch to trailer form (`Act-Id: act-XXXX`) for projects that need it. See "Marker placement" under Public-repo concerns.
+- **Work-commit marker convention survives.** Work commits authored by agents continue to include a marker. Placement is trailer form (`Act-Id: act-XXXX` in the commit body) — invisible to conventional-commit linters, preserved by squash-merge, ignored by semantic-release CHANGELOG generators, and easy for external contributors to ignore. Doctor's grep matches both the trailer form and the historical subject-line `(act-XXXX)` form so existing repos' pre-migration history resolves cleanly. No config knob; trailer is the only emission shape going forward.
 - **Atomic op semantics preserved within each repo.** Each op file write + commit is atomic within the nested act repo, same as today. Cross-repo atomicity (close op in nested + work commit in host) is a new concern with an explicit contract; see "Atomicity under Phase 1" below.
 - **Multi-agent concurrent claim merging continues to work** within a single act state. Two agents claiming simultaneously in the same `.act/` resolve via the same conflict-free mechanism today.
-- **CLI surface mostly preserved.** `act ready`, `act update --claim`, `act close --reason`, etc. work unchanged. Phase 1 changes which git repo write paths target; the user-facing verbs don't shift.
+- **CLI surface mostly preserved.** `act ready`, `act update --claim`, `act close --reason`, etc. work unchanged. Phase 1 changes which git repo write paths target; the user-facing verbs don't shift. `act close` gains an optional `--no-code` flag so legitimate no-code closes can be distinguished from "agent closed but never pushed code" (see "Doctor reconciliation").
 - **Audit trail per-act-state.** The nested act repo's own history (claim sequences, who-closed-what, HLC) is fully queryable by `act log`, `act show`, `act doctor`, etc. — it just lives in the nested repo, not the code repo.
 - **No mandated cross-contributor visibility.** Default scope is "the agents of one operator." Multi-contributor coordination is possible via a shared act remote (Phase 2) but is not the default.
 
@@ -85,7 +85,7 @@ The CloseResult JSON's `staged_for_commit: true` field becomes always-false unde
 The delta from today's act, by phase. Each item below is a candidate implementation issue.
 
 ### Phase 1
-1. **`act init` two-repo bootstrap.** `git init` inside `.act/`; commit the new state (initial config, schema, empty op-log) to the nested repo. Separately, append `.act/` to the host repo's `.gitignore` and commit that change to the host. Spec the failure modes: nested-init succeeds + host-gitignore fails, vice versa, and the gitignore-edge-cases (entry already present, present-without-newline, missing file, ignored-at-different-scope). The `CommitResult` envelope grows a per-side commit shape.
+1. **`act init` two-repo bootstrap.** `git init` inside `.act/`; commit the new state (initial config, schema, empty op-log) to the nested repo. Separately, append `.act/` to the host repo's `.gitignore` and commit that change to the host. No flag-gated rollout — nested is what `act init` does. Spec the failure modes: nested-init succeeds + host-gitignore fails, vice versa, and the gitignore-edge-cases (entry already present, present-without-newline, missing file, ignored-at-different-scope). The `CommitResult` envelope grows a per-side commit shape.
 2. **Gitops dual-handle.** Today `internal/gitops/gitops.go` is single-`RepoRoot`. Phase 1 needs two handles: `actGitOps` (writes ops, queries nested-repo history) and `hostGitOps` (scans `(act-XXXX)` markers in host commit log, no write access from act commands). Every call site that today uses `gops` picks the right one. This is the bulk of the implementation work; "write-path retarget" in v1 understated it.
 3. **Host-vs-nested repo-root resolution.** Today `findRepoRoot` walks up to `.git`; under Phase 1 the nearest `.git` may be the nested act repo's. Resolver needs to find the *host* repo root (skip-nested-act-repo logic) and the act state path (the nested `.git` directory's parent) distinctly. (Architecture review finding #2/4.)
 4. **Hook cwd convention.** `.act/hooks/close` currently runs `go test ./...` etc. from the host repo root. Pin the convention: hooks always run with `cwd=host-repo-root`, with `$ACT_STATE_PATH` set to the nested `.act/` directory. Document in the hooks contract.
@@ -108,11 +108,9 @@ Phase 1's claim is "outside contributors see exactly the code." That's not autom
 
 ### Marker placement
 
-The default `(act-XXXX)` in subject lines collides with several common OSS workflows: squash-merge collapses N markers into ≤1, conventional-commit linters (commitlint, husky) reject trailing parentheticals, semantic-release surfaces them in generated CHANGELOG entries, and external contributors can't resolve them. (OSS review findings #3, #4.)
+Old subject-line `(act-XXXX)` markers collide with common OSS workflows: squash-merge collapses N markers into ≤1, conventional-commit linters (commitlint, husky) reject trailing parentheticals, semantic-release surfaces them in generated CHANGELOG entries, and external contributors can't resolve them. (OSS review findings #3, #4.)
 
-**Decision.** Add a per-repo config knob `marker_placement: subject | trailer` (default `subject` for backward compat; `trailer` recommended for `public: true` repos). Trailer form is `Act-Id: act-XXXX` in the commit body — invisible to conventional-commit linters, preserved by squash-merge, ignored by semantic-release, ignorable by external contributors. Doctor's marker grep matches both forms with one extended regex; the migration cost for existing repos is zero (they keep subject-line until they flip the knob).
-
-**Recommended default for new public repos:** `marker_placement: trailer`. `act init --public` flips it explicitly (and toggles a few other public-friendly defaults — see "CONTRIBUTING template" below).
+**Decision.** Trailer form (`Act-Id: act-XXXX` in the commit body) is the only emission shape going forward — no config knob, no flag, no per-repo opt-in. Trailer form is invisible to conventional-commit linters, preserved cleanly by squash-merge, ignored by semantic-release, and easy for external contributors to ignore. Doctor's marker grep matches both the new trailer form and the historical subject-line form so pre-migration markers in existing repos still resolve, but new markers are always trailers.
 
 ### Fork/PR flow
 
@@ -126,11 +124,11 @@ Beyond the defense-in-depth pre-commit hook (item 7 in the delta), document the 
 
 ### CONTRIBUTING template
 
-`act init --public` emits a short stanza in CONTRIBUTING.md (or appends to an existing one): "Maintainers use a tracker that adds an `Act-Id:` trailer to commit messages. External contributors don't need to do anything with these — submit PRs normally and we'll add trailers on merge if relevant." This makes the convention discoverable without requiring contributor participation. (OSS review finding #7.)
+`act init` emits a short stanza into CONTRIBUTING.md (or appends to an existing one) for any host repo with a public-looking remote: "Maintainers use a tracker that adds an `Act-Id:` trailer to commit messages. External contributors don't need to do anything with these — submit PRs normally and we'll add trailers on merge if relevant." This makes the convention discoverable without requiring contributor participation. (OSS review finding #7.)
 
 ## Migration story
 
-- **This repo (act).** Highest-stakes migration because we dogfood here. Plan: ship Phase 1 behind a flag (`act init --nested` initially) so the migration is opt-in. Switch the dogfood loop in one transaction (one-time `git init .act/`, import existing op files as initial nested commit per item 6, append `.act/` to host `.gitignore`, leave historical op commits in the host log as the "before" record). After ~a week of dogfood, flip nested to the default for new `act init`.
+- **This repo (act).** One-shot migration; no flag-gated rollout (the entire act-using population is Andrew's ~10 projects on one machine — no audience to ease into the change). Run the conversion in one transaction: `git init .act/`, import existing op files as the nested repo's initial commit (per delta item 6), append `.act/` to host `.gitignore`, `git rm -r --cached .act/` to un-track existing tracked op files. From the next commit on, all act ops live in the nested repo and the host log is pristine. Historical op commits in the host log stay as the "before" record but are dead history.
 - **Downstream repos** (inbox-triage, aac-website, sift, poke, ask). Same one-time conversion. Phase 1 only. No remote, single-machine.
 - **Already-public-history act-op commits in any repo.** Leave them. The point of the reframe is forward-going pristine history; historical noise is not worth rewriting history to fix.
 - **The deferred quiet-the-op-log brainstorm** is closed by this design.
@@ -151,17 +149,16 @@ Real interactions to call out so the migration doesn't surprise anyone (Architec
 - Op file format, HLC, claim protocol, idempotency guarantees.
 - The work-commit marker convention. The *placement* becomes configurable (subject vs trailer); the *fact* of a marker is unchanged and load-bearing for doctor.
 - Phase 1 of the four-phase orchestration plan (agent-push-to-main). Orthogonal.
-- `bundle_strategy` config knob exists. Under Phase 1 it effectively no-ops for the close path (see Atomicity section), but the config field stays for forward compat with Phase 2 / future bundling primitives in the nested repo.
+- `bundle_strategy` config knob is removed entirely. It was a hedge for host-repo log noise that no longer exists. If a future bundling concern emerges for the nested repo's own history, file fresh — the constraint shape will be different.
 
 ## Open questions
 
-The genuinely-open questions after this revision. Several v1 questions are now resolved (reconciliation contract → see Doctor section, migration import → option (a) in delta item 6, contributor scope → operator-decided documented). What's left:
+The genuinely-open questions after this revision. Several previous questions are now resolved (reconciliation contract → see Doctor section; migration import → option (a) in delta item 6; contributor scope → operator-decided, documented; marker placement → trailer-only, no config knob, see Public-repo concerns / Marker placement). What's left:
 
-1. **ID width / collision risk.** Current short id is 4 hex chars (~65k space). Doctor's marker grep operates at this width. Once Phase 1 ships nested-repo-per-project, contributors will run several act states; birthday-collision math says collisions appear within a few hundred issues per state. Cheap to widen to 6 hex (~16M space) before lock-in. (Correctness review finding #6.) **Recommended action: widen short id to 6 hex chars in Phase 1, before the migration cost compounds.** File as a Phase 1 sub-issue.
-2. **Marker placement default for new `act init`.** Default `subject` (backward-compat with all existing repos) feels right; `act init --public` flips to `trailer`. But the trailer form is strictly less intrusive and could be the new default for all `act init` calls, with `--legacy-markers` as the escape hatch for repos that have built tooling against subject-line markers. **Recommended action: keep `subject` as the new-init default for now; revisit after Phase 1 ships and we've measured external-contributor friction.**
-3. **Doctor's `--strict` integration with the canonical loop.** When does an agent run doctor at all under Phase 1, and at what severity? Probably: non-strict in the review step, strict in the host repo's CI. But the canonical loop in CLAUDE.md doesn't currently mandate doctor at all. Decide whether Phase 1 adds a doctor invocation to the canonical loop. (Correctness review finding #5.)
-4. **Worktree-sub-agent claim sharing.** Per the "Nested-git pain points" section, sub-agents in worktrees get separate `.act/` by default. Confirm via dogfood that this is desired; if claim-sharing is needed, decide whether `--act-state-path` is the right plumbing or something more implicit.
-5. **Phase 2 sync-failure semantics.** Deferred to Phase 2 design pass.
+1. **ID width / collision risk.** Current short id is 4 hex chars (~65k space). Doctor's marker grep operates at this width. Once Phase 1 ships nested-repo-per-project, contributors will run several act states; birthday-collision math says collisions appear within a few hundred issues per state. Widening to 6 hex (~16M space) before lock-in is cheap. (Correctness review finding #6.) **Recommended action: widen short id to 6 hex chars in Phase 1, before the migration cost compounds.** Filed as `act-f9a0`.
+2. **Doctor's `--strict` integration with the canonical loop.** When does an agent run doctor at all under Phase 1, and at what severity? Probably: non-strict in the review step, strict in the host repo's CI. But the canonical loop in CLAUDE.md doesn't currently mandate doctor at all. Decide whether Phase 1 adds a doctor invocation to the canonical loop. (Correctness review finding #5.)
+3. **Worktree-sub-agent claim sharing.** Per the "Nested-git pain points" section, sub-agents in worktrees get separate `.act/` by default. Confirm via dogfood that this is desired; if claim-sharing is needed, decide whether `--act-state-path` is the right plumbing or something more implicit.
+4. **Phase 2 sync-failure semantics.** Deferred to Phase 2 design pass.
 
 ## Relationship to other issues
 
@@ -185,11 +182,20 @@ The genuinely-open questions after this revision. Several v1 questions are now r
 
 ## Review trail
 
-v1 (`73ff71c`) was reviewed by three parallel agents under three lenses: architectural soundness, OSS-adoption friendliness, correctness/reconciliation. v2 (this revision) folds:
+v1 (`73ff71c`) was reviewed by three parallel agents under three lenses: architectural soundness, OSS-adoption friendliness, correctness/reconciliation. v2 folded the load-bearing findings:
 
-- **Load-bearing structural fixes (acknowledged regression):** act-a659 cross-repo bundling impossibility → `per_session` collapses to `per_op` under Phase 1 ("Atomicity under Phase 1"). Implementation-delta expansion from 4 to 8 items ("Implementation delta"). Migration import promoted from Open Question to specified decision (delta item 6).
-- **Doctrine refinements:** case (b) narrowed to "ignore iff tracking-only or no-code" ("Doctor reconciliation" table). "Code is canonical" framing narrowed to closed-work slice (Reframe corollary 1). Operator-decided scope explicitly deferred to Phase 2 (Reframe corollary 2).
-- **New design surface added:** atomicity contract (new section). Public-repo concerns: marker placement, fork/PR flow, gitignore defense-in-depth, CONTRIBUTING template (new section). Nested-git pain points (new section). CI-friendly no-state behavior (delta item 8).
+- **Load-bearing structural fixes:** act-a659 cross-repo bundling impossibility → `per_session` collapses to `per_op` under Phase 1 ("Atomicity under Phase 1"). Implementation-delta expansion from 4 to 8 items. Migration import promoted from Open Question to specified decision (delta item 6).
+- **Doctrine refinements:** case (b) narrowed to "ignore iff tracking-only or no-code" ("Doctor reconciliation" table). "Code is canonical" framing narrowed to closed-work slice. Operator-decided scope explicitly deferred to Phase 2.
+- **New design surface added:** atomicity contract. Public-repo concerns: marker placement, fork/PR flow, gitignore defense-in-depth, CONTRIBUTING template. Nested-git pain points. CI-friendly no-state behavior.
+
+v2.1 (this revision) drops backward-compat machinery per Andrew's explicit guidance ("fewer than 10 projects using act, all mine, on this machine — don't sweat what backwards compatibility looks like; optimize for the future"):
+
+- `marker_placement: subject | trailer` config knob removed — trailer is the only emission shape; doctor's grep still matches both forms so historical markers resolve, but there's no per-repo config to manage.
+- `act init --nested` flag removed — nested-repo bootstrap is what `act init` does.
+- `bundle_strategy` config field removed entirely — was a host-log-noise hedge that the reframe dissolves; if a nested-repo bundling concern emerges later, file fresh.
+- Migration story simplified from "ship behind flag, dogfood for a week, flip default" to "one-shot, no flag." Andrew runs the conversion on ~10 projects he controls; there's no audience to ease into the change.
+
+These simplifications shrink the implementation surface (notably act-b382, which was a config-knob-plus-flag implementation, becomes a smaller "switch emission to trailer form + extend doctor regex" change) but don't change the structural decisions from v2.
 - **New Phase-1 sub-question raised:** ID width widening before lock-in (Open Question #1).
 
 Two recommendations from the OSS review were considered and not adopted as defaults in this revision: (a) making `trailer` the marker placement default for all new `act init` rather than `--public` opt-in (deferred to Open Question #2 pending external-contributor friction data); (b) blocking-by-default doctor on case (a) anomalies (kept as warn-only with `--strict` opt-in to match the existing `checkOrphanClose` convention; agent-loop integration is Open Question #3).
