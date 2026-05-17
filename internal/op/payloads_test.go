@@ -202,6 +202,59 @@ func TestRemoveDepPayload_Validate_EdgeTypeInvalid(t *testing.T) {
 	}
 }
 
+// AddExternalDepPayload ------------------------------------------------------
+
+func TestAddExternalDepPayload_Validate_OK(t *testing.T) {
+	p := AddExternalDepPayload{Ref: "linear:ENG-123"}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestAddExternalDepPayload_Validate_RefEmpty(t *testing.T) {
+	p := AddExternalDepPayload{Ref: ""}
+	if err := p.Validate(); err == nil {
+		t.Fatal("want error for empty ref")
+	}
+}
+
+func TestAddExternalDepPayload_Validate_RefTooLong(t *testing.T) {
+	p := AddExternalDepPayload{Ref: string(make([]byte, MaxExternalRefLen+1))}
+	if err := p.Validate(); err == nil {
+		t.Fatal("want error for over-cap ref")
+	}
+}
+
+func TestAddExternalDepPayload_Validate_RefControlChar(t *testing.T) {
+	p := AddExternalDepPayload{Ref: "bad\x01ref"}
+	if err := p.Validate(); err == nil {
+		t.Fatal("want error for control char in ref")
+	}
+}
+
+func TestAddExternalDepPayload_Validate_RefNewline(t *testing.T) {
+	p := AddExternalDepPayload{Ref: "bad\nref"}
+	if err := p.Validate(); err == nil {
+		t.Fatal("want error for newline in ref")
+	}
+}
+
+// RemoveExternalDepPayload ---------------------------------------------------
+
+func TestRemoveExternalDepPayload_Validate_OK(t *testing.T) {
+	p := RemoveExternalDepPayload{Ref: "linear:ENG-123"}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestRemoveExternalDepPayload_Validate_RefEmpty(t *testing.T) {
+	p := RemoveExternalDepPayload{Ref: ""}
+	if err := p.Validate(); err == nil {
+		t.Fatal("want error for empty ref")
+	}
+}
+
 // AddAcceptPayload -----------------------------------------------------------
 
 func TestAddAcceptPayload_Validate_OK(t *testing.T) {
@@ -380,6 +433,8 @@ func TestValidatePayload_AllOpTypes(t *testing.T) {
 		{"update_field", `{"field":"title","value":"new"}`},
 		{"add_dep", `{"parent":"` + validParent + `","edge_type":"blocks"}`},
 		{"remove_dep", `{"parent":"` + validParent + `","edge_type":"relates"}`},
+		{"add_external_dep", `{"ref":"linear:ENG-123"}`},
+		{"remove_external_dep", `{"ref":"linear:ENG-123"}`},
 		{"add_accept", `{"criterion":"works"}`},
 		{"remove_accept", `{"index":0}`},
 		{"claim", `{"assignee":"alice"}`},

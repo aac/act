@@ -155,6 +155,14 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		if !isReadyCandidate(r) {
 			continue
 		}
+		// Any unresolved external dep excludes the issue. External refs are
+		// opaque to act; the orchestrator removes them via `act update
+		// --ext-rm` when the upstream work is done. Until then the issue is
+		// considered blocked. No override flag mirrors the internal-blocks
+		// surface because none exists today for internal blocks either.
+		if len(r.ExternalDeps) > 0 {
+			continue
+		}
 		blocked := false
 		for _, dep := range r.Deps {
 			if dep.EdgeType != "blocks" {

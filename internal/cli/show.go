@@ -311,6 +311,20 @@ func formatShowFields(res ShowResult) string {
 			}
 		}
 	}
+	if refs, ok := f["external_deps"]; ok {
+		switch xs := refs.(type) {
+		case []string:
+			for _, r := range xs {
+				fmt.Fprintf(&b, "external_dep: %s\n", r)
+			}
+		case []any:
+			for _, r := range xs {
+				if s, ok := r.(string); ok {
+					fmt.Fprintf(&b, "external_dep: %s\n", s)
+				}
+			}
+		}
+	}
 	if created, ok := f["created_at"].(string); ok {
 		fmt.Fprintf(&b, "created_at: %s\n", created)
 	}

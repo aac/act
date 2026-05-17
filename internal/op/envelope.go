@@ -34,21 +34,29 @@ type Envelope struct {
 	NodeID        string          `json:"node_id"`
 }
 
-// ValidOpTypes enumerates the 12 op types defined by the spec.
+// ValidOpTypes enumerates the op types defined by the spec.
+//
+// add_external_dep / remove_external_dep carry opaque-string refs to entities
+// in trackers act doesn't import. They are intentionally distinct from
+// add_dep / remove_dep: the latter constrain Parent to a valid act id and
+// edge_type to a closed set, while external refs are unstructured strings
+// the orchestrator owns the lifecycle of.
 var ValidOpTypes = map[string]bool{
-	"create":        true,
-	"update_field":  true,
-	"add_dep":       true,
-	"remove_dep":    true,
-	"add_accept":    true,
-	"remove_accept": true,
-	"claim":         true,
-	"close":         true,
-	"reopen":        true,
-	"redact":        true,
-	"import":        true,
-	"migrate":       true,
-	"tombstone":     true,
+	"create":              true,
+	"update_field":        true,
+	"add_dep":             true,
+	"remove_dep":          true,
+	"add_external_dep":    true,
+	"remove_external_dep": true,
+	"add_accept":          true,
+	"remove_accept":       true,
+	"claim":               true,
+	"close":               true,
+	"reopen":              true,
+	"redact":              true,
+	"import":              true,
+	"migrate":             true,
+	"tombstone":           true,
 }
 
 var (

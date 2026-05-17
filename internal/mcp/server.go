@@ -419,6 +419,8 @@ func (s *Server) tools() []toolDescriptor {
 				"description":  schemaString("New description."),
 				"accept":       schemaArrayOfString("Replace acceptance criteria."),
 				"dep_rm":       schemaArrayOfString("Dep ids to remove."),
+				"ext_add":      schemaArrayOfString("Opaque external-tracker refs to attach as blocking external deps (idempotent)."),
+				"ext_rm":       schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence)."),
 				"claim":        schemaBool("Atomic claim mode."),
 				"wait":         schemaBool("Wait for claim to free."),
 				"wait_timeout": schemaString("Wait timeout (Go duration string)."),
@@ -687,6 +689,8 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		Description *string  `json:"description"`
 		Accept      []string `json:"accept"`
 		DepRm       []string `json:"dep_rm"`
+		ExtAdd      []string `json:"ext_add"`
+		ExtRm       []string `json:"ext_rm"`
 		Claim       bool     `json:"claim"`
 		Wait        bool     `json:"wait"`
 		WaitTimeout string   `json:"wait_timeout"`
@@ -714,6 +718,8 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		Description: args.Description,
 		Accept:      args.Accept,
 		DepRm:       args.DepRm,
+		ExtAdd:      args.ExtAdd,
+		ExtRm:       args.ExtRm,
 		Claim:       args.Claim,
 		Wait:        args.Wait,
 		WaitTimeout: wait,

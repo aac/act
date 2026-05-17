@@ -167,6 +167,56 @@ func (p RemoveDepPayload) Validate() error {
 	return nil
 }
 
+// MaxExternalRefLen is the byte cap on an external dep ref. External refs are
+// opaque identifiers from sibling trackers (URLs, IDs, slugs); 256 bytes is
+// generous for any well-formed identifier and keeps wire shape predictable.
+const MaxExternalRefLen = 256
+
+// AddExternalDepPayload is the payload for op_type=add_external_dep. Ref is
+// an opaque string the caller owns the meaning of; act stores it verbatim.
+type AddExternalDepPayload struct {
+	Ref string `json:"ref"`
+}
+
+// Validate implements the add_external_dep write-time rules: ref must be a
+// non-empty, length-capped string of printable characters (no control chars,
+// no embedded NUL). The printable-check rejects the typical wire-corruption
+// vector — embedded NUL or newline accidentally pasted into an id — without
+// being overly restrictive about which tracker the ref came from.
+func (p AddExternalDepPayload) Validate() error {
+	return validateExternalRef("add_external_dep", p.Ref)
+}
+
+// RemoveExternalDepPayload is the payload for op_type=remove_external_dep.
+type RemoveExternalDepPayload struct {
+	Ref string `json:"ref"`
+}
+
+// Validate mirrors AddExternalDepPayload.Validate: same cap, same character
+// rules. A remove on a not-present ref is valid at the wire level; the apply
+// layer handles idempotent absence.
+func (p RemoveExternalDepPayload) Validate() error {
+	return validateExternalRef("remove_external_dep", p.Ref)
+}
+
+// validateExternalRef centralises ref-shape rules so add and remove can't
+// drift apart. opType is woven into the error message so a caller staring at
+// a validation failure can tell which side rejected.
+func validateExternalRef(opType, ref string) error {
+	if ref == "" {
+		return fmt.Errorf("op: %s.ref is empty", opType)
+	}
+	if len(ref) > MaxExternalRefLen {
+		return fmt.Errorf("op: %s.ref length %d > %d bytes", opType, len(ref), MaxExternalRefLen)
+	}
+	for i, r := range ref {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("op: %s.ref contains a control character at byte %d", opType, i)
+		}
+	}
+	return nil
+}
+
 // AddAcceptPayload is the payload for op_type=add_accept.
 type AddAcceptPayload struct {
 	Criterion string `json:"criterion"`
@@ -347,6 +397,18 @@ func ValidatePayload(opType string, payload []byte) error {
 		var p RemoveDepPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("op: unmarshal remove_dep payload: %w", err)
+		}
+		return p.Validate()
+	case "add_external_dep":
+		var p AddExternalDepPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("op: unmarshal add_external_dep payload: %w", err)
+		}
+		return p.Validate()
+	case "remove_external_dep":
+		var p RemoveExternalDepPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("op: unmarshal remove_external_dep payload: %w", err)
 		}
 		return p.Validate()
 	case "add_accept":
