@@ -44,6 +44,15 @@ type UpdateOptions struct {
 	// Repeatables.
 	Accept []string
 	DepRm  []string
+	// ExtAdd is the list of opaque external-tracker refs to attach as
+	// blocking external dependencies. Each entry generates one
+	// add_external_dep op. Re-adding a ref already on the issue is a no-op
+	// at the apply layer.
+	ExtAdd []string
+	// ExtRm is the list of opaque refs to clear. Each entry generates one
+	// remove_external_dep op. Clearing a not-present ref is a no-op — the
+	// orchestrator owns the lifecycle and may double-fire safely.
+	ExtRm []string
 
 	// Mode flags.
 	Claim       bool
@@ -198,6 +207,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		if len(opts.DepRm) > 0 {
 			conflicts = append(conflicts, "--dep-rm")
 		}
+		if len(opts.ExtAdd) > 0 {
+			conflicts = append(conflicts, "--ext-add")
+		}
+		if len(opts.ExtRm) > 0 {
+			conflicts = append(conflicts, "--ext-rm")
+		}
 		if len(conflicts) > 0 {
 			return UpdateErrorOutput{
 				Error:   "bad_flag",
@@ -266,10 +281,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: non-claim mutation. We must have at least one mutating flag.
-	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && len(opts.Accept) == 0 && len(opts.DepRm) == 0 {
+	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && len(opts.Accept) == 0 && len(opts.DepRm) == 0 && len(opts.ExtAdd) == 0 && len(opts.ExtRm) == 0 {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
-			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --dep-rm, or --claim must be supplied",
+			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --dep-rm, --ext-add, --ext-rm, or --claim must be supplied",
 		}, 2
 	}
 
@@ -405,6 +420,42 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}, 1
 		}
 		if errOut, code := addOp("remove_dep", op.RemoveDepPayload{Parent: parentFull, EdgeType: edgeType}); code != 0 {
+			return errOut, code
+		}
+	}
+	// External-dep adds. Each generates one add_external_dep op. The apply
+	// layer is the idempotency boundary, so re-adding an already-present ref
+	// is a no-op at fold time but still writes a fresh op file. We do not
+	// short-circuit here; producing the op preserves the audit trail and
+	// matches the wire-level contract for the orchestrator. Payload-level
+	// validation (empty, length cap, control chars) is gated up-front so a
+	// bad ref fails the entire update before any op hits disk.
+	for _, ref := range opts.ExtAdd {
+		pl := op.AddExternalDepPayload{Ref: ref}
+		if verr := pl.Validate(); verr != nil {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --ext-add: %v", verr),
+			}, 2
+		}
+		if errOut, code := addOp("add_external_dep", pl); code != 0 {
+			return errOut, code
+		}
+	}
+	// External-dep removes. Unlike --dep-rm we do NOT validate presence: the
+	// caller owns the lifecycle of the ref in its source-of-truth tracker
+	// and may double-clear safely. The apply layer absorbs the absence. The
+	// payload shape itself is still validated (same rules as add) so an
+	// empty or oversized ref can't slip through.
+	for _, ref := range opts.ExtRm {
+		pl := op.RemoveExternalDepPayload{Ref: ref}
+		if verr := pl.Validate(); verr != nil {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --ext-rm: %v", verr),
+			}, 2
+		}
+		if errOut, code := addOp("remove_external_dep", pl); code != 0 {
 			return errOut, code
 		}
 	}

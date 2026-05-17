@@ -266,6 +266,32 @@ COMMIT MARKER INVARIANTS
   This is why hand-rolling a different shape ('issue act-c26a' or
   'closes #c26a') breaks doctor: only '(act-XXXX...)' is recognised.
 
+EXTERNAL DEPS
+  Sometimes an act issue is blocked on work tracked in a sibling system
+  act doesn't import — a Linear ticket, a GitHub issue in another repo,
+  a Jira card, anything with its own canonical id. Use --ext-add to
+  attach an opaque ref:
+
+    $ act update <id> --ext-add "linear:ENG-123"
+    $ act update <id> --ext-add "gh:org/other-repo#42" --ext-add "..."
+
+  Each --ext-add writes one add_external_dep op. The ref is stored
+  verbatim — act doesn't interpret it. Re-adding an already-attached
+  ref is idempotent at the apply layer.
+
+  An issue with at least one external dep is excluded from 'act ready'
+  the same way an unresolved internal block excludes. The caller owns
+  the lifecycle: when the upstream work is done, clear the ref with
+  --ext-rm (also idempotent on absence, so an orchestrator can fire
+  the clear twice without erroring):
+
+    $ act update <id> --ext-rm "linear:ENG-123"
+
+  Use --ext-add for cross-tracker blocks; use 'act dep add' for act-
+  to-act block edges. The two surfaces compose: an issue may carry
+  both internal blockers and external refs, and either kind keeps it
+  out of 'act ready' until cleared.
+
 ESCAPE HATCHES
   Halt the loop and surface to the human when:
     - acceptance criteria are ambiguous or conflict

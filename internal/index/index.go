@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS issue_deps (
     PRIMARY KEY(issue_id, parent_id, edge_type)
 );
 
+CREATE TABLE IF NOT EXISTS issue_external_deps (
+    issue_id TEXT NOT NULL,
+    ref      TEXT NOT NULL,
+    PRIMARY KEY(issue_id, ref)
+);
+
 CREATE TABLE IF NOT EXISTS issue_meta (
     issue_id       TEXT PRIMARY KEY,
     schema_version INTEGER
@@ -138,8 +144,8 @@ type Dep struct {
 	EdgeType string
 }
 
-// Row is a denormalised view of one issues row plus its accept criteria
-// and dependency edges.
+// Row is a denormalised view of one issues row plus its accept criteria,
+// internal dependency edges, and external opaque-string deps.
 type Row struct {
 	ID           string
 	Title        string
@@ -154,6 +160,7 @@ type Row struct {
 	ClosedReason string
 	Accept       []string
 	Deps         []Dep
+	ExternalDeps []string
 }
 
 // Rebuild drops every row from the index and re-populates it from a fresh
@@ -185,6 +192,7 @@ func (i *Index) Rebuild(rootOps string) error {
 		"DELETE FROM issues",
 		"DELETE FROM issue_accept",
 		"DELETE FROM issue_deps",
+		"DELETE FROM issue_external_deps",
 		"DELETE FROM issue_meta",
 		"DELETE FROM fts",
 	} {
@@ -232,11 +240,12 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 	id := state.ID
 	// Always clear prior rows for this issue, so re-runs are idempotent.
 	for _, stmt := range []struct{ q, arg string }{
-		{"DELETE FROM issues       WHERE id       = ?", id},
-		{"DELETE FROM issue_accept WHERE issue_id = ?", id},
-		{"DELETE FROM issue_deps   WHERE issue_id = ?", id},
-		{"DELETE FROM issue_meta   WHERE issue_id = ?", id},
-		{"DELETE FROM fts          WHERE issue_id = ?", id},
+		{"DELETE FROM issues              WHERE id       = ?", id},
+		{"DELETE FROM issue_accept        WHERE issue_id = ?", id},
+		{"DELETE FROM issue_deps          WHERE issue_id = ?", id},
+		{"DELETE FROM issue_external_deps WHERE issue_id = ?", id},
+		{"DELETE FROM issue_meta          WHERE issue_id = ?", id},
+		{"DELETE FROM fts                 WHERE issue_id = ?", id},
 	} {
 		if _, err := tx.Exec(stmt.q, stmt.arg); err != nil {
 			return fmt.Errorf("index: clear rows for %s: %w", id, err)
@@ -305,6 +314,19 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 		}
 	}
 
+	// External (opaque-ref) dependency entries. The set semantics are enforced
+	// at the apply layer; here we just persist what the fold produced. Accept
+	// both the live []string and the post-JSON-round-trip []any so callers
+	// that hydrate state from a serialized fixture aren't silently lossy.
+	for _, ref := range coerceStringSlice(rendered["external_deps"]) {
+		if _, err := tx.Exec(
+			`INSERT INTO issue_external_deps (issue_id, ref) VALUES (?, ?)`,
+			id, ref,
+		); err != nil {
+			return fmt.Errorf("index: insert external_dep %s->%s: %w", id, ref, err)
+		}
+	}
+
 	// FTS row — title + description.
 	if _, err := tx.Exec(
 		`INSERT INTO fts (issue_id, title, description) VALUES (?, ?, ?)`,
@@ -319,6 +341,25 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 		id, 1,
 	); err != nil {
 		return fmt.Errorf("index: insert meta %s: %w", id, err)
+	}
+	return nil
+}
+
+// coerceStringSlice accepts either a live []string or a JSON-round-tripped
+// []any (which decodes elements as `any`/string at the value level). Used by
+// external_deps insertion; could be extended to other string-list fields.
+func coerceStringSlice(v any) []string {
+	switch x := v.(type) {
+	case []string:
+		return x
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
 	return nil
 }
@@ -476,5 +517,22 @@ func (i *Index) fillAcceptDeps(r *Row) error {
 		r.Deps = append(r.Deps, d)
 	}
 	drows.Close()
+
+	// external deps (opaque refs)
+	erows, err := i.db.Query(
+		`SELECT ref FROM issue_external_deps WHERE issue_id = ? ORDER BY ref`,
+		r.ID)
+	if err != nil {
+		return fmt.Errorf("index: load external_deps %s: %w", r.ID, err)
+	}
+	for erows.Next() {
+		var ref string
+		if err := erows.Scan(&ref); err != nil {
+			erows.Close()
+			return fmt.Errorf("index: scan external_dep %s: %w", r.ID, err)
+		}
+		r.ExternalDeps = append(r.ExternalDeps, ref)
+	}
+	erows.Close()
 	return nil
 }

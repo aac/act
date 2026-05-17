@@ -34,6 +34,10 @@ func runUpdate(args []string) int {
 	fs.Var(&acceptFlag, "accept", "append an acceptance criterion (repeatable)")
 	var depRmFlag stringSliceFlag
 	fs.Var(&depRmFlag, "dep-rm", "remove a dependency edge as <id> or <id>:<edge_type> (repeatable)")
+	var extAddFlag stringSliceFlag
+	fs.Var(&extAddFlag, "ext-add", "attach an opaque external-tracker ref as a blocking external dep (repeatable; idempotent)")
+	var extRmFlag stringSliceFlag
+	fs.Var(&extRmFlag, "ext-rm", "clear an opaque external-tracker ref (repeatable; idempotent on absence)")
 	claimFlag := fs.Bool("claim", false, "atomic claim protocol")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
@@ -66,6 +70,8 @@ func runUpdate(args []string) int {
 		ID:          idArg,
 		Accept:      []string(acceptFlag),
 		DepRm:       []string(depRmFlag),
+		ExtAdd:      []string(extAddFlag),
+		ExtRm:       []string(extRmFlag),
 		Claim:       *claimFlag,
 		Wait:        *wait,
 		WaitTimeout: *waitTimeout,

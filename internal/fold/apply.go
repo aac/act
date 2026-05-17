@@ -51,6 +51,10 @@ func ApplyDispatch(opType string) ApplyFunc {
 		return applyAddDep
 	case "remove_dep":
 		return applyRemoveDep
+	case "add_external_dep":
+		return applyAddExternalDep
+	case "remove_external_dep":
+		return applyRemoveExternalDep
 	case "add_accept":
 		return applyAddAccept
 	case "remove_accept":
@@ -213,6 +217,79 @@ func getDeps(state *IssueState) []map[string]string {
 				parent, _ := m["parent"].(string)
 				edge, _ := m["edge_type"].(string)
 				out = append(out, map[string]string{"parent": parent, "edge_type": edge})
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// applyAddExternalDep set-adds Ref into state.Fields["external_deps"]. Re-adding
+// an already-present ref is a no-op so the orchestrator can re-fire safely.
+//
+// External deps are stored as a flat []string rather than (parent, edge_type)
+// tuples because act treats refs as opaque — there is no second endpoint to
+// store and no edge taxonomy to model. The high-water HLC tracks the
+// "external_deps" field key for any add/remove on this issue.
+func applyAddExternalDep(state *IssueState, env op.Envelope, payload []byte) error {
+	var p op.AddExternalDepPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("add_external_dep: unmarshal: %w", err)
+	}
+	refs := getExternalDeps(state)
+	for _, r := range refs {
+		if r == p.Ref {
+			return nil // already present, idempotent
+		}
+	}
+	refs = append(refs, p.Ref)
+	state.Fields["external_deps"] = refs
+	if cur, ok := state.LastHLC["external_deps"]; !ok || cur.Less(env.HLC) {
+		state.LastHLC["external_deps"] = env.HLC
+	}
+	return nil
+}
+
+// applyRemoveExternalDep removes Ref from state.Fields["external_deps"]. A
+// remove that targets a not-present ref is a no-op (idempotent absence) —
+// the orchestrator owns the lifecycle and may re-fire a clear without
+// having to first observe whether the ref still exists.
+func applyRemoveExternalDep(state *IssueState, env op.Envelope, payload []byte) error {
+	var p op.RemoveExternalDepPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("remove_external_dep: unmarshal: %w", err)
+	}
+	refs := getExternalDeps(state)
+	out := refs[:0:0]
+	for _, r := range refs {
+		if r == p.Ref {
+			continue
+		}
+		out = append(out, r)
+	}
+	state.Fields["external_deps"] = out
+	if cur, ok := state.LastHLC["external_deps"]; !ok || cur.Less(env.HLC) {
+		state.LastHLC["external_deps"] = env.HLC
+	}
+	return nil
+}
+
+// getExternalDeps returns the external_deps slice as []string. Like getDeps,
+// it handles both the live in-process type and the post-JSON-round-trip type
+// the fold engine produces when reading test fixtures or migrated state.
+func getExternalDeps(state *IssueState) []string {
+	raw, ok := state.Fields["external_deps"]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
 			}
 		}
 		return out

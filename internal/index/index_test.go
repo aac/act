@@ -71,7 +71,7 @@ func TestOpenAndApplySchema_CreatesTables(t *testing.T) {
 		t.Fatalf("ApplySchema (second call): %v", err)
 	}
 
-	want := []string{"issues", "issue_accept", "issue_deps", "issue_meta", "fts"}
+	want := []string{"issues", "issue_accept", "issue_deps", "issue_external_deps", "issue_meta", "fts"}
 	for _, name := range want {
 		var got string
 		err := idx.db.QueryRow(

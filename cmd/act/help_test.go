@@ -54,6 +54,13 @@ func TestRunHelpWorkflow(t *testing.T) {
 		"ShortestUniquePrefixes",
 		"--commit-marker",
 		"do NOT slice the id by hand",
+		// External deps: orchestrator-managed opaque refs that exclude
+		// the issue from 'act ready' like an internal block does. Doc
+		// claim pinned here so future agents implementing related work
+		// can rely on the section staying present.
+		"EXTERNAL DEPS",
+		"--ext-add",
+		"--ext-rm",
 	})
 }
 
