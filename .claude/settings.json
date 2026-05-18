@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(**)",
+      "Write(**)"
+    ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
+  }
+}
