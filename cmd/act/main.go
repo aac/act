@@ -578,7 +578,7 @@ func runShow(args []string) int {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	includeOps := fs.Bool("include-ops", false, "inline the HLC-sorted op stream alongside the snapshot")
-	commitMarker := fs.Bool("commit-marker", false, "emit just the (act-XXXX) commit-message marker for this issue and exit")
+	commitMarker := fs.Bool("commit-marker", false, "emit just the Act-Id: act-XXXX commit-message trailer for this issue and exit")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -612,9 +612,12 @@ func runShow(args []string) int {
 		return code
 	}
 
-	// --commit-marker emits just the (act-XXXX) marker string the caller
-	// can paste into a work-commit message. Tombstoned issues have no
-	// commit marker (the issue is gone), so we surface a clear error.
+	// --commit-marker emits just the `Act-Id: act-XXXXXX` trailer string
+	// the caller embeds in their work-commit message body (separated from
+	// the subject by a blank line). Tombstoned issues have no commit marker
+	// (the issue is gone), so we surface a clear error. Pre-act-c4c5 this
+	// emitted `(act-XXXX)` subject-line form; the trailer is the only
+	// emission shape now (docs/coordination-plane-design.md v2.1).
 	if *commitMarker {
 		switch v := out.(type) {
 		case cli.ShowResult:
@@ -624,7 +627,7 @@ func runShow(args []string) int {
 					short = id
 				}
 			}
-			fmt.Println("(" + short + ")")
+			fmt.Println(cli.WorkCommitTrailerKey + ": " + short)
 			return 0
 		case cli.ShowTombstoned:
 			emitShowError(*asJSON, map[string]any{

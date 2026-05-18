@@ -23,7 +23,7 @@ The single discipline that makes everything else work:
 1. `act ready` — what's unblocked, ordered by priority. Pick the highest.
 2. `act update --claim <id>` — atomic claim. Other agents see "this is taken."
 3. Do the work. Write tests. Run them.
-4. `git commit -m "<summary> (<commit_marker>)"` — the marker enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window.
+4. `git commit -a -m "<subject>" -m "<commit_marker>"` — the marker is the `Act-Id: act-XXXXXX` trailer that goes in the commit BODY (the two `-m` flags produce a body paragraph separated from the subject by a blank line, matching `git interpret-trailers` form). The trailer enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window. The trailer form is invisible to conventional-commit linters, survives squash-merge cleanly, and is the only emission shape going forward; doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat in pre-migration repos.
 5. **Review the diff** — see the Review step section.
 6. `act close <id> --reason "<one-liner>"`.
 7. `git push origin main` (or whatever the project's default branch is) — concurrent agents see the close immediately; session-death can't lose work.
@@ -86,7 +86,7 @@ Before dispatching any worktree subagent, read `references/worktree-subagents.md
 
 ## Commit discipline
 
-- Every work commit includes the issue's `(act-XXXX)` marker.
+- Every work commit includes the issue's `Act-Id: act-XXXXXX` trailer in the commit body (separated from the subject by a blank line). Use two `-m` flags or a heredoc; do not append the marker to the subject line. Doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat, but new commits emit only the trailer.
 - Group `act create` / `act update` / `act dep add` ops with their work commit when they're load-bearing for the issue (e.g. filing follow-ups for an unresolved acceptance criterion). Otherwise let the auto-commit per `act` op stand on its own.
 - Use `--no-commit` only for true bootstrap or migration cases where bundling is the right unit.
 
@@ -96,7 +96,7 @@ For `bundle_strategy` tuning at project setup, see `references/setup.md`.
 
 Cold-start agents (no conversation history, just the docs + the codebase) execute documentation literally — they don't paraphrase, smooth, or interpolate gaps. If a doc in this project claims a behavior, that claim must have an asserting test exercising the behavior at the user-visible boundary, not at internal-state level.
 
-Real consequence from the act repo: the `(act-XXXX)` commit-marker bug passed every internal test (assertions on op-file bytes) but produced wrong git log subjects (assertions on commit message strings would have caught it). When you add a doc claim, add the test that asserts it.
+Real consequence from the act repo: the original `(act-XXXX)` commit-marker bug passed every internal test (assertions on op-file bytes) but produced wrong git log subjects (assertions on commit message strings would have caught it). When you add a doc claim, add the test that asserts it. The marker form has since switched to the `Act-Id: act-XXXXXX` trailer (act-c4c5); the lesson stands at every shape.
 
 ## Pre-close gates
 

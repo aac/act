@@ -488,7 +488,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		OpsWritten:      1,
 		Committed:       committed,
 		StagedForCommit: stagedForCommit,
-		CommitMarker:    fmt.Sprintf("(%s)", short),
+		CommitMarker:    WorkCommitMarker(full),
 		Reason:          opts.Reason,
 	}, 0
 }
@@ -498,8 +498,11 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 // Three cases (mutually exclusive on Committed/StagedForCommit/neither):
 //   - Committed: "Closed act-XXXX[: reason]" (legacy single-commit close).
 //   - StagedForCommit: "Closed act-XXXX[: reason]" plus a hint line telling
-//     the agent to subsume the staged close op via `git commit -am '<msg>
-//     (act-XXXX)'`. This is the act-a659 work-commit-with-close path.
+//     the agent to subsume the staged close op into the work commit, with
+//     the `Act-Id: act-XXXXXX` trailer in the commit body. Two `-m` flags
+//     produce the subject and trailer paragraphs. This is the act-a659
+//     work-commit-with-close path; act-c4c5 switched the marker form from
+//     subject-line `(act-XXXX)` to body-trailer `Act-Id: act-XXXXXX`.
 //   - Neither (--no-commit): "Closed act-XXXX[: reason] (op file written, not
 //     staged)" so the user knows downstream staging is on them.
 func FormatCloseHuman(res CloseResult) string {
@@ -509,7 +512,7 @@ func FormatCloseHuman(res CloseResult) string {
 	}
 	switch {
 	case res.StagedForCommit:
-		return fmt.Sprintf("%s\n  Close op staged. Include in your next commit:\n  git commit -am '<message> %s'\n", head, res.CommitMarker)
+		return fmt.Sprintf("%s\n  Close op staged. Include in your next commit:\n  git commit -a -m '<subject>' -m '%s'\n", head, res.CommitMarker)
 	case !res.Committed:
 		return fmt.Sprintf("%s (op file written, not staged)\n", head)
 	default:

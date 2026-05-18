@@ -99,20 +99,22 @@ func TestDocClaim_CanonicalLoop_HelpOverviewIncludesGitPush(t *testing.T) {
 	}
 }
 
-// TestDocClaim_CommitMarker_AppearsInGitLogAfterCreate pins the
+// TestDocClaim_CommitMarker_TrailerFormAndDoctorAttribution pins the
 // commit-marker contract claimed in `act help workflow` ("the work
-// commit's message must embed the issue's commit_marker") and surfaced
-// for cold-start agents via `act show <id> --commit-marker`. The
-// double-prefix bug (act-d3a5 era) passed every op-file test because
-// the assertion was on bytes inside the envelope, not on the literal
-// `git log -1 --format=%s` string the doctor greps.
+// commit's message must embed the issue's commit_marker as a trailer
+// in the body") and surfaced for cold-start agents via `act show <id>
+// --commit-marker`.
 //
-// This is a thin doctest layer on top of TestCommitFormat_Create in
-// commit_format_test.go; that test asserts the canonical subject
-// regex, this one asserts the contract a doc reader would extract:
-// after `act create`, `git log -1 --format=%s` contains `(act-XXXX)`
-// somewhere, with the marker matching what `--commit-marker` returns.
-func TestDocClaim_CommitMarker_AppearsInGitLogAfterCreate(t *testing.T) {
+// Two contracts pinned end-to-end:
+//
+//  1. `act show --commit-marker` emits the `Act-Id: act-XXXXXX` trailer
+//     shape (act-c4c5: trailer-form replaces the historical `(act-XXXX)`
+//     subject-line form for new emission).
+//  2. A work commit authored with that trailer in its body is correctly
+//     attributed by `act doctor` orphan-close — the regression seat-belt
+//     for the act-d3a5-era double-prefix class of marker bugs, this time
+//     at the trailer boundary.
+func TestDocClaim_CommitMarker_TrailerFormAndDoctorAttribution(t *testing.T) {
 	site := t.TempDir()
 	runGit(t, site, "init", "-q", "-b", "main")
 	configureSite(t, site, "doc@example.com", "doc")
@@ -122,16 +124,81 @@ func TestDocClaim_CommitMarker_AppearsInGitLogAfterCreate(t *testing.T) {
 	id := pickIDFromJSON(t, createOut)
 
 	// `act show <id> --commit-marker` is the canonical accessor the
-	// help text tells agents to use. Pull it and compare to git log.
+	// help text tells agents to use. Pull it; it must be the trailer
+	// shape (case-sensitive `Act-Id`, colon, space, then the canonical
+	// short id).
 	markerOut, _ := mustRunAct(t, site, 0, "show", id, "--commit-marker")
 	markerOut = strings.TrimSpace(markerOut)
-	if !regexp.MustCompile(`^\(act-[0-9a-f]{4,16}\)$`).MatchString(markerOut) {
-		t.Fatalf("commit_marker %q does not match canonical shape", markerOut)
+	trailerShape := regexp.MustCompile(`^Act-Id: act-[0-9a-f]{4,16}$`)
+	if !trailerShape.MatchString(markerOut) {
+		t.Fatalf("commit_marker %q does not match canonical trailer shape `Act-Id: act-XXXXXX`", markerOut)
 	}
 
-	subj := strings.TrimSpace(runOut(t, site, "git", "log", "-1", "--format=%s"))
-	if !strings.Contains(subj, markerOut) {
-		t.Errorf("git log subject %q does not contain marker %q", subj, markerOut)
+	// Simulate the agent's work commit: a code change in the host
+	// working tree, committed with the trailer in the body (two `-m`
+	// flags so the trailer becomes a body paragraph separated from
+	// the subject by a blank line — `git interpret-trailers` form).
+	workFile := filepath.Join(site, "WORK.txt")
+	if err := os.WriteFile(workFile, []byte("done\n"), 0o644); err != nil {
+		t.Fatalf("write workfile: %v", err)
+	}
+	runGit(t, site, "add", "WORK.txt")
+	runGit(t, site, "commit", "-q", "--no-verify", "-m", "implement marker probe", "-m", markerOut)
+
+	// Close the issue so doctor's orphan-close has something to
+	// attribute. Use --no-commit + manual stage so we don't have to
+	// thread a second work commit; the close op landing on its own
+	// is fine here.
+	mustRunAct(t, site, 0, "close", id, "--reason", "marker probe done")
+
+	// Doctor orphan-close must NOT report this issue — the trailer
+	// matches the new regex (`Act-Id: act-<markerHex>$`) cross-coupled
+	// with the issue's canonical short id.
+	doctorOut, _ := mustRunAct(t, site, 0, "doctor", "--check", "orphan-close", "--json")
+	if strings.Contains(doctorOut, id) {
+		t.Errorf("doctor orphan-close incorrectly flagged %s; the trailer-form work commit should attribute. doctor output:\n%s", id, doctorOut)
+	}
+}
+
+// TestDocClaim_CommitMarker_HistoricalSubjectFormStillAttributed pins
+// the back-compat half of the act-c4c5 marker switch: doctor must still
+// resolve work commits authored with the historical `(act-XXXX)`
+// subject-line form. New emission is trailer-only; resolution accepts
+// both shapes so pre-migration history in existing repos doesn't
+// suddenly start orphan-close-ing.
+func TestDocClaim_CommitMarker_HistoricalSubjectFormStillAttributed(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	createOut, _ := mustRunAct(t, site, 0, "create", "back-compat probe", "--json")
+	id := pickIDFromJSON(t, createOut)
+
+	// Derive the historical-form marker `(act-<short>)` by reading the
+	// short id off `act show --commit-marker` (trailer form) and
+	// rewrapping. This keeps the test resilient to the canonical short
+	// length (4 historical / 6 current).
+	markerOut, _ := mustRunAct(t, site, 0, "show", id, "--commit-marker")
+	short := strings.TrimPrefix(strings.TrimSpace(markerOut), "Act-Id: ")
+	subjectMarker := "(" + short + ")"
+
+	// Author a work commit with the historical subject-line marker only
+	// (no trailer in the body).
+	workFile := filepath.Join(site, "WORK.txt")
+	if err := os.WriteFile(workFile, []byte("done\n"), 0o644); err != nil {
+		t.Fatalf("write workfile: %v", err)
+	}
+	runGit(t, site, "add", "WORK.txt")
+	runGit(t, site, "commit", "-q", "--no-verify", "-m", "implement back-compat probe "+subjectMarker)
+
+	mustRunAct(t, site, 0, "close", id, "--reason", "back-compat probe done")
+
+	// Doctor orphan-close must still attribute this commit to the
+	// issue via the historical subject-line form.
+	doctorOut, _ := mustRunAct(t, site, 0, "doctor", "--check", "orphan-close", "--json")
+	if strings.Contains(doctorOut, id) {
+		t.Errorf("doctor orphan-close flagged %s despite the historical subject-line marker %q. doctor output:\n%s", id, subjectMarker, doctorOut)
 	}
 }
 

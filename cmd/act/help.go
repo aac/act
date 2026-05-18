@@ -92,11 +92,15 @@ THE CANONICAL WORK LOOP (use this in every session)
                                   # rationale and act-a659 in the rough).
                                   # If the tree is otherwise clean, the
                                   # close commits standalone.
-  5. git commit -am "<summary> (act-<short-id>)"
+  5. git commit -a -m "<summary>" -m "Act-Id: act-<short-id>"
                                   # subsumes the staged close op + your
-                                  # code changes. The (act-XXXX) marker
-                                  # lets 'act doctor' correlate work
-                                  # commits with closed issues.
+                                  # code changes. The 'Act-Id: act-XXXX'
+                                  # trailer in the commit body lets 'act
+                                  # doctor' correlate work commits with
+                                  # closed issues. Use two -m flags so
+                                  # the trailer becomes its own paragraph
+                                  # in the body (separated from the
+                                  # subject by a blank line).
   6. git push                     # publish for the other agents.
 
   In an MCP context, prefer act_next + act_finish — they compose the
@@ -182,14 +186,21 @@ THE LOOP IN DETAIL
 
   Doing the work
     Implement, write tests, run them. The work commit's message must
-    embed the issue's commit_marker so 'act doctor' can correlate:
+    embed the issue's commit_marker as a trailer in the body so
+    'act doctor' can correlate:
 
-      git commit -am "implement <thing> (act-XXXX)"
+      git commit -a -m "implement <thing>" -m "Act-Id: act-XXXX"
+
+    Two -m flags produce a body paragraph for the trailer (separated
+    from the subject by a blank line). The Act-Id trailer form
+    (act-c4c5) replaces the pre-migration '(act-XXXX)' subject-line
+    suffix; doctor still resolves the old form for back-compat, but
+    new commits should always use the trailer.
 
     Order matters. The canonical loop is close-then-commit, NOT
     commit-then-close: 'act close' stages its op file but defers
     the commit when the working tree has code changes; your next
-    'git commit -am' subsumes the staged op into the work commit.
+    'git commit -a' subsumes the staged op into the work commit.
     Result: one work-commit-with-close per task instead of work +
     close (act-a659).
 
@@ -233,9 +244,10 @@ THE LOOP IN DETAIL
     stages the op for git. Three commit outcomes depending on context:
 
       - Working tree has non-.act changes (typical): close op stays
-        staged. Your next 'git commit -am' picks it up alongside the
-        code change. The CloseResult includes commit_marker so the
-        agent's prompt can build the message verbatim.
+        staged. Your next 'git commit -a' picks it up alongside the
+        code change. The CloseResult includes commit_marker (the
+        'Act-Id: act-XXXX' trailer) so the agent's prompt can build
+        the message verbatim.
       - Working tree clean outside .act/: close commits standalone
         (preserves no-code-close UX as a single command).
       - --no-commit: op file written, not staged, not committed.
@@ -243,9 +255,10 @@ THE LOOP IN DETAIL
     --push errors when the close stays staged — there's nothing on
     HEAD yet to publish. The error path fully rolls back the close
     (op file removed), so the recovery is: commit your work first
-    via 'git commit -am <msg> (act-XXXX)', then either re-run
-    'act close <id> --push' or push manually after the work commit
-    subsumes the close op via the next plain 'act close'.
+    via 'git commit -a -m <subject> -m "Act-Id: act-XXXX"', then
+    either re-run 'act close <id> --push' or push manually after
+    the work commit subsumes the close op via the next plain
+    'act close'.
 
     --reason is capped at 500 bytes. The cap is deliberate: reasons
     are audit-trail summaries, intended to be readable at a glance
@@ -256,32 +269,40 @@ THE LOOP IN DETAIL
 
 EXAMPLE SESSION (CLI)
   $ act ready --json | jq -r '.ready[0].id'
-  act-c26a
-  $ act update --claim act-c26a
+  act-c26a01
+  $ act update --claim act-c26a01
   $ # ... edit code, write tests, run them ...
-  $ act close act-c26a --reason "all 5 acceptance criteria green"
-  Closed act-c26a: all 5 acceptance criteria green
+  $ act close act-c26a01 --reason "all 5 acceptance criteria green"
+  Closed act-c26a01: all 5 acceptance criteria green
     Close op staged. Include in your next commit:
-    git commit -am '<message> (act-c26a)'
-  $ git commit -am "implement --blocked-by flag (act-c26a)"
+    git commit -a -m '<subject>' -m 'Act-Id: act-c26a01'
+  $ git commit -a -m "implement --blocked-by flag" -m "Act-Id: act-c26a01"
   $ git push
 
 COMMIT MARKER INVARIANTS
-  Format is always '(act-<short>)'. The short string is the issue's
-  shortest-unique prefix as computed by ids.ShortestUniquePrefixes —
-  variable length, minimum 6 hex chars for newly minted ids (4 hex chars
-  for historical ids that pre-date the act-f9a0 widening; both shapes
-  remain valid on disk). Use 'act show <id> --commit-marker' (or the
-  commit_marker field on act_next's response) to get the canonical
-  string; do NOT slice the id by hand.
+  Emission form (since act-c4c5): 'Act-Id: act-<short>' as a trailer
+  in the commit body (separated from the subject by a blank line).
+  The short string is the issue's shortest-unique prefix as computed
+  by ids.ShortestUniquePrefixes — variable length, minimum 6 hex chars
+  for newly minted ids (4 hex chars for historical ids that pre-date
+  the act-f9a0 widening; both shapes remain valid on disk). Use
+  'act show <id> --commit-marker' (or the commit_marker field on
+  act_next's response) to get the canonical string;
+  do NOT slice the id by hand.
 
-  'act doctor' orphan-close greps for the literal '(act-XXXX)' marker in
-  commit messages. The grep keys on the issue's canonical marker prefix
-  (6 hex chars for new ids, the full id for historical sub-floor ids) and
-  matches as a literal substring, so unique-prefix growth from id
-  collisions still finds the right commits. This is why hand-rolling a
-  different shape ('issue act-c26a' or 'closes #c26a') breaks doctor:
-  only '(act-XXXX...)' is recognised.
+  'act doctor' orphan-close greps commit messages for either the new
+  'Act-Id: act-XXXX' trailer or the historical '(act-XXXX)' subject-
+  line marker (back-compat for resolution, not for emission). The
+  grep keys on the issue's canonical marker prefix (6 hex chars for
+  new ids, the full id for historical sub-floor ids) and matches as
+  a substring, so unique-prefix growth from id collisions still finds
+  the right commits. Hand-rolled shapes ('issue act-c26a01' or 'closes
+  #c26a01') do not match — use the canonical trailer.
+
+  The trailer form was chosen for OSS-friendliness: it survives
+  squash-merge intact, is invisible to conventional-commit linters,
+  is ignored by semantic-release CHANGELOGs, and is safe for
+  external contributors to ignore.
 
 EXTERNAL DEPS
   Sometimes an act issue is blocked on work tracked in a sibling system
@@ -368,9 +389,10 @@ SNAPSHOTS
 DOCTOR
   'act doctor' verifies git history vs tracker state, including
   orphan-close detection (a commit's message references an issue
-  that is still open). The (act-XXXX) commit_marker is what doctor
-  greps for; including it in work-commit messages is what makes
-  this check work.
+  that is still open). The 'Act-Id: act-XXXX' trailer (or, for
+  back-compat, the historical '(act-XXXX)' subject-line marker) is
+  what doctor greps for; including the trailer in work-commit
+  messages is what makes this check work.
 `
 
 const helpErrors = `act — error-envelope contract

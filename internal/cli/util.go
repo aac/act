@@ -37,6 +37,29 @@ func ShortIssueID(full string) string {
 	return full
 }
 
+// WorkCommitTrailerKey is the trailer key used by act's work-commit marker.
+// Strict `Act-Id:` (capitalized, case-sensitive) — matches `git interpret-
+// trailers` semantics so external tooling can parse the marker if desired.
+// The trailer goes in the commit body, not the subject; this is the only
+// emission form going forward (see act-c4c5 and docs/coordination-plane-
+// design.md v2.1 "Marker placement").
+const WorkCommitTrailerKey = "Act-Id"
+
+// WorkCommitMarker returns the canonical work-commit marker string an agent
+// embeds in their work-commit message for the given full issue id. The
+// shape is `Act-Id: act-XXXXXX` (trailer form), where the hex tail is the
+// same canonical short id ShortIssueID returns. This marker goes in the
+// commit BODY (separated from the subject by a blank line) — it is no
+// longer appended to the subject line.
+//
+// `act show --commit-marker`, the CloseResult.commit_marker field, and the
+// MCP act_next response all use this helper so every emission point shares
+// the exact same string. Doctor's grep accepts this form (and the historical
+// `(act-XXXX)` subject form) when correlating work commits with issues.
+func WorkCommitMarker(fullID string) string {
+	return WorkCommitTrailerKey + ": " + ShortIssueID(fullID)
+}
+
 // BuildOpCommitMessage returns the canonical auto-commit subject for a
 // single-op write. The format is `act-op: (act-XXXX) <op_type>` — the
 // parenthesized short id is required so `act doctor orphan-close` (which

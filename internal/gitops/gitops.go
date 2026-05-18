@@ -387,23 +387,29 @@ type WorkCommit struct {
 	AuthorDate string `json:"author_date"`
 }
 
-// WorkCommitsForIssue runs `git log --all --fixed-strings --grep='(act-<markerHex>'`
-// and returns up to limit matching commits, most-recent-first. The caller
-// passes the hex tail of the canonical commit marker — exactly
+// WorkCommitsForIssue runs `git log --all --extended-regexp --grep=<pattern>`
+// and returns up to limit matching commits, most-recent-first. The pattern
+// matches either the historical subject-line form `(act-<markerHex>` or the
+// trailer form `Act-Id: act-<markerHex>` introduced in act-c4c5 (see docs/
+// coordination-plane-design.md v2.1 "Marker placement"). Both shapes are
+// recognized for resolution; the trailer is the only emission form going
+// forward. The grep operates against the full commit message (subject +
+// body), so trailers in the body are matched cleanly.
+//
+// The caller passes the hex tail of the canonical commit marker — exactly
 // MinShortHexLen hex chars for ids at or above that floor (6 since
 // act-f9a0), and the full hex tail verbatim for historical ids that were
 // minted shorter than the current floor (e.g. 4-hex ids from pre-act-f9a0
 // repos). Result includes commits whose marker is the canonical short form
 // OR any longer extended marker that starts with the same prefix (i.e.
-// same-issue ids that grew on collision) — both contain `(act-<markerHex>`
-// as a literal substring.
+// same-issue ids that grew on collision) — the pattern is anchored on the
+// `act-<markerHex>` substring, not a fixed-length window.
 //
 // The function accepts any markerHex of length >= 4 so historical 4-hex
 // ids stay matchable; 4 is the on-disk syntax floor (idPattern), not the
 // generation floor (MinShortHexLen).
 //
-// limit=0 means unbounded. The pattern is fixed-strings so the literal
-// parenthesis isn't interpreted as regex.
+// limit=0 means unbounded.
 //
 // An empty repository (no commits yet) is treated as "no matches" rather
 // than an error: `git log` on a repo with no HEAD exits non-zero, but to
@@ -413,10 +419,17 @@ func (g *GitOps) WorkCommitsForIssue(markerHex string, limit int) ([]WorkCommit,
 	if len(markerHex) < 4 {
 		return nil, fmt.Errorf("gitops: WorkCommitsForIssue: markerHex length %d < 4", len(markerHex))
 	}
-	pattern := "(act-" + markerHex
+	// POSIX ERE alternation matching either:
+	//   - the historical subject form `(act-<hex>` (open-paren guards
+	//     against arbitrary "act-XXXX" text in unrelated commits), or
+	//   - the trailer form `Act-Id: act-<hex>` (any case-sensitive
+	//     position; git --grep matches the full message body).
+	// `\(` escapes the literal open paren in ERE so it isn't read as a
+	// grouping operator.
+	pattern := `(\(act-` + markerHex + `|Act-Id: act-` + markerHex + `)`
 	args := []string{
 		"log", "--all",
-		"--fixed-strings",
+		"--extended-regexp",
 		"--grep=" + pattern,
 		// Tab-separated triplet so we can split unambiguously even if the
 		// subject contains tabs (it normally doesn't, but author_date
