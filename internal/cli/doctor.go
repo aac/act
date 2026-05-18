@@ -74,6 +74,7 @@ var allChecks = []string{
 	"index-divergence",
 	"index-schema",
 	"gitignore-effective",
+	"nested-layout",
 }
 
 // validChecks indexes allChecks for O(1) name validation.
@@ -160,6 +161,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			findings = append(findings, checkIndexSchema(paths, opts.Fix)...)
 		case "gitignore-effective":
 			findings = append(findings, checkGitignoreEffective(repoRoot)...)
+		case "nested-layout":
+			findings = append(findings, checkNestedLayout(repoRoot, paths)...)
 		}
 	}
 
