@@ -176,17 +176,24 @@ func foldNeeded(run []string) bool {
 }
 
 // checkOrphanClose: for each closed issue, search the host repo's commit
-// log for the `(act-XXXX)` marker. Uses *gitops.HostGitOps — doctor's
-// marker scan is the canonical read-from-host call site under the dual-
-// handle split (act-3604).
+// log for a marker referencing the issue. Uses *gitops.HostGitOps —
+// doctor's marker scan is the canonical read-from-host call site under
+// the dual-handle split (act-3604).
 //
-// Marker form. Markers are `(act-<hex>)` where <hex> is the canonical
-// commit-marker prefix produced by ShortIssueID — exactly MinShortHexLen hex
-// chars for ids at or above that length, and the full id verbatim for
-// historical ids shorter than the floor (e.g. 4-char ids minted before
-// act-f9a0 widened MinShortHexLen to 6). We pass the canonical marker hex
-// to WorkCommitsForIssue; its substring grep matches:
-//   - the exact canonical marker for that issue, and
+// Marker forms (post-act-c4c5):
+//   - Trailer form `Act-Id: act-<hex>` in the commit body — the only
+//     emission shape going forward.
+//   - Historical subject-line form `(act-<hex>)` — still matched so
+//     pre-migration history in existing repos resolves cleanly. New
+//     work commits do not emit this form.
+//
+// <hex> is the canonical commit-marker prefix produced by ShortIssueID —
+// exactly MinShortHexLen hex chars for ids at or above that length (6
+// since act-f9a0), and the full id verbatim for historical ids shorter
+// than the floor (e.g. 4-char ids minted before act-f9a0 widened
+// MinShortHexLen to 6). We pass the canonical marker hex to
+// WorkCommitsForIssue; its substring grep matches:
+//   - either canonical marker form for that issue, and
 //   - any longer extended marker that starts with the same prefix (i.e.
 //     same-issue ids that grew on collision).
 //

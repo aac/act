@@ -87,8 +87,12 @@ pre-configured by the orchestrator.
 2. Do the work needed to satisfy the criteria, following this repo's CLAUDE.md
    for HOW (testing, review, formatting, gates). The criteria say what; the
    project's conventions say how.
-3. Commit with the `(act-XXXX)` marker from `act show --commit-marker`.
-   Push to your assigned branch.
+3. Commit with the `Act-Id: act-XXXXXX` trailer (in the commit body) from
+   `act show --commit-marker`. Use two `-m` flags so the trailer becomes
+   its own body paragraph separated from the subject by a blank line.
+   Pre-act-c4c5 this was a `(act-XXXX)` subject-line suffix; the trailer
+   form is the only emission shape now (doctor resolves the old form for
+   back-compat). Push to your assigned branch.
 4. If criteria are satisfied: `act close <id> --reason "<one-liner>"` and exit 0.
    If a halt condition fires: `act update <id> --note "HALT: <reason>"` and exit
    nonzero. Do NOT close.
@@ -140,7 +144,7 @@ The design space, by increasing centralization:
 
 The trade-off is concurrent-reader latency. More batching means a quieter log but less mid-flight visibility for parallel observers. An orchestrator that batches claims for 30 minutes before flushing is invisible to any other reader during that window. Whether that matters depends on whether anyone is reading mid-flight: a solo single-orchestrator project has no other reader, so batch freely; a multi-orchestrator setup or a human watching the log live wants tighter batching to keep the log fresh. The orchestrator gets to make this call per-deployment.
 
-The point is that most of this is **orchestrator policy, not act policy.** act's op semantics are the same regardless of when ops actually land in the log; the orchestrator chooses cadence. Honest qualifier: act does impose some constraints the orchestrator has to work within — commit-marker format `(act-XXXX)` is hardcoded into orphan detection, op-log filenames follow a per-op convention, and the existing `bundle_strategy=per_session` knob is worker-scoped (one worker's session) rather than orchestrator-scoped (the orchestrator's lifespan, which may span many workers). So the right framing is "cadence is orchestrator policy, atomicity primitives are act-imposed." The only new act-side surface needed for the orchestrator-batched pattern is, eventually, a way for an orchestrator to write multiple ops atomically in one commit — see the open question on multi-op atomicity vs batching.
+The point is that most of this is **orchestrator policy, not act policy.** act's op semantics are the same regardless of when ops actually land in the log; the orchestrator chooses cadence. Honest qualifier: act does impose some constraints the orchestrator has to work within — commit-marker format (the `Act-Id: act-XXXXXX` trailer in the commit body, per act-c4c5) is hardcoded into orphan detection, op-log filenames follow a per-op convention, and the existing `bundle_strategy=per_session` knob is worker-scoped (one worker's session) rather than orchestrator-scoped (the orchestrator's lifespan, which may span many workers). So the right framing is "cadence is orchestrator policy, atomicity primitives are act-imposed." The only new act-side surface needed for the orchestrator-batched pattern is, eventually, a way for an orchestrator to write multiple ops atomically in one commit — see the open question on multi-op atomicity vs batching.
 
 This also explains a previously-puzzling observation. The act repo dogfood found that closes-in-the-same-commit-as-work happen ~free under `per_session`, but claims still land standalone because they precede the work commit. In Mode A that's unavoidable — the worker has to publish its claim to avoid being double-claimed. In Mode B that asymmetry disappears: the orchestrator has already decided who's working what, so claims can stage indefinitely and land in batches. Mode B is *strictly quieter* than Mode A on log volume, not by act doing less work, but by the orchestrator providing the missing coordination layer.
 

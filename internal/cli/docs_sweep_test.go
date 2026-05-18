@@ -89,10 +89,16 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_CanonicalLoop_HelpOverviewIncludesGitPush",
 	},
 	{
-		name:         "commit-marker-format",
+		name:         "commit-marker-trailer-form",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "(act-XXXX)",
-		testName:     "TestDocClaim_CommitMarker_AppearsInGitLogAfterCreate",
+		claimPattern: "Act-Id: act-XXXX",
+		testName:     "TestDocClaim_CommitMarker_TrailerFormAndDoctorAttribution",
+	},
+	{
+		name:         "commit-marker-historical-back-compat",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "back-compat",
+		testName:     "TestDocClaim_CommitMarker_HistoricalSubjectFormStillAttributed",
 	},
 	{
 		name:         "error-envelope-id-ambiguous",

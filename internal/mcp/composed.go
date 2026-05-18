@@ -176,13 +176,17 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 				return showOut, true
 			}
 			var issueJSON any = showOut
-			// commit_marker carries the `(act-XXXX)` string the caller
-			// MUST embed in any work-commit message for this issue, so
-			// `act doctor` orphan-close can correlate the close with a
-			// real commit. We derive it from the same shortest-unique
-			// prefix the CLI exposes via show's `short_id`; fall back
-			// to the full id if that lookup misses (defensive — show
-			// always populates short_id for live ids).
+			// commit_marker carries the `Act-Id: act-XXXXXX` trailer the
+			// caller MUST embed in the BODY of any work-commit message
+			// for this issue (separated from the subject by a blank
+			// line), so `act doctor` orphan-close can correlate the
+			// close with a real commit. We derive it from the same
+			// shortest-unique prefix the CLI exposes via show's
+			// `short_id`; fall back to the full id if that lookup misses
+			// (defensive — show always populates short_id for live ids).
+			// Pre-act-c4c5 this was `(act-XXXX)` subject-line form;
+			// trailer form is the only emission shape now (docs/
+			// coordination-plane-design.md v2.1 "Marker placement").
 			short := pick.ID
 			if sr, ok := showOut.(cli.ShowResult); ok {
 				m := sr.ShowJSON()
@@ -194,7 +198,7 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 			return map[string]any{
 				"claimed":       true,
 				"issue":         issueJSON,
-				"commit_marker": "(" + short + ")",
+				"commit_marker": cli.WorkCommitTrailerKey + ": " + short,
 			}, false
 		}
 		// Claim lost (or other non-zero). Mark id as lost and back off.

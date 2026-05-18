@@ -255,12 +255,15 @@ func formatShowFields(res ShowResult) string {
 	if id, ok := f["id"].(string); ok {
 		fmt.Fprintf(&b, "id: %s\n", id)
 	}
-	// commit_marker is the canonical (act-XXXX) string an agent should
-	// embed in their work-commit message. Render it next to id so it's
-	// readable at a glance in act show. Skip on tombstoned issues
-	// (handled by ShowTombstoned branch above).
+	// commit_marker is the canonical `Act-Id: act-XXXXXX` trailer an agent
+	// should append (in the commit body, after a blank line) to their
+	// work-commit message. Render it next to id so it's readable at a
+	// glance in act show. Skip on tombstoned issues (handled by
+	// ShowTombstoned branch above). Pre-act-c4c5 this was `(act-XXXX)`
+	// subject-line form; the trailer form is now the only emission shape
+	// (docs/coordination-plane-design.md v2.1 "Marker placement").
 	if id, ok := f["id"].(string); ok && id != "" {
-		fmt.Fprintf(&b, "commit_marker: (%s)\n", ShortIssueID(id))
+		fmt.Fprintf(&b, "commit_marker: %s\n", WorkCommitMarker(id))
 	}
 	if title, ok := f["title"].(string); ok {
 		fmt.Fprintf(&b, "title: %s\n", title)

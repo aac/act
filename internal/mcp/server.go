@@ -496,14 +496,14 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_next",
-			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state. Wraps act_ready + act_update --claim + act_show with bounded retry on claim loss (§5.D.1). Returns `commit_marker` (e.g. \"(act-XXXX)\") — include this verbatim in every work-commit message for the claimed issue so `act doctor` orphan-close can correlate the close with a real commit.",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state. Wraps act_ready + act_update --claim + act_show with bounded retry on claim loss (§5.D.1). Returns `commit_marker` (e.g. \"Act-Id: act-XXXXXX\") — embed this verbatim as a trailer in the BODY of every work-commit message for the claimed issue (separated from the subject by a blank line) so `act doctor` orphan-close can correlate the close with a real commit.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Optional id prefix; restrict to descendants."),
 			}, nil),
 		},
 		{
 			Name:        "act_finish",
-			Description: "Recommended: close an issue with the act-XXXX commit-message marker so doctor's orphan-close check can correlate. Wraps act_close.",
+			Description: "Recommended: close an issue and return the `Act-Id: act-XXXXXX` trailer to embed in the work-commit body so doctor's orphan-close check can correlate. Wraps act_close.",
 			InputSchema: schemaObject(map[string]any{
 				"id":     schemaString("Issue id or prefix (required)."),
 				"reason": schemaString("Optional close reason."),

@@ -928,9 +928,11 @@ func TestPerSession_CloseStagesIntoWorkCommit(t *testing.T) {
 
 	// Now simulate the agent's work commit: stage feature.go and commit
 	// with the canonical marker. The staged close op rides along.
+	// Marker form (act-c4c5): `Act-Id: act-XXXXXX` trailer in the commit
+	// body (separated from the subject by a blank line). Two `-m` flags
+	// produce a body paragraph for the trailer.
 	runOut(t, root, "git", "add", "feature.go")
-	commitMsg := "implement Feature " + res.CommitMarker
-	runOut(t, root, "git", "commit", "-m", commitMsg)
+	runOut(t, root, "git", "commit", "-m", "implement Feature", "-m", res.CommitMarker)
 
 	// AC1: exactly +2 commits since pre-claim baseline (claim + work-with-close).
 	revList := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBeforeClaim+"..HEAD"))

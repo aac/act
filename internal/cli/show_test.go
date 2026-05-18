@@ -136,8 +136,10 @@ func TestFormatShowHuman_CommitMarkerAndDescription(t *testing.T) {
 	out := FormatShowHuman(res)
 
 	// MinShortHexLen widened to 6 in act-f9a0, so the commit marker for a
-	// long id now carries 6 hex chars instead of 4.
-	if !strings.Contains(out, "commit_marker: (act-123456)") {
+	// long id now carries 6 hex chars. Emission form switched to the
+	// `Act-Id: act-XXXXXX` trailer in act-c4c5 (pre-migration was
+	// `(act-XXXX)` subject-line form).
+	if !strings.Contains(out, "commit_marker: Act-Id: act-123456") {
 		t.Errorf("missing commit_marker line; got:\n%s", out)
 	}
 	if !strings.Contains(out, "description: first line") {
