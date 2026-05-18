@@ -43,7 +43,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
 
 ```jsonc
 {
-  "id":           "act-a1b2",                  // string, full hex id, "act-" + N hex chars (N >= 4)
+  "id":           "act-a1b2",                  // string, on-disk short id, "act-" + N hex chars (4 <= N <= 16)
   "title":        "string, 1..200 chars, required",
   "description":  "string, 0..16384 chars, default \"\"",
   "status":       "open | in_progress | blocked | closed",   // default "open"
@@ -64,7 +64,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
 ```
 
 Validation rules:
-- `id` matches `^act-[0-9a-f]{4,40}$`.
+- `id` matches `^act-[0-9a-f]{4,16}$`. IDs on disk are always the short form, capped at 16 hex chars (the collision-extension procedure in §ID model never grows past this cap). The 40-hex (actually 64-hex) sha256 digest is an internal intermediate value used to derive the short id; it is never written as an `id` or `issue_id` field.
 - `priority` outside 0..3 is a hard error at write time.
 - `parent` and every `deps[].id` MUST resolve to an existing (non-tombstoned) issue at fold time; doctor's `dangling-deps` check enforces this on the whole repo.
 - `acceptance_criteria` indices are stable across the issue's lifetime; `remove_accept` shifts later indices down (see op semantics below).
@@ -72,24 +72,24 @@ Validation rules:
 
 ### ID model
 
-Format: `act-<hex>` where the hex part is the prefix of a 40-char sha256 hex digest.
+Format: `act-<hex>` where the hex part is a prefix of a 64-char sha256 hex digest, **capped at 16 hex chars on disk**. IDs are always the short form; the 64-hex digest is an internal intermediate value used only to derive the short id and is never written as an `id` or `issue_id` field.
 
-Full ID derivation at create time:
+ID derivation at create time:
 
 ```
-full_hex   = sha256(canonical_json(create_op_payload) || nonce_bytes).hex()   // 64 chars
-short_hex  = full_hex[0:N]                                                    // N starts at 4
-id         = "act-" + short_hex
+full_hex   = sha256(canonical_json(create_op_payload) || nonce_bytes).hex()   // 64 chars, internal
+short_hex  = full_hex[0:N]                                                    // 4 <= N <= 16
+id         = "act-" + short_hex                                               // the on-disk id
 ```
 
 - `nonce_bytes` is 16 bytes of crypto-random, embedded in the create-op payload as `"nonce": "<32 hex chars>"`. The nonce is fixed at create time and never changes; it is what guarantees two identical-titled issues created in the same wall second produce different ids.
-- `N` starts at 4. Storage on disk and all references use the full 40-hex form internally; the 4-char `short_hex` is what writers stamp into the directory name and op `issue_id` field.
+- `N` starts at 4 and may grow up to 16 if collisions force extension; see the protocol below. Everything on disk — directory names, op envelope `issue_id`, folded issue `id`, references in `parent` and `deps` — uses the short form `act-` + `full_hex[0:N]`. The 64-hex `full_hex` itself is never persisted.
 - Collision-extension protocol at create time:
   1. Compute `full_hex`. Set `N = 4`.
   2. Candidate id = `"act-" + full_hex[0:N]`.
-  3. Acquire `.act/.lock` (advisory file lock). Scan `.act/ops/` for any directory whose name shares the candidate id's hex prefix and whose stored full id differs from `full_hex`.
-  4. If a collision exists, `N += 1` and goto 2. (Practically `N` will not exceed 8 before 2^32 issues exist.)
-  5. Write the create op with `issue_id = "act-" + full_hex[0:N]` and a sidecar `full_id = full_hex` field in the create payload. Release lock.
+  3. Acquire `.act/.lock` (advisory file lock). Scan `.act/ops/` for any directory whose name equals the candidate id but whose stored create-op `full_hex` differs (i.e. a real id collision, not the same issue).
+  4. If a collision exists, `N += 1` and goto 2. (Practically `N` will not exceed 8 before 2^32 issues exist; the hard cap is `N = 16`.)
+  5. Write the create op with `issue_id = "act-" + full_hex[0:N]` and a sidecar `full_id = full_hex` field in the create payload (the only place the 64-hex digest is persisted, to support post-hoc collision verification). Release lock.
 - Display: the CLI computes the shortest unique prefix across all currently-known issues per invocation (git-style). Ties are lengthened one hex at a time; the shortest unique form is what `act show`, `act list`, `act ready` print. Internally everything is keyed off the on-disk id (which already encodes the collision-extension result).
 - Prefix resolution on input: a user-supplied prefix matching exactly one stored id resolves; matching zero or two-or-more is an error with a structured `{"error":"ambiguous-id","candidates":[...]}` payload.
 
@@ -567,7 +567,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--description "text"` (string, default "").
 - `--json` (bool, default false for humans, true under MCP).
 
-**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new full issue id `act-<16-hex>`, writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `post-create` hook, then op-commits unless `--no-commit`.
+**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `post-create` hook, then op-commits unless `--no-commit`.
 
 **JSON output:**
 ```json
