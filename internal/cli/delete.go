@@ -331,9 +331,9 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	// `act-op: (act-XXXX) tombstone [+N]`. See act-d3a5.
 	commitMsg := BuildBatchCommitMessage(envs[0], len(envs))
 
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewGitOps(repoRoot)
+		gops = gitops.NewActGitOps(repoRoot)
 		gops.Verify = opts.Verify
 	}
 

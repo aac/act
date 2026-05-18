@@ -36,9 +36,9 @@ func runImport(args []string) int {
 		return 3
 	}
 
-	var g *gitops.GitOps
+	var g *gitops.ActGitOps
 	if !*noCommit {
-		g = gitops.NewGitOps(root)
+		g = gitops.NewActGitOps(root)
 	}
 
 	res, runErr := importer.Run(root, importer.Options{

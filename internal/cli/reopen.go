@@ -247,9 +247,9 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: write + auto-commit.
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewGitOps(repoRoot)
+		gops = gitops.NewActGitOps(repoRoot)
 		gops.Verify = opts.Verify
 	}
 	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{

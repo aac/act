@@ -116,7 +116,7 @@ func RunInit(repoRoot string, force, commit bool, machineID, gitEmail string, no
 	// Auto-commit step. Never `-A` — only the paths we just wrote, so pre-
 	// existing dirty work in the tree stays out of this commit.
 	if commit {
-		gops := gitops.NewGitOps(repoRoot)
+		gops := gitops.NewActGitOps(repoRoot)
 		if err := gops.StageOpFile(".act"); err != nil {
 			out.CommitError = fmt.Sprintf("git add .act: %v", err)
 			return out, 0

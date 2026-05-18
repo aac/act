@@ -277,7 +277,7 @@ func (s *Server) callBlock(raw json.RawMessage) (any, bool) {
 // that fails on Commit (to exercise the rollback path).
 type gopsFactory func(repoRoot string) blockGitOps
 
-// blockGitOps is the subset of *gitops.GitOps that act_block needs. The
+// blockGitOps is the subset of *gitops.ActGitOps that act_block needs. The
 // real type satisfies this interface natively.
 type blockGitOps interface {
 	StageOpFile(path string) error
@@ -286,9 +286,9 @@ type blockGitOps interface {
 	Root() string
 }
 
-// realBlockGitOps wraps *gitops.GitOps to satisfy blockGitOps. Root is
+// realBlockGitOps wraps *gitops.ActGitOps to satisfy blockGitOps. Root is
 // added as a small helper for the unstage path.
-type realBlockGitOps struct{ inner *gitops.GitOps }
+type realBlockGitOps struct{ inner *gitops.ActGitOps }
 
 func (r realBlockGitOps) StageOpFile(p string) error { return r.inner.StageOpFile(p) }
 func (r realBlockGitOps) Commit(msg string) error    { return r.inner.Commit(msg) }
@@ -409,13 +409,13 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 	}
 
 	// Single-commit atomic write per §5.D.2.
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	var bgops blockGitOps
 	if !args.NoCommit {
 		if factory != nil {
 			bgops = factory(s.repoRoot)
 		} else {
-			gops = gitops.NewGitOps(s.repoRoot)
+			gops = gitops.NewActGitOps(s.repoRoot)
 			bgops = realBlockGitOps{inner: gops}
 		}
 	}
@@ -425,9 +425,9 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 	// block-then-close sequence still correlates the close with a commit.
 	commitMsg := fmt.Sprintf("act-block: (%s)", cli.ShortIssueID(full))
 
-	// Use the underlying real *gitops.GitOps when no factory was injected;
+	// Use the underlying real *gitops.ActGitOps when no factory was injected;
 	// the factory path lets tests trigger commit failure to exercise the
-	// rollback. The shared util helper expects a real *gitops.GitOps so the
+	// rollback. The shared util helper expects a real *gitops.ActGitOps so the
 	// rollback path can call git restore --staged via runUnstage. To keep
 	// that helper canonical, we delegate to it for the production case and
 	// inline the rollback for the test-injected case.

@@ -484,9 +484,9 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// its own auto-commit (unless deferred); so we end up with N commits
 	// when N flags were supplied and not deferred. The JSON contract:
 	// committed=true means at least one commit happened.
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	if !effectiveNoCommit {
-		gops = gitops.NewGitOps(repoRoot)
+		gops = gitops.NewActGitOps(repoRoot)
 		gops.Verify = opts.Verify
 	}
 	for i, env := range envelopes {
@@ -567,7 +567,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		wait = 60 * time.Second
 	}
 
-	gops := gitops.NewGitOps(repoRoot)
+	gops := gitops.NewActGitOps(repoRoot)
 	gops.Verify = opts.Verify
 
 	// claim's GitOps interface comment ("Commit stages the .act/ops subtree
@@ -712,13 +712,13 @@ func FormatUpdateHuman(res UpdateResult) string {
 	return fmt.Sprintf("Updated %s (%s %d ops)\n", res.ID, verb, res.OpsWritten)
 }
 
-// claimGitOps wraps a production *gitops.GitOps so its Commit method
+// claimGitOps wraps a production *gitops.ActGitOps so its Commit method
 // stages `.act/ops` first. The claim package writes the new op file
 // directly to disk (bypassing WriteOpAndAutoCommit's explicit StageOpFile
 // call), so without this wrapper the subsequent `git commit` finds an
 // empty index and fails. PullRebase / Push pass through unchanged.
 type claimGitOps struct {
-	inner    *gitops.GitOps
+	inner    *gitops.ActGitOps
 	repoRoot string
 }
 
@@ -736,7 +736,7 @@ func (c *claimGitOps) Push() error       { return c.inner.Push() }
 
 // runGit is a tiny inline shellout used only by claimGitOps.Commit. We
 // don't import os/exec at package scope just for this wrapper, so we go
-// through the inner *gitops.GitOps' own runner indirection by calling a
+// through the inner *gitops.ActGitOps' own runner indirection by calling a
 // known no-op-on-success command. The simplest path is to add `git add`
 // here directly.
 func (c *claimGitOps) runGit(args ...string) (string, error) {

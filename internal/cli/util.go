@@ -116,8 +116,8 @@ var ErrInvalidFlags = errors.New("cli: invalid flag combination")
 //     which the caller may surface as exit 2.
 //
 // gitops may be nil iff opts.NoCommit is true; otherwise the caller must
-// provide a configured *gitops.GitOps.
-func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths, gops *gitops.GitOps, opts WriteOpts) error {
+// provide a configured *gitops.ActGitOps.
+func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths, gops *gitops.ActGitOps, opts WriteOpts) error {
 	if opts.NoCommit && opts.Push {
 		return fmt.Errorf("%w: --no-commit and --push are mutually exclusive", ErrInvalidFlags)
 	}
@@ -207,7 +207,7 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 // envs and bodies must have the same length and be non-empty. gops may be
 // nil iff opts.NoCommit is true. The commit message is supplied by the
 // caller; act_block uses `act-block: <short>` per spec §"MCP composed".
-func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.LayoutPaths, gops *gitops.GitOps, opts WriteOpts, commitMessage string) error {
+func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.LayoutPaths, gops *gitops.ActGitOps, opts WriteOpts, commitMessage string) error {
 	if len(envs) == 0 {
 		return fmt.Errorf("cli: WriteOpsAndAutoCommit: no ops supplied")
 	}
@@ -394,7 +394,7 @@ func ListPendingOpFilesForIssue(repoRoot, opsDir, issueID string) ([]string, err
 // operation is best-effort; failures are returned but typical callers
 // ignore the result because the original commit error is the user-facing
 // signal.
-func unstage(g *gitops.GitOps, opPath string) error {
+func unstage(g *gitops.ActGitOps, opPath string) error {
 	// We deliberately reuse the public StageOpFile-like indirection by
 	// running `git restore --staged` directly. To avoid extending the
 	// public API surface for one call site, we shell out via exec here.

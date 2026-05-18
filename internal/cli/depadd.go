@@ -323,9 +323,9 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewGitOps(repoRoot)
+		gops = gitops.NewActGitOps(repoRoot)
 	}
 	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
 		NoCommit: opts.NoCommit,

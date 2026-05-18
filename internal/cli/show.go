@@ -175,7 +175,7 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	// best-effort — git failures here degrade to "no commits surfaced"
 	// rather than failing the whole show (act-9c8c).
 	if prefix4 := first4Hex(full); prefix4 != "" {
-		g := gitops.NewGitOps(repoRoot)
+		g := gitops.NewHostGitOps(repoRoot)
 		if commits, gerr := g.WorkCommitsForIssue(prefix4, showCommitsLimit); gerr == nil {
 			res.Commits = commits
 		}

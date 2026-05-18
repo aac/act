@@ -78,7 +78,7 @@ func fixedEnvelope(t *testing.T) (op.Envelope, []byte) {
 
 func TestWriteOpAndAutoCommitBasic(t *testing.T) {
 	dir, paths := makeWriteRepo(t)
-	g := gitops.NewGitOps(dir)
+	g := gitops.NewActGitOps(dir)
 	env, body := fixedEnvelope(t)
 
 	if err := WriteOpAndAutoCommit(env, body, paths, g, WriteOpts{}); err != nil {
@@ -111,7 +111,7 @@ func TestWriteOpNoCommit(t *testing.T) {
 
 func TestWriteOpInvalidFlags(t *testing.T) {
 	dir, paths := makeWriteRepo(t)
-	g := gitops.NewGitOps(dir)
+	g := gitops.NewActGitOps(dir)
 	env, body := fixedEnvelope(t)
 
 	cases := []WriteOpts{
@@ -132,7 +132,7 @@ func TestWriteOpAndAutoCommitHookSuccess(t *testing.T) {
 		t.Skip("shell hook scripts not supported on windows")
 	}
 	dir, paths := makeWriteRepo(t)
-	g := gitops.NewGitOps(dir)
+	g := gitops.NewActGitOps(dir)
 	env, body := fixedEnvelope(t)
 
 	hookPath := filepath.Join(paths.Hooks, "claim")
@@ -162,7 +162,7 @@ func TestWriteOpAndAutoCommitHookFailure(t *testing.T) {
 		t.Skip("shell hook scripts not supported on windows")
 	}
 	dir, paths := makeWriteRepo(t)
-	g := gitops.NewGitOps(dir)
+	g := gitops.NewActGitOps(dir)
 	env, body := fixedEnvelope(t)
 	headBefore := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "HEAD"))
 
