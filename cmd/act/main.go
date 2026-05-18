@@ -99,6 +99,8 @@ func main() {
 		os.Exit(runMCP(args))
 	case "mine":
 		os.Exit(runMine(args))
+	case "install-skill":
+		os.Exit(runInstallSkill(args))
 	case "-h", "--help":
 		usage()
 		os.Exit(0)
@@ -112,7 +114,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, import, mcp, mine")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, import, mcp, mine, install-skill")
 }
 
 // unknownSubcommandMsg returns the canonical "you typed a subcommand

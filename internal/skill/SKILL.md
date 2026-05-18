@@ -1,0 +1,109 @@
+---
+name: act
+description: Use when working in any repo with a .act/ directory at its root, or when the user mentions "act task tracker", "act_next", "act_finish", act-XXXX issue ids, or agent-driven task management. Also trigger on phrases like "what's ready", "claim this issue", or "the act backlog". Covers the canonical work loop, claim semantics, commit-marker discipline, sub-agent isolation, and review patterns for any project that uses act for agent task tracking.
+---
+
+# act — agent task tracker workflow
+
+This skill activates whenever you're in a repo that uses `act` (the agent-first task tracker — single Go binary plus MCP server, append-only op-log under `.act/`). It's the runtime layer for how to use the tool. Mechanics live in `act help`; this is the opinions and rules layer.
+
+**Reference files (read when the situation applies):**
+
+- `references/setup.md` — installing/finding the act binary, Claude Code auto-mode permission carveouts, `bundle_strategy` choice. Read once per project at bootstrap.
+- `references/worktree-subagents.md` — the worktree `--push` trap and parallelism-vs-isolation guidance. Read before dispatching any sub-agent.
+
+If act isn't already installed and configured in this project, read `references/setup.md` first. Otherwise proceed.
+
+Run `act help` once at the start of any session to absorb the mechanics. That's the canonical reference; this skill assumes you've read it.
+
+## The canonical work loop
+
+The single discipline that makes everything else work:
+
+1. `act ready` — what's unblocked, ordered by priority. Pick the highest.
+2. `act update --claim <id>` — atomic claim. Other agents see "this is taken."
+3. Do the work. Write tests. Run them.
+4. `git commit -m "<summary> (<commit_marker>)"` — the marker enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window.
+5. **Review the diff** — see the Review step section.
+6. `act close <id> --reason "<one-liner>"`.
+7. `git push origin main` (or whatever the project's default branch is) — concurrent agents see the close immediately; session-death can't lose work.
+8. Repeat from step 1 until `act ready` is empty.
+
+In an MCP-equipped session, `act_next` + `act_finish` collapse 1+2 and 6+7 respectively.
+
+## Review step (step 5)
+
+Orchestrator-judged based on the change's scope and risk:
+
+- **No review:** typo fixes, doc touch-ups, formatting-only commits, comments. Trust the work + your own checks; close.
+- **Lightweight review (default for ergonomic features and bugfixes):** `feature-dev:code-reviewer` over the diff with `>70% confidence` filter. Goal is signal not nits. Findings → file as follow-up issues, fix the load-bearing ones inline, close on the rest.
+- **Multi-modal review (default for changes affecting agent workflow, public API, or concurrency semantics):** code-reviewer + a UX/walkthrough reviewer + (where appropriate) a real workflow run by a fresh agent. These catch non-overlapping defect classes; relying on one leaves blind spots.
+- **Pre-implementation review (for big architectural moves):** review the plan before writing code. Cheaper to throw away an approach than a refactor.
+
+Reviewer prompts **must**: (a) pin the commit hash explicitly, (b) include the changed file paths, (c) require the reviewer to state "I read commit X at paths Y" as the first line of output before any findings, (d) set a confidence floor (>70% is the validated default from the aac-website dogfood), and (e) ask for a "what's working well" closing section.
+
+The "must" on (c) is load-bearing. A reviewer that can't actually read the diff produces confidence numbers calibrated against nothing — they are speculative findings dressed up as analysis. Real damage from the aac-website dogfood (act-a9d0): the reviewer couldn't read the worktree blobs and confidently flagged concerns at 80%+ that were already handled by the actual code. Confidence ≠ accuracy when the reviewer is reasoning from absence of evidence. Review findings without a confirmed-read are not findings; they are guesses.
+
+File the review itself as an act issue (claim, run, close-with-derivative-pointers) — same audit lifecycle as feature work.
+
+When to skip: you genuinely have to. Don't skip just because the change is small; small changes have introduced load-bearing bugs (the act repo's `act-act-` double-prefix bug passed every test). When in doubt, lightweight review.
+
+## Halt conditions
+
+The work loop is autonomous by default. Halt and surface only when the question requires context the agent literally doesn't have:
+
+- **Spec ambiguity:** acceptance criteria conflict, are missing a load-bearing detail, or two reasonable interpretations would produce visibly different code.
+- **Breaking change:** a fix can't be made strictly additive — existing callers would have to change. Human decides whether to take the breakage or design around it.
+- **Cross-issue scope:** the right fix needs another currently-open issue's fix to land first. File the dep and surface; do not silently expand scope.
+- **Deeper defect:** tests for the current issue reveal a bug bigger than the issue's description. File a follow-up; decide whether the current issue still makes sense to land standalone, surface if not.
+- **External obligation:** anything cross-repo or genuinely public-facing — publishing a release, pushing a tag, opening a PR against another repo, sending notifications. *Pushing same-branch commits to origin is part of the loop, not an obligation to halt on.*
+
+Implementation choices, push cadence, branch hygiene, when to run reviews, isolation choices, retry-vs-halt, follow-up-vs-fix-now — these are orchestrator calls. **Document the decisions you make** (in commit messages, status summaries) so the human can course-correct, but don't escalate them.
+
+## Mid-flight discoveries
+
+Bugs and surface gaps you hit *while working a different issue* go straight into the backlog as follow-ups; they do **not** halt the current task:
+
+```
+act create "<title>" --type bug \
+    --description "<repro + when discovered>" \
+    --accept "<resolution criterion>"
+```
+
+Pattern: file it, keep working. If the discovery actually blocks the current issue, that's the "cross-issue scope" halt condition; halt.
+
+**Backlog-check before any `act create`.** Whether the prospective new issue comes from a mid-flight discovery, an external list (TODO file, audit doc, retrospective findings), or a delegated subagent's task — grep the existing backlog first. Use `act list --search '<keywords>'` or `act ready` and confirm the issue isn't already tracked under a different title before filing. Discovered during the aac-website dogfood: a docs-triage subagent translated three to-do-list.md items into duplicates of existing seed issues (act-a4b6/a744/0578 dup'd act-4141/8a44/218d). The claim a finding is new requires evidence it isn't already tracked.
+
+## Sub-agents
+
+Whether to spawn sub-agents is a harness decision, not an act rule.
+
+**Default: `isolation: "worktree"`.** Two un-isolated agents in the same working tree collide on the git index even when their files don't overlap — `act update --claim` fails fast on a dirty index. Worktrees give each agent its own working directory and branch.
+
+When you spawn a worktree agent, **override the loop in their prompt** so they push to their *worktree branch* (not main). An integrator (you, or another agent) merges the branch in once their work returns clean.
+
+Before dispatching any worktree subagent, read `references/worktree-subagents.md` — it covers the `--push` trap and parallelism-vs-isolation guidance that has caused real damage.
+
+## Commit discipline
+
+- Every work commit includes the issue's `(act-XXXX)` marker.
+- Group `act create` / `act update` / `act dep add` ops with their work commit when they're load-bearing for the issue (e.g. filing follow-ups for an unresolved acceptance criterion). Otherwise let the auto-commit per `act` op stand on its own.
+- Use `--no-commit` only for true bootstrap or migration cases where bundling is the right unit.
+
+For `bundle_strategy` tuning at project setup, see `references/setup.md`.
+
+## Documentation discipline
+
+Cold-start agents (no conversation history, just the docs + the codebase) execute documentation literally — they don't paraphrase, smooth, or interpolate gaps. If a doc in this project claims a behavior, that claim must have an asserting test exercising the behavior at the user-visible boundary, not at internal-state level.
+
+Real consequence from the act repo: the `(act-XXXX)` commit-marker bug passed every internal test (assertions on op-file bytes) but produced wrong git log subjects (assertions on commit message strings would have caught it). When you add a doc claim, add the test that asserts it.
+
+## Pre-close gates
+
+If the project has `.act/hooks/close` (an executable script), it runs before every close commit and aborts the close on non-zero exit. This is where projects put the language-specific lint/format/test gates that should run before any "I'm done with this issue" claim — e.g. Go projects run `gofmt -l`, `go vet`, `go test ./...`; TS projects run `tsc --noEmit && eslint && vitest`. The hook receives the op envelope on `$ACT_HOOK_OP_JSON` and runs in the project's repo root.
+
+When you start work in a new project, look for `.act/hooks/close`. If it exists, every close runs through it. If it doesn't and the project has a CI suite, consider creating one — it makes "broke CI on push" failures locally-detectable before they fan out across multiple close commits.
+
+## Per-project overrides
+
+Project-specific rules live in the repo's `CLAUDE.md`. That file is for deviations and rationale, not duplication of this skill. If a rule belongs in every project that uses act, it lives here; if it belongs in just one project, it lives in that project's CLAUDE.md.

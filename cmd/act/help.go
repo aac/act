@@ -140,12 +140,26 @@ DEEPER DIVES
   Subcommands:
     init version log list search ready mine show
     create close reopen delete update redact
-    dep add doctor import mcp
+    dep add doctor import mcp install-skill
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
   to issues already assigned to you. Both default to identity from
   .act/config.json node_id; --as <id> overrides.
+
+INSTALLING THE SKILL
+  The canonical Claude Code skill for act (SKILL.md plus reference
+  docs) is embedded in this binary. To drop it into your skills
+  directory so agents pick it up on every session:
+
+    act install-skill              # writes to ~/.claude/skills/act/
+    act install-skill --force      # overwrite local edits to canonical files
+    act install-skill --dest PATH  # alternate destination
+    act install-skill --json       # machine-readable install summary
+
+  install-skill is idempotent: files already matching the embedded
+  copy are skipped; files that diverge are listed and left untouched
+  unless --force is passed. Re-run after every 'act' upgrade.
 `
 
 const helpWorkflow = `act — workflow
