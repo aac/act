@@ -179,6 +179,19 @@ func foldNeeded(run []string) bool {
 // log for the `(act-XXXX)` marker. Uses *gitops.HostGitOps — doctor's
 // marker scan is the canonical read-from-host call site under the dual-
 // handle split (act-3604).
+//
+// Marker form. Markers are `(act-<hex>)` where <hex> is the canonical
+// commit-marker prefix produced by ShortIssueID — exactly MinShortHexLen hex
+// chars for ids at or above that length, and the full id verbatim for
+// historical ids shorter than the floor (e.g. 4-char ids minted before
+// act-f9a0 widened MinShortHexLen to 6). We pass the canonical marker hex
+// to WorkCommitsForIssue; its substring grep matches:
+//   - the exact canonical marker for that issue, and
+//   - any longer extended marker that starts with the same prefix (i.e.
+//     same-issue ids that grew on collision).
+//
+// Both 4-char (historical) and 6+-char (new) markers are matched because
+// the grep operates on the issue's own hex tail, not a fixed-length window.
 func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 	if fr == nil {
 		return nil
@@ -195,13 +208,9 @@ func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 		if status != "closed" {
 			continue
 		}
-		short := id
-		if strings.HasPrefix(id, "act-") && len(id) >= 8 {
-			short = id[:8] // act-XXXX
-		}
-		// WorkCommitsForIssue takes the 4-char hex tail after "act-".
-		prefix4 := strings.TrimPrefix(short, "act-")
-		commits, err := host.WorkCommitsForIssue(prefix4, 1)
+		short := ShortIssueID(id)
+		markerHex := strings.TrimPrefix(short, "act-")
+		commits, err := host.WorkCommitsForIssue(markerHex, 1)
 		if err != nil || len(commits) == 0 {
 			findings = append(findings, Finding{
 				Check:    "orphan-close",

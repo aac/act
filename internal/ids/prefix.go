@@ -59,12 +59,14 @@ func hexTail(id string) string {
 	return strings.TrimPrefix(strings.ToLower(id), "act-")
 }
 
-// ShortestUnique returns the shortest `act-<hex>` prefix of target (with at
-// least MinShortHexLen hex chars) that is unique within allFullIDs. If target
-// is not present in allFullIDs the function still returns the shortest prefix
-// of target that no other id shares, with the same MinShortHexLen floor. If
-// every prefix length up to the full id collides with another id (i.e.
-// duplicate full ids in the input), the full target id is returned.
+// ShortestUnique returns the shortest `act-<hex>` prefix of target that is
+// unique within allFullIDs. The floor is min(MinShortHexLen, len(target hex)):
+// the standard floor is MinShortHexLen, but historical ids minted under a
+// smaller MinShortHexLen (e.g. 4 hex before act-f9a0 widened the generation
+// floor to 6) are returned at their actual length rather than padded — there
+// is no shorter form to display. If every prefix length up to the full id
+// collides with another id (i.e. duplicate full ids in the input), the full
+// target id is returned.
 func ShortestUnique(allFullIDs []string, target string) string {
 	tHex := hexTail(target)
 	if tHex == "" {
@@ -80,7 +82,13 @@ func ShortestUnique(allFullIDs []string, target string) string {
 	}
 	skipOne := dupes <= 1
 	maxLen := len(tHex)
-	for n := MinShortHexLen; n <= maxLen; n++ {
+	startLen := MinShortHexLen
+	if maxLen < startLen {
+		// Historical short id below the current generation floor; start at
+		// its actual length so the loop body still runs.
+		startLen = maxLen
+	}
+	for n := startLen; n <= maxLen; n++ {
 		p := tHex[:n]
 		unique := true
 		skipped := false
@@ -133,7 +141,8 @@ func ShortestUniquePrefixes(fullIDs []string) map[string]string {
 // Note: this constant is intentionally distinct from MinShortHexLen (which
 // governs display and id generation). Input resolution accepts any prefix of
 // at least one hex character so that `act show act-c2` resolves when unique,
-// even though the display/generation floor is 4 hex characters.
+// even though the display/generation floor is MinShortHexLen hex characters
+// (6 since act-f9a0; was 4 before).
 const MinInputHexLen = 1
 
 // ResolvePrefix matches a user-supplied prefix (e.g. `act-bd7`, `bd70`,
@@ -143,8 +152,8 @@ const MinInputHexLen = 1
 // when the effective hex prefix is empty (bare "act-" or whitespace only).
 //
 // Any prefix of at least MinInputHexLen hex characters is considered; the
-// MinShortHexLen floor (4) applies only to display and id generation, not to
-// user-supplied lookup.
+// MinShortHexLen floor (6 since act-f9a0) applies only to display and id
+// generation, not to user-supplied lookup.
 func ResolvePrefix(allFullIDs []string, prefix string) (full string, ambiguous bool, found bool) {
 	hex := normalizeHex(prefix)
 	if len(hex) < MinInputHexLen {
@@ -171,7 +180,8 @@ func ResolvePrefix(allFullIDs []string, prefix string) (full string, ambiguous b
 // *ErrAmbiguousID on multiple matches, otherwise the unique full id.
 //
 // Any prefix of at least MinInputHexLen hex characters is accepted; the
-// MinShortHexLen floor (4) applies only to display and id generation.
+// MinShortHexLen floor (6 since act-f9a0) applies only to display and id
+// generation.
 func Resolve(input string, known []string) (string, error) {
 	hex := normalizeHex(input)
 	if len(hex) < MinInputHexLen {

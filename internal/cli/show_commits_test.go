@@ -10,23 +10,27 @@ import (
 	"github.com/aac/act/internal/gitops"
 )
 
-// TestFirst4Hex covers the small helper that extracts the doctor-grep key
-// from a full issue id. Empty for malformed ids; first 4 hex chars for valid
-// ones.
-func TestFirst4Hex(t *testing.T) {
+// TestCommitMarkerHex covers the small helper that extracts the doctor-grep
+// key from a full issue id. The key is the hex tail of ShortIssueID(full) —
+// MinShortHexLen hex chars for ids at or above the generation floor (6 since
+// act-f9a0), the full hex tail for historical ids minted shorter.
+func TestCommitMarkerHex(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"act-deadbeef0123abcd", "dead"},
+		// New 6+-char ids: truncated to MinShortHexLen=6.
+		{"act-deadbeef0123abcd", "deadbe"},
+		{"act-abcdef", "abcdef"}, // exactly at floor
+		// Historical 4-char ids: full hex tail (no shorter form exists).
 		{"act-c83a", "c83a"},
-		{"act-abc", ""},      // too short after prefix
-		{"act-", ""},         // no hex at all
-		{"abc-deadbeef", ""}, // wrong prefix
+		{"act-abcde", "abcde"}, // historical 5-char extended id
+		{"act-", ""},           // no hex at all
+		{"abc-deadbeef", ""},   // wrong prefix
 		{"", ""},
 	}
 	for _, tc := range cases {
-		if got := first4Hex(tc.in); got != tc.want {
-			t.Errorf("first4Hex(%q) = %q; want %q", tc.in, got, tc.want)
+		if got := commitMarkerHex(tc.in); got != tc.want {
+			t.Errorf("commitMarkerHex(%q) = %q; want %q", tc.in, got, tc.want)
 		}
 	}
 }

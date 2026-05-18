@@ -112,11 +112,11 @@ func (h *HostGitOps) RepoRoot() string {
 	return h.inner.RepoRoot
 }
 
-// WorkCommitsForIssue surfaces the `(act-<prefix4>` marker grep against
+// WorkCommitsForIssue surfaces the `(act-<markerHex>` marker grep against
 // the host repo's git log. Read-only operation — see *GitOps.WorkCommitsForIssue
 // for the contract.
-func (h *HostGitOps) WorkCommitsForIssue(prefix4 string, limit int) ([]WorkCommit, error) {
-	return h.inner.WorkCommitsForIssue(prefix4, limit)
+func (h *HostGitOps) WorkCommitsForIssue(markerHex string, limit int) ([]WorkCommit, error) {
+	return h.inner.WorkCommitsForIssue(markerHex, limit)
 }
 
 // run executes `git <args...>` with cwd=RepoRoot and returns stdout. stderr
@@ -387,12 +387,20 @@ type WorkCommit struct {
 	AuthorDate string `json:"author_date"`
 }
 
-// WorkCommitsForIssue runs `git log --all --fixed-strings --grep='(act-<prefix4>'`
-// and returns up to limit matching commits, most-recent-first. The 4-char
-// prefix is the same key act doctor uses (orphan-close grep) so the result
-// includes commits whose marker is the bare 4-char form OR a longer prefix
-// that grew out of an id collision — both contain `(act-<prefix4>` as a
-// literal substring.
+// WorkCommitsForIssue runs `git log --all --fixed-strings --grep='(act-<markerHex>'`
+// and returns up to limit matching commits, most-recent-first. The caller
+// passes the hex tail of the canonical commit marker — exactly
+// MinShortHexLen hex chars for ids at or above that floor (6 since
+// act-f9a0), and the full hex tail verbatim for historical ids that were
+// minted shorter than the current floor (e.g. 4-hex ids from pre-act-f9a0
+// repos). Result includes commits whose marker is the canonical short form
+// OR any longer extended marker that starts with the same prefix (i.e.
+// same-issue ids that grew on collision) — both contain `(act-<markerHex>`
+// as a literal substring.
+//
+// The function accepts any markerHex of length >= 4 so historical 4-hex
+// ids stay matchable; 4 is the on-disk syntax floor (idPattern), not the
+// generation floor (MinShortHexLen).
 //
 // limit=0 means unbounded. The pattern is fixed-strings so the literal
 // parenthesis isn't interpreted as regex.
@@ -401,11 +409,11 @@ type WorkCommit struct {
 // than an error: `git log` on a repo with no HEAD exits non-zero, but to
 // the caller the answer "this issue has no work commits" is the right
 // shape.
-func (g *GitOps) WorkCommitsForIssue(prefix4 string, limit int) ([]WorkCommit, error) {
-	if len(prefix4) < 4 {
-		return nil, fmt.Errorf("gitops: WorkCommitsForIssue: prefix4 length %d < 4", len(prefix4))
+func (g *GitOps) WorkCommitsForIssue(markerHex string, limit int) ([]WorkCommit, error) {
+	if len(markerHex) < 4 {
+		return nil, fmt.Errorf("gitops: WorkCommitsForIssue: markerHex length %d < 4", len(markerHex))
 	}
-	pattern := "(act-" + prefix4
+	pattern := "(act-" + markerHex
 	args := []string{
 		"log", "--all",
 		"--fixed-strings",
