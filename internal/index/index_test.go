@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
 )
@@ -195,6 +197,231 @@ func TestGet_ByID(t *testing.T) {
 
 	if _, err := idx.Get("act-9999"); err == nil {
 		t.Fatalf("Get(nonexistent): expected error, got nil")
+	}
+}
+
+// TestUpsert_SnapshotRoundTrip_DepEdges is the regression test for act-8c78.
+//
+// The bug: upsertTx asserts rendered["deps"].([]map[string]string). That holds
+// for state produced by a live fold (applyAddDep writes that typed slice into
+// Fields). It silently fails when state was hydrated from a JSON snapshot
+// (.act/snapshots/<id>.json) — JSON deserialises into map[string]any, with
+// arrays as []any and elements as map[string]any. The type assertion's
+// silent failure dropped every dep edge from the index without any error.
+//
+// The fix normalises "deps" and "external_deps" inside fold.RenderState so
+// both live and post-snapshot state produce the canonical typed slices,
+// letting upsertTx assert a single canonical type.
+func TestUpsert_SnapshotRoundTrip_DepEdges(t *testing.T) {
+	idx, _ := newTempIndex(t)
+
+	const id = "act-c001"
+
+	// Construct an IssueState whose Fields shape matches a post-snapshot
+	// hydration: deps are []any with map[string]any elements, external_deps
+	// are []any of strings, accept is []any of strings. This is exactly the
+	// shape encoding/json produces after Unmarshalling RenderState's output
+	// back into map[string]any.
+	postSnapshotState := &fold.IssueState{
+		ID: id,
+		Fields: map[string]any{
+			"title":       "round-trip target",
+			"description": "dep edges must survive snapshot deser",
+			"status":      "open",
+			"type":        "task",
+			"created_at":  "2026-05-17T00:00:00Z",
+			"priority":    float64(3), // JSON numbers decode as float64
+			"accept": []any{
+				"first criterion",
+				"second criterion",
+			},
+			"deps": []any{
+				map[string]any{"parent": "act-aaaa", "edge_type": "blocks"},
+				map[string]any{"parent": "act-bbbb", "edge_type": "relates"},
+			},
+			"external_deps": []any{
+				"ext-ref-1",
+				"ext-ref-2",
+			},
+		},
+		LastHLC: map[string]hlc.HLC{},
+	}
+
+	if err := idx.Upsert(postSnapshotState); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	// Verify the issue row landed.
+	row, err := idx.Get(id)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", id, err)
+	}
+	if row.Title != "round-trip target" {
+		t.Fatalf("Title = %q, want %q", row.Title, "round-trip target")
+	}
+	if row.Priority != 3 {
+		t.Fatalf("Priority = %d, want 3", row.Priority)
+	}
+
+	// The load-bearing assertion: both dep edges land in issue_deps.
+	rows, err := idx.db.Query(
+		`SELECT parent_id, edge_type FROM issue_deps WHERE issue_id = ? ORDER BY parent_id`, id,
+	)
+	if err != nil {
+		t.Fatalf("query issue_deps: %v", err)
+	}
+	defer rows.Close()
+	type dep struct{ parent, edge string }
+	var got []dep
+	for rows.Next() {
+		var d dep
+		if err := rows.Scan(&d.parent, &d.edge); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, d)
+	}
+	want := []dep{
+		{"act-aaaa", "blocks"},
+		{"act-bbbb", "relates"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("issue_deps rows = %d, want %d (got %+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("issue_deps[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// External deps should round-trip too.
+	extRows, err := idx.db.Query(
+		`SELECT ref FROM issue_external_deps WHERE issue_id = ? ORDER BY ref`, id,
+	)
+	if err != nil {
+		t.Fatalf("query issue_external_deps: %v", err)
+	}
+	defer extRows.Close()
+	var refs []string
+	for extRows.Next() {
+		var r string
+		if err := extRows.Scan(&r); err != nil {
+			t.Fatalf("scan ext: %v", err)
+		}
+		refs = append(refs, r)
+	}
+	wantRefs := []string{"ext-ref-1", "ext-ref-2"}
+	if len(refs) != len(wantRefs) {
+		t.Fatalf("external_deps rows = %d, want %d (got %v)", len(refs), len(wantRefs), refs)
+	}
+	for i := range wantRefs {
+		if refs[i] != wantRefs[i] {
+			t.Fatalf("external_deps[%d] = %q, want %q", i, refs[i], wantRefs[i])
+		}
+	}
+
+	// Accept criteria should also survive (already worked pre-fix because
+	// RenderState already normalised accept via getAccept; this guards
+	// against regression).
+	acceptRows, err := idx.db.Query(
+		`SELECT criterion FROM issue_accept WHERE issue_id = ? ORDER BY idx`, id,
+	)
+	if err != nil {
+		t.Fatalf("query issue_accept: %v", err)
+	}
+	defer acceptRows.Close()
+	var crits []string
+	for acceptRows.Next() {
+		var c string
+		if err := acceptRows.Scan(&c); err != nil {
+			t.Fatalf("scan accept: %v", err)
+		}
+		crits = append(crits, c)
+	}
+	sort.Strings(crits)
+	wantCrits := []string{"first criterion", "second criterion"}
+	if len(crits) != len(wantCrits) {
+		t.Fatalf("accept rows = %d, want %d (got %v)", len(crits), len(wantCrits), crits)
+	}
+	for i := range wantCrits {
+		if crits[i] != wantCrits[i] {
+			t.Fatalf("accept[%d] = %q, want %q", i, crits[i], wantCrits[i])
+		}
+	}
+}
+
+// TestUpsert_LiveAndSnapshotStatesEquivalent verifies that an IssueState built
+// directly (live-fold form, []map[string]string) and the same state after a
+// JSON round-trip (snapshot form, []any of map[string]any) produce identical
+// rows in the index — the canonical-type contract of RenderState.
+func TestUpsert_LiveAndSnapshotStatesEquivalent(t *testing.T) {
+	idx, _ := newTempIndex(t)
+
+	// Live shape (what applyAddDep produces).
+	liveState := &fold.IssueState{
+		ID: "act-d001",
+		Fields: map[string]any{
+			"title":      "live",
+			"type":       "task",
+			"status":     "open",
+			"created_at": "2026-05-17T00:00:00Z",
+			"accept":     []string{"crit-a"},
+			"deps": []map[string]string{
+				{"parent": "act-aaaa", "edge_type": "blocks"},
+			},
+			"external_deps": []string{"ext-1"},
+		},
+		LastHLC: map[string]hlc.HLC{},
+	}
+	if err := idx.Upsert(liveState); err != nil {
+		t.Fatalf("Upsert live: %v", err)
+	}
+
+	// Build the post-snapshot equivalent by actually round-tripping
+	// RenderState through JSON, then rehydrating Fields. This guarantees
+	// the shape exactly matches what compact-snapshot deserialisation
+	// would produce, rather than hand-rolling the types.
+	rendered := fold.RenderState(liveState)
+	if rendered == nil {
+		t.Fatal("RenderState returned nil for live state")
+	}
+	body, err := json.Marshal(rendered)
+	if err != nil {
+		t.Fatalf("marshal rendered: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("unmarshal rendered: %v", err)
+	}
+	// Sanity: after JSON round-trip, deps is []any of map[string]any.
+	rawDeps, _ := decoded["deps"].([]any)
+	if len(rawDeps) == 0 {
+		t.Fatalf("deps lost on JSON round-trip: %T %v", decoded["deps"], decoded["deps"])
+	}
+	if _, ok := rawDeps[0].(map[string]any); !ok {
+		t.Fatalf("dep element type after round-trip = %T, want map[string]any", rawDeps[0])
+	}
+
+	snapState := &fold.IssueState{
+		ID:      "act-d002",
+		Fields:  decoded,
+		LastHLC: map[string]hlc.HLC{},
+	}
+	if err := idx.Upsert(snapState); err != nil {
+		t.Fatalf("Upsert snap: %v", err)
+	}
+
+	// Both should have exactly one dep edge with the same parent/edge.
+	for _, id := range []string{"act-d001", "act-d002"} {
+		row := idx.db.QueryRow(
+			`SELECT parent_id, edge_type FROM issue_deps WHERE issue_id = ?`, id,
+		)
+		var parent, edge string
+		if err := row.Scan(&parent, &edge); err != nil {
+			t.Fatalf("scan dep for %s: %v", id, err)
+		}
+		if parent != "act-aaaa" || edge != "blocks" {
+			t.Fatalf("%s dep = (%s, %s), want (act-aaaa, blocks)", id, parent, edge)
+		}
 	}
 }
 

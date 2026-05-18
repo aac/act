@@ -530,6 +530,18 @@ func getStringSet(state *IssueState, key string) map[string]bool {
 // Tombstoned issues yield nil. Reserved __* keys are stripped. The accept
 // list is filtered through __accept_removed to produce the visible criteria.
 // Any redacted scalar field is replaced with the string "<redacted>".
+//
+// Collection fields are normalised to a single canonical Go type so consumers
+// (the SQLite index, callers iterating rendered state) can rely on one type
+// assertion regardless of whether state came from a live fold (typed slices)
+// or a JSON-deserialised snapshot (untyped []any with map[string]any elems):
+//
+//   - "accept"        → []string
+//   - "deps"          → []map[string]string
+//   - "external_deps" → []string
+//
+// Without this normalisation, a snapshot round-trip silently drops dep edges
+// at the upsertTx assertion (see act-8c78).
 func RenderState(state *IssueState) map[string]any {
 	if state == nil || state.Tombstoned {
 		return nil
@@ -553,6 +565,17 @@ func RenderState(state *IssueState) map[string]any {
 				}
 			}
 			out[k] = visible
+			continue
+		}
+		if k == "deps" {
+			// Normalise to []map[string]string so upsertTx's type
+			// assertion holds for both live and post-snapshot state.
+			out[k] = getDeps(state)
+			continue
+		}
+		if k == "external_deps" {
+			// Normalise to []string for the same reason.
+			out[k] = getExternalDeps(state)
 			continue
 		}
 		if redacted[k] {
