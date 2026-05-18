@@ -268,3 +268,212 @@ func stringsContains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestRunDoctor_NoCodeCloseSuppressed exercises case (b) of the
+// reconcile-lite table (docs/coordination-plane-design.md v2.1): a
+// closed issue with `no_code=true` on the close op should NOT surface
+// an orphan-close warning even when there's no closing marker in the
+// host log. The close op commits in the nested act repo (visible to
+// the nested-log half of doctor's scan), but the *suppression* is
+// specifically driven by the no_code flag — independent of whether
+// the nested marker happens to be present.
+func TestRunDoctor_NoCodeCloseSuppressed(t *testing.T) {
+	root := makeCreateRepo(t)
+	id := mustCreate(t, root, "tracking-issue")
+
+	// Close with --no-code. The nested act repo will carry an op-commit
+	// with `(act-XXXX) close`, so we also need to make sure that's the
+	// only place the marker appears; the host log has no work commit
+	// referencing this id.
+	_, code := RunClose(root, CloseOptions{ID: id, NoCode: true})
+	if code != 0 {
+		t.Fatalf("close: code=%d", code)
+	}
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "orphan-close"})
+	if code != 0 {
+		t.Fatalf("doctor exit = %d, want 0; out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	for _, f := range res.Findings {
+		if f.Check == "orphan-close" && f.IssueID == id {
+			t.Errorf("expected no orphan-close for no-code close, got %+v", f)
+		}
+	}
+}
+
+// TestRunDoctor_StrictPromotesWarnings: when --strict is set, any warn
+// finding is promoted to error and exit becomes 1.
+//
+// To trigger a real case-(b) warning we need an issue that's closed
+// in act state but whose marker doesn't appear in EITHER the host log
+// or the nested act log. Under Phase 1, every `act create` and
+// `act close` writes to the nested log, so any "real" close already
+// resolves. The synthetic path: hand-write create + close op files
+// directly to disk (writeRawOp), which puts them in the fold but
+// outside both logs.
+func TestRunDoctor_StrictPromotesWarnings(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	// Use a fixed synthetic id so the test doesn't depend on id
+	// generation. The id needs to be a valid id-shape but not produced
+	// via RunCreate so neither log carries the marker.
+	id := "act-deadbeef"
+	writeRawOp(t, root, id, "create",
+		map[string]string{"title": "synth", "type": "task", "nonce": "00000000000000000000000000000000"},
+		1)
+	writeRawOp(t, root, id, "close", map[string]string{"reason": "test"}, 99)
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "orphan-close"})
+	if code != 0 {
+		t.Fatalf("non-strict exit = %d, want 0 (warn doesn't fail); out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	// Confirm there's at least one warn finding for this id.
+	sawWarn := false
+	for _, f := range res.Findings {
+		if f.IssueID == id && f.Severity == "warn" {
+			sawWarn = true
+		}
+	}
+	if !sawWarn {
+		t.Fatalf("expected warn for raw-close issue %s, got findings %+v", id, res.Findings)
+	}
+
+	// Now with --strict: same finding, but error severity, exit 1.
+	out, code = RunDoctor(root, DoctorOptions{Check: "orphan-close", Strict: true})
+	if code != 1 {
+		t.Fatalf("strict exit = %d, want 1; out=%+v", code, out)
+	}
+	res = out.(DoctorResult)
+	sawError := false
+	for _, f := range res.Findings {
+		if f.IssueID == id && f.Severity == "error" {
+			sawError = true
+		}
+	}
+	if !sawError {
+		t.Errorf("expected error-severity finding under --strict, got %+v", res.Findings)
+	}
+}
+
+// TestRunDoctor_GitignoreEffective: when .act/ is NOT gitignored from
+// the host repo, the gitignore-effective probe errors.
+func TestRunDoctor_GitignoreEffective_NotIgnored(t *testing.T) {
+	root := makeCreateRepo(t)
+	// makeCreateRepo writes a .gitignore that lists .act/. Truncate it
+	// to drop the rule.
+	gi := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(gi, []byte("# empty\n"), 0o644); err != nil {
+		t.Fatalf("rewrite .gitignore: %v", err)
+	}
+	mustGit(t, root, "add", ".gitignore")
+	mustGit(t, root, "commit", "-q", "--no-verify", "-m", "drop ignore")
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "gitignore-effective"})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (out=%+v)", code, out)
+	}
+	res := out.(DoctorResult)
+	found := false
+	for _, f := range res.Findings {
+		if f.Check == "gitignore-effective" && f.Severity == "error" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected gitignore-effective error finding, got %+v", res.Findings)
+	}
+}
+
+// TestRunDoctor_GitignoreEffective_Ignored: when .act/ IS gitignored,
+// the probe returns no findings.
+func TestRunDoctor_GitignoreEffective_Ignored(t *testing.T) {
+	root := makeCreateRepo(t)
+	// makeCreateRepo's .gitignore already lists `.act/`.
+	out, code := RunDoctor(root, DoctorOptions{Check: "gitignore-effective"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (out=%+v)", code, out)
+	}
+	res := out.(DoctorResult)
+	for _, f := range res.Findings {
+		if f.Check == "gitignore-effective" {
+			t.Errorf("expected no gitignore-effective finding, got %+v", f)
+		}
+	}
+}
+
+// TestRunDoctor_UnknownMarker_InternalAuthor: a marker referencing an
+// unknown id authored by an internal contributor surfaces a case (d)
+// warning.
+func TestRunDoctor_UnknownMarker_InternalAuthor(t *testing.T) {
+	root := makeCreateRepo(t)
+	// Synthesize a work commit on the host repo carrying a marker for
+	// an id that doesn't exist. The author is the same as the rest of
+	// the history (internal).
+	wfPath := filepath.Join(root, "junk.txt")
+	if err := os.WriteFile(wfPath, []byte("noop\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, root, "add", "junk.txt")
+	mustGit(t, root, "commit", "-q", "--no-verify", "-m", "noop",
+		"-m", "Act-Id: act-deadbeef")
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "orphan-close"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (warn shouldn't fail without --strict); out=%+v",
+			code, out)
+	}
+	res := out.(DoctorResult)
+	found := false
+	for _, f := range res.Findings {
+		if f.Check == "orphan-close" && f.IssueID == "act-deadbeef" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected case-(d) finding for act-deadbeef, got %+v", res.Findings)
+	}
+}
+
+// TestRunDoctor_UnknownMarker_ExternalAuthor: a marker referencing an
+// unknown id authored by an external contributor is suppressed (fork-PR
+// heuristic).
+func TestRunDoctor_UnknownMarker_ExternalAuthor(t *testing.T) {
+	root := makeCreateRepo(t)
+	// Create a baseline of internal commits so InternalContributors has
+	// a non-trivial set. makeCreateRepo already wrote one commit with
+	// u@example.com.
+	for i := 0; i < 3; i++ {
+		f := filepath.Join(root, "internal.txt")
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		mustGit(t, root, "add", "internal.txt")
+		mustGit(t, root, "commit", "-q", "--no-verify",
+			"-m", "internal work", "--allow-empty")
+	}
+
+	// Now author a commit under a different email (external).
+	mustGit(t, root, "config", "user.email", "fork@external.test")
+	wfPath := filepath.Join(root, "external.txt")
+	if err := os.WriteFile(wfPath, []byte("ext\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, root, "add", "external.txt")
+	mustGit(t, root, "commit", "-q", "--no-verify",
+		"-m", "external PR", "-m", "Act-Id: act-cafe1234")
+	// Restore the internal email for any subsequent commits.
+	mustGit(t, root, "config", "user.email", "u@example.com")
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "orphan-close"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	for _, f := range res.Findings {
+		if f.IssueID == "act-cafe1234" {
+			t.Errorf("expected external-PR marker to be suppressed, got %+v", f)
+		}
+	}
+}

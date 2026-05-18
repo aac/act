@@ -29,6 +29,46 @@ func main() {
 	sub := os.Args[1]
 	args := os.Args[2:]
 
+	// CI-friendly no-state guard (Phase 1 delta item 8, act-37f7).
+	//
+	// When `act` is invoked from a directory whose host repo has no
+	// `.act/` nested state (fresh clone, CI checkout, doc-only fork), we
+	// branch on subcommand class:
+	//
+	//   - Read-only commands soft-exit 0 with a one-line message — the
+	//     absence of state is expected and the agent loop should be able
+	//     to no-op against it without failing CI.
+	//   - Write commands hard-exit 3 with an actionable message pointing
+	//     at `act init`. Silently no-op'ing on a write would be a class
+	//     of silent-loss bug we don't want.
+	//   - `init` is special: it creates the state, so it must proceed.
+	//   - `version`, `help`, and the help short-flags are stateless and
+	//     pass through.
+	//   - `mcp` is its own special case (handled in runMCP).
+	//
+	// The guard fires only when we can resolve a host repo. If there's
+	// no host repo at all, the per-command findRepoRoot call returns its
+	// existing "not in a git working tree" error envelope and we don't
+	// override that.
+	if shouldCheckNoState(sub) {
+		if root, err := findRepoRoot(); err == nil {
+			actDir := filepath.Join(root, ".act")
+			if _, serr := os.Stat(actDir); os.IsNotExist(serr) {
+				if isReadOnlyNoStateCommand(sub) {
+					fmt.Fprintln(os.Stderr, "act: no act state in this repo — this is normal in CI / fresh clones")
+					os.Exit(0)
+				}
+				if isWriteNoStateCommand(sub) || sub == "dep" {
+					emitEnvelope(hasJSONFlag(args), map[string]any{
+						"error":   "act_not_initialized",
+						"message": `act: no act state — run "act init" to bootstrap`,
+					})
+					os.Exit(3)
+				}
+			}
+		}
+	}
+
 	// Handle the nested `act dep <verb>` family before the flat-subcommand
 	// switch. Currently only `dep add` is implemented; future verbs (rm,
 	// list) plug in here.
@@ -239,6 +279,60 @@ func emitBadFlag(asJSON bool, message string) {
 		"error":   cli.ErrBadFlag,
 		"message": message,
 	})
+}
+
+// readOnlyNoStateCommands enumerates the subcommands that soft-exit 0
+// when the host repo has no `.act/` state. These are read-only and
+// expected to no-op in CI / fresh clones (Phase 1 delta item 8).
+//
+// `version` and `help` are intentionally NOT in this set — they don't
+// depend on state and should print their normal output regardless.
+var readOnlyNoStateCommands = map[string]bool{
+	"ready":  true,
+	"list":   true,
+	"show":   true,
+	"doctor": true,
+	"search": true,
+	"log":    true,
+	"mine":   true,
+}
+
+// writeNoStateCommands enumerates the subcommands that hard-exit 3 with
+// an actionable error when the host repo has no `.act/` state. These
+// would silently lose the user's intent if they no-op'd, so we surface
+// the precondition gap explicitly (Phase 1 delta item 8). `init` is
+// excluded because it is the bootstrap command.
+var writeNoStateCommands = map[string]bool{
+	"create": true,
+	"update": true,
+	"close":  true,
+	"reopen": true,
+	"delete": true,
+	"redact": true,
+	"import": true,
+}
+
+// shouldCheckNoState reports whether the guard runs for this subcommand
+// at all. Subcommands not in either map (e.g. `init`, `mcp`, `version`,
+// `help`, unknown subcommands) bypass the guard and go through the
+// normal dispatch path. `dep` is a write surface but its dispatch lives
+// in its own branch in main(); we treat it as a write here so the guard
+// fires before that branch (sub=="dep" routes to writeNoState via the
+// explicit map entry).
+func shouldCheckNoState(sub string) bool {
+	return readOnlyNoStateCommands[sub] || writeNoStateCommands[sub] || sub == "dep"
+}
+
+// isReadOnlyNoStateCommand reports whether sub should soft-exit 0 on
+// absent state. See readOnlyNoStateCommands.
+func isReadOnlyNoStateCommand(sub string) bool {
+	return readOnlyNoStateCommands[sub]
+}
+
+// isWriteNoStateCommand reports whether sub should hard-exit 3 on
+// absent state. See writeNoStateCommands.
+func isWriteNoStateCommand(sub string) bool {
+	return writeNoStateCommands[sub]
 }
 
 // hasJSONFlag scans a raw argv tail for "--json" or "-json", which is

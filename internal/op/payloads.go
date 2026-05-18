@@ -260,8 +260,20 @@ func (p ClaimPayload) Validate() error {
 }
 
 // ClosePayload is the payload for op_type=close.
+//
+// NoCode signals that this close legitimately produced no code change (a
+// tracking-only close, a wrong-claim retraction, a doc-only correction, an
+// obsoleted issue, etc.). Doctor's reconcile-lite case (b) — "closed issue
+// in act state, no closing marker anywhere in code" — is suppressed when
+// NoCode=true so legitimate no-code closes don't surface as silent-desync
+// findings. Per the Phase 1 design (docs/coordination-plane-design.md
+// "Doctor reconciliation" case (b)). The field is wire-optional; absent =
+// false, preserving compatibility with closes written before act-37f7
+// landed (those should report a (b) finding only if no closing marker
+// shows up anywhere, which is the intended diagnostic).
 type ClosePayload struct {
 	Reason string `json:"reason,omitempty"`
+	NoCode bool   `json:"no_code,omitempty"`
 }
 
 // Validate implements the close write-time rules.

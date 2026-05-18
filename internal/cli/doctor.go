@@ -35,6 +35,12 @@ type DoctorOptions struct {
 	// Compact triggers manual compaction (delegated to compact package
 	// when available; here a no-op warn-only finding).
 	Compact bool
+	// Strict promotes all `warn` findings to `error` severity (and
+	// therefore exit 1). Use in CI to catch regressions that the
+	// interactive review step tolerates. Per Phase 1 reconcile-lite
+	// (docs/coordination-plane-design.md "Doctor reconciliation",
+	// act-37f7).
+	Strict bool
 }
 
 // Finding is a single doctor finding.
@@ -67,6 +73,7 @@ var allChecks = []string{
 	"unknown-op-version",
 	"index-divergence",
 	"index-schema",
+	"gitignore-effective",
 }
 
 // validChecks indexes allChecks for O(1) name validation.
@@ -151,6 +158,20 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			findings = append(findings, checkIndexDivergence(paths, opts.Fix)...)
 		case "index-schema":
 			findings = append(findings, checkIndexSchema(paths, opts.Fix)...)
+		case "gitignore-effective":
+			findings = append(findings, checkGitignoreEffective(repoRoot)...)
+		}
+	}
+
+	// Strict mode: promote warn → error before computing exit code. We do
+	// this in a second pass (rather than at emission time) so each check
+	// can reason about its own severity in isolation; --strict is a
+	// presentation policy, not a check-level decision.
+	if opts.Strict {
+		for i := range findings {
+			if findings[i].Severity == "warn" {
+				findings[i].Severity = "error"
+			}
 		}
 	}
 
@@ -175,82 +196,257 @@ func foldNeeded(run []string) bool {
 	return false
 }
 
-// checkOrphanClose: for each closed issue, search the host repo's commit
-// log AND the nested act repo's commit log for a marker referencing the
-// issue. Uses *gitops.HostGitOps — doctor's marker scan is the canonical
-// read-from-host call site under the dual-handle split (act-3604).
+// checkOrphanClose implements Phase 1's "doctor reconcile-lite" table
+// (docs/coordination-plane-design.md "Doctor reconciliation", act-37f7).
+// Despite the historic name, this check covers cases (a), (b), and (d)
+// of the table — they share the same two indexes (markers + act state)
+// and folding them into one walk avoids re-scanning git log per case.
+// Cases (c) and (e) are inherently ignored — multiple markers on the
+// same id and claims newer than the latest code commit are normal
+// states, not anomalies, and don't need explicit handling.
+//
+// Case (a): marker in code with no matching issue in act state. Warn.
+// Suppressed under the external-PR heuristic (commit author not in the
+// host repo's recent contributor set) since fork PRs cite their own
+// act ids and aren't expected to reconcile here.
+//
+// Case (b): closed issue in act state with no closing marker anywhere
+// (host log + nested act log both empty). Warn. Suppressed when the
+// issue is `type=tracking` (no-code-by-design) or the close op carried
+// `no_code=true` (legitimate no-code close — wrong-claim retraction,
+// doc correction, obsoleted issue).
+//
+// Case (d): marker references an id that doesn't exist in act state
+// (typo, deleted issue, cross-repo reference). Warn. Suppressed under
+// the same external-PR heuristic as (a) — fork PRs commonly cite ids
+// from their own act state.
 //
 // Marker forms (post-act-c4c5):
 //   - Trailer form `Act-Id: act-<hex>` in the commit body — the only
 //     emission shape going forward.
 //   - Historical subject-line form `(act-<hex>)` — still matched so
-//     pre-migration history in existing repos resolves cleanly. New
-//     work commits do not emit this form. The nested .act/ repo's
-//     op-commits (`act-op: (act-XXXX) <type>`) also carry this form.
+//     pre-migration history in existing repos resolves cleanly. The
+//     nested .act/ repo's op-commits also carry this form.
 //
-// <hex> is the canonical commit-marker prefix produced by ShortIssueID —
-// exactly MinShortHexLen hex chars for ids at or above that length (6
-// since act-f9a0), and the full id verbatim for historical ids shorter
-// than the floor (e.g. 4-char ids minted before act-f9a0 widened
-// MinShortHexLen to 6). We pass the canonical marker hex to
-// WorkCommitsForIssue; its substring grep matches both 4-char and
-// 6+-char markers since the grep operates on the issue's own hex tail.
+// Implementation: HostGitOps.AllMarkers scans the host log once,
+// returning (sha, subject, author_email, issue_id). We do the same
+// against the nested act repo. From those two indexes plus the fold,
+// each case becomes a set-difference check.
 //
-// Under Phase 1 (docs/coordination-plane-design.md), the close commit
-// itself lives in the nested .act/ repo. The marker is present in the
-// nested repo's log even when the host repo has no corresponding work
-// commit (the legitimate "no-code close" / tracking-issue case). Doctor
-// recognizes either side as sufficient evidence so a tracking-only close
-// is not flagged as orphan. Delta item 5's full reconcile-lite (no_code
-// flag, type=tracking suppression, --strict promotion) is tracked under
-// act-37f7.
+// --strict promotion is a global pass in RunDoctor; this function emits
+// the design-spec severity unchanged.
 func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 	if fr == nil {
 		return nil
 	}
 	host := gitops.NewHostGitOps(repoRoot)
-	// The nested act repo lives at <hostRoot>/.act and has its own commit
-	// history (the op-log). We construct a read-only HostGitOps against
-	// it for marker lookup; HostGitOps's interface is the same regardless
-	// of which repo it targets.
 	nestedActPath := filepath.Join(repoRoot, ".act")
 	var nestedHost *gitops.HostGitOps
 	if _, err := os.Stat(filepath.Join(nestedActPath, ".git")); err == nil {
 		nestedHost = gitops.NewHostGitOps(nestedActPath)
 	}
+
+	// Step 1: build the marker indexes for host log and nested log.
+	hostMarkers, _ := host.AllMarkers()
+	// Index host markers by the canonical short id (`act-<MinShortHex>`)
+	// since act state ids are emitted at MinShortHexLen but historic
+	// markers may carry shorter or longer hex tails. We index by both
+	// the as-seen id and the truncated-to-MinShortHexLen short id so
+	// either lookup direction works.
+	hostMarkerByID := map[string][]gitops.MarkerCommit{}
+	for _, m := range hostMarkers {
+		hostMarkerByID[m.IssueID] = append(hostMarkerByID[m.IssueID], m)
+	}
+	nestedMarkerByID := map[string][]gitops.MarkerCommit{}
+	if nestedHost != nil {
+		nestedMarkers, _ := nestedHost.AllMarkers()
+		for _, m := range nestedMarkers {
+			nestedMarkerByID[m.IssueID] = append(nestedMarkerByID[m.IssueID], m)
+		}
+	}
+
+	// Step 2: internal contributors for the external-PR suppression.
+	// An empty set (fresh repo with no commits) collapses to "every
+	// commit is external," which would silence all (a)/(d) warnings —
+	// that's the right call for a brand-new repo with no history to
+	// distinguish from. The doctor is liberal in what it accepts.
+	internal, _ := host.InternalContributors(50)
+
+	// Step 3: build the act-state id-space. We compare against this for
+	// case (a) and (d) directly.
+	known := map[string]*fold.IssueState{}
+	for id, st := range fr.Issues {
+		if st != nil && !st.Tombstoned {
+			known[id] = st
+		}
+	}
+
 	var findings []Finding
-	ids := sortedIssueIDs(fr.Issues)
-	for _, id := range ids {
-		st := fr.Issues[id]
-		if st == nil || st.Tombstoned {
+
+	// Case (b): closed issues in act state with no closing marker.
+	for _, id := range sortedIssueIDs(fr.Issues) {
+		st := known[id]
+		if st == nil {
 			continue
 		}
 		status, _ := st.Fields["status"].(string)
 		if status != "closed" {
 			continue
 		}
-		short := ShortIssueID(id)
-		markerHex := strings.TrimPrefix(short, "act-")
-		commits, err := host.WorkCommitsForIssue(markerHex, 1)
-		if err == nil && len(commits) > 0 {
+		// Suppress: type=tracking is no-code-by-design.
+		if t, _ := st.Fields["type"].(string); t == "tracking" {
 			continue
 		}
-		// No marker in host log. Check the nested act repo's log too —
-		// op-commits live there under Phase 1 and embed the same marker.
-		if nestedHost != nil {
-			nc, nerr := nestedHost.WorkCommitsForIssue(markerHex, 1)
-			if nerr == nil && len(nc) > 0 {
+		// Suppress: explicit no_code close marker. The fold stores it
+		// as the bool `closed_no_code` (see internal/fold/apply.go).
+		if v, ok := st.Fields["closed_no_code"]; ok {
+			if b, _ := v.(bool); b {
 				continue
 			}
+		}
+		short := ShortIssueID(id)
+		if markerMatchesShort(hostMarkerByID, short) {
+			continue
+		}
+		if markerMatchesShort(nestedMarkerByID, short) {
+			continue
 		}
 		findings = append(findings, Finding{
 			Check:    "orphan-close",
 			Severity: "warn",
 			IssueID:  id,
-			Message:  fmt.Sprintf("closed issue %s has no commit referencing (%s)", id, short),
+			Message:  fmt.Sprintf("closed issue %s has no commit referencing (%s); pass --no-code to act close for legitimate no-code closes", id, short),
 		})
 	}
+
+	// Cases (a) and (d): markers in host code log that don't resolve.
+	// (a) = marker present, issue exists in act state but we already
+	// covered the inverse in (b). Concretely: if the marker resolves
+	// to a known issue, the marker is fine; if it doesn't resolve to a
+	// known id at all (case d), warn unless suppressed.
+	//
+	// The wording in the design table distinguishes (a) "marker in code,
+	// no matching issue" from (d) "marker referencing unknown id" — in
+	// practice they collapse to the same observation under Phase 1
+	// (there's no second act state to cross-reference). We treat any
+	// marker whose id doesn't resolve as a single (a)/(d) class.
+	reported := map[string]bool{}
+	for _, m := range hostMarkers {
+		// Resolve the marker's id to a known act state id. We compare
+		// by the short-id (MinShortHexLen) form so different-length
+		// markers for the same id collapse.
+		if _, ok := known[m.IssueID]; ok {
+			continue
+		}
+		// Try resolving as a prefix: an issue with full id
+		// `act-<longer-hex>` may carry a shorter marker. Build a
+		// canonical short form for the marker and lookup.
+		if resolved, found := resolveMarkerToKnown(m.IssueID, known); found {
+			_ = resolved
+			continue
+		}
+		// External-PR heuristic: suppress when the commit's author email
+		// is not in the recent-contributors set. We log the maintainer-
+		// audit info on the finding via the Message so a `--strict` CI
+		// run keeps the suppression intact for fork PRs but a manual
+		// review can still see what got filtered.
+		if len(internal) > 0 {
+			if _, isInternal := internal[m.AuthorEmail]; !isInternal {
+				// Suppressed; we don't emit a finding. (The audit
+				// trail is left to git log filtered on author — adding
+				// a "suppressed for external PR" warn-info finding
+				// would defeat the suppression.)
+				continue
+			}
+		}
+		key := m.SHA + "\x00" + m.IssueID
+		if reported[key] {
+			continue
+		}
+		reported[key] = true
+		findings = append(findings, Finding{
+			Check:    "orphan-close",
+			Severity: "warn",
+			IssueID:  m.IssueID,
+			Message:  fmt.Sprintf("commit %s carries marker %s but no matching issue exists in act state", shortSHA(m.SHA), m.IssueID),
+		})
+	}
+
 	return findings
+}
+
+// markerMatchesShort reports whether any marker in idx matches the issue
+// short-id `short`. The short form is `act-<MinShortHexLen-hex>` (see
+// ShortIssueID). Markers may carry longer or shorter hex tails so we
+// compare by the marker's id starting with the short form's hex prefix.
+// "Both have to start with `act-`" is implicit in AllMarkers's output.
+func markerMatchesShort(idx map[string][]gitops.MarkerCommit, short string) bool {
+	// Fast path: exact match on short id.
+	if _, ok := idx[short]; ok {
+		return true
+	}
+	// Fallback: a longer-id marker (e.g. full-id) for an id whose
+	// short form is `short`.
+	for id := range idx {
+		if strings.HasPrefix(id, short) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveMarkerToKnown checks whether the marker's id is a prefix of, or
+// has-as-prefix, any known full id. Returns the full id on match.
+//
+// Marker hex tails are 4..fullLen chars. The act-state id is the
+// canonical full id (or a shorter id from before the floor widened).
+// Either direction can be a prefix of the other, so check both.
+func resolveMarkerToKnown(markerID string, known map[string]*fold.IssueState) (string, bool) {
+	for fullID := range known {
+		if strings.HasPrefix(fullID, markerID) || strings.HasPrefix(markerID, fullID) {
+			return fullID, true
+		}
+	}
+	return "", false
+}
+
+// checkGitignoreEffective probes the host repo to confirm `.act/` is
+// actually gitignored. Doctor delta item 7 (Phase 1) requires this as a
+// sanity probe: a missed .gitignore entry would leak nested act state
+// into the host's tracked history, defeating the "outside contributors
+// see exactly the code" property. We test by running
+// `git check-ignore .act/` — exit 0 = ignored (good), exit 1 = NOT
+// ignored (bad, surface as error with the remediation recipe).
+//
+// The error finding is severity=error directly (not warn): a tracked
+// .act/ is a hard policy violation. The remedy recipe
+// `git rm -r --cached .act/` matches docs/coordination-plane-design.md
+// "Public-repo concerns" delta item 7. (act-37f7).
+func checkGitignoreEffective(repoRoot string) []Finding {
+	// Only meaningful when the host repo has a .act/ dir at all. A
+	// repo without .act (CI bootstrap, doc-only fork) trivially
+	// satisfies the check.
+	actPath := filepath.Join(repoRoot, ".act")
+	if _, err := os.Stat(actPath); err != nil {
+		return nil
+	}
+	host := gitops.NewHostGitOps(repoRoot)
+	ignored, err := host.CheckIgnored(".act/")
+	if err != nil {
+		return []Finding{{
+			Check:    "gitignore-effective",
+			Severity: "error",
+			Message:  fmt.Sprintf("gitignore-effective probe failed: %v", err),
+		}}
+	}
+	if ignored {
+		return nil
+	}
+	return []Finding{{
+		Check:    "gitignore-effective",
+		Severity: "error",
+		Message:  ".act/ is NOT ignored by the host repo's .gitignore; nested act state will leak into tracked history. Remedy: add '.act/' to .gitignore and run: git rm -r --cached .act/",
+	}}
 }
 
 // checkOrphanOps: for each issue dir under .act/ops/, find no `create` op.
