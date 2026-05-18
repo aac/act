@@ -269,16 +269,19 @@ EXAMPLE SESSION (CLI)
 COMMIT MARKER INVARIANTS
   Format is always '(act-<short>)'. The short string is the issue's
   shortest-unique prefix as computed by ids.ShortestUniquePrefixes —
-  variable length, minimum 4 hex chars. Use 'act show <id>
-  --commit-marker' (or the commit_marker field on act_next's response)
-  to get the canonical string; do NOT slice the id by hand.
+  variable length, minimum 6 hex chars for newly minted ids (4 hex chars
+  for historical ids that pre-date the act-f9a0 widening; both shapes
+  remain valid on disk). Use 'act show <id> --commit-marker' (or the
+  commit_marker field on act_next's response) to get the canonical
+  string; do NOT slice the id by hand.
 
-  'act doctor' orphan-close greps for the literal '(act-XXXX)' (4-char
-  prefix) in commit messages. If the unique prefix grows past 4 chars
-  due to id collisions, 'act-XXXXXX' still matches the doctor's grep
-  because the 4-char prefix is a literal substring of the longer one.
-  This is why hand-rolling a different shape ('issue act-c26a' or
-  'closes #c26a') breaks doctor: only '(act-XXXX...)' is recognised.
+  'act doctor' orphan-close greps for the literal '(act-XXXX)' marker in
+  commit messages. The grep keys on the issue's canonical marker prefix
+  (6 hex chars for new ids, the full id for historical sub-floor ids) and
+  matches as a literal substring, so unique-prefix growth from id
+  collisions still finds the right commits. This is why hand-rolling a
+  different shape ('issue act-c26a' or 'closes #c26a') breaks doctor:
+  only '(act-XXXX...)' is recognised.
 
 EXTERNAL DEPS
   Sometimes an act issue is blocked on work tracked in a sibling system

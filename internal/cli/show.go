@@ -174,9 +174,13 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	// `(act-XXXX)` marker. Read-side, no caching, single git invocation;
 	// best-effort — git failures here degrade to "no commits surfaced"
 	// rather than failing the whole show (act-9c8c).
-	if prefix4 := first4Hex(full); prefix4 != "" {
+	//
+	// markerHex is the hex tail of ShortIssueID(full) — the canonical
+	// commit-marker form. For new ids (MinShortHexLen=6) this is 6 hex; for
+	// historical 4-hex ids it's the full 4-hex tail.
+	if markerHex := commitMarkerHex(full); len(markerHex) >= 4 {
 		g := gitops.NewHostGitOps(repoRoot)
-		if commits, gerr := g.WorkCommitsForIssue(prefix4, showCommitsLimit); gerr == nil {
+		if commits, gerr := g.WorkCommitsForIssue(markerHex, showCommitsLimit); gerr == nil {
 			res.Commits = commits
 		}
 	}
@@ -387,17 +391,19 @@ func (r ShowResult) ShowJSON() map[string]any {
 // triggering a "declared but not used" warning.
 var _ = filepath.Separator
 
-// first4Hex returns the 4 hex characters after the "act-" prefix. Returns
-// "" for ids that don't start with "act-" or are too short. The 4-char
-// prefix is the doctor-grep key (act commit-marker invariants).
-func first4Hex(fullID string) string {
+// commitMarkerHex returns the hex tail of the canonical commit marker for
+// fullID — i.e. the hex part of ShortIssueID(fullID). For ids at or above
+// the generation floor (MinShortHexLen, 6 since act-f9a0) this is exactly
+// MinShortHexLen hex chars; for historical ids that were minted shorter
+// (e.g. 4-hex ids from before the bump), this returns the full hex tail
+// verbatim. Returns "" for ids that don't start with "act-".
+//
+// This is the doctor-grep key (act commit-marker invariants).
+func commitMarkerHex(fullID string) string {
 	const prefix = "act-"
-	if !strings.HasPrefix(fullID, prefix) {
+	short := ShortIssueID(fullID)
+	if !strings.HasPrefix(short, prefix) {
 		return ""
 	}
-	rest := fullID[len(prefix):]
-	if len(rest) < 4 {
-		return ""
-	}
-	return rest[:4]
+	return short[len(prefix):]
 }

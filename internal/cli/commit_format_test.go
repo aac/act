@@ -216,6 +216,11 @@ func TestCommitFormat_DeleteCascade(t *testing.T) {
 // the exact expected bytes for representative inputs. This is the
 // regression seat-belt for act-d3a5: any future change to the format
 // must update this test deliberately.
+//
+// Marker width matches the current generation floor (MinShortHexLen — 6
+// hex since act-f9a0). Historical 4-hex ids (minted pre-bump) pass through
+// verbatim because they are already shorter than the canonical marker
+// length.
 func TestBuildOpCommitMessage_Unit(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -223,13 +228,17 @@ func TestBuildOpCommitMessage_Unit(t *testing.T) {
 		opType  string
 		want    string
 	}{
-		{"create_long_id", "act-d3a5b1c2e3f4a5b6", "create", "act-op: (act-d3a5) create"},
-		{"claim", "act-3cdcb1c2e3f4a5b6", "claim", "act-op: (act-3cdc) claim"},
-		{"close", "act-0d9d11112222aaaa", "close", "act-op: (act-0d9d) close"},
-		{"update_field", "act-aaaabbbbccccdddd", "update_field", "act-op: (act-aaaa) update_field"},
-		{"add_dep", "act-1234567890abcdef", "add_dep", "act-op: (act-1234) add_dep"},
-		// Short id (already canonical-length) is passed through verbatim.
-		{"short_passthrough", "act-d3a5", "create", "act-op: (act-d3a5) create"},
+		{"create_long_id", "act-d3a5b1c2e3f4a5b6", "create", "act-op: (act-d3a5b1) create"},
+		{"claim", "act-3cdcb1c2e3f4a5b6", "claim", "act-op: (act-3cdcb1) claim"},
+		{"close", "act-0d9d11112222aaaa", "close", "act-op: (act-0d9d11) close"},
+		{"update_field", "act-aaaabbbbccccdddd", "update_field", "act-op: (act-aaaabb) update_field"},
+		{"add_dep", "act-1234567890abcdef", "add_dep", "act-op: (act-123456) add_dep"},
+		// New 6-hex id (already canonical length) is passed through verbatim.
+		{"floor_passthrough", "act-d3a5b1", "create", "act-op: (act-d3a5b1) create"},
+		// Historical 4-hex id (below current floor) is passed through
+		// verbatim: there is no shorter canonical form, and the on-disk
+		// syntax still accepts 4-hex ids per idPattern.
+		{"historical_4hex_passthrough", "act-d3a5", "create", "act-op: (act-d3a5) create"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -253,11 +262,11 @@ func TestBuildBatchCommitMessage_Unit(t *testing.T) {
 		count int
 		want  string
 	}{
-		{0, "act-op: (act-d3a5) tombstone"},
-		{1, "act-op: (act-d3a5) tombstone"},
-		{2, "act-op: (act-d3a5) tombstone +1"},
-		{3, "act-op: (act-d3a5) tombstone +2"},
-		{42, "act-op: (act-d3a5) tombstone +41"},
+		{0, "act-op: (act-d3a5b1) tombstone"},
+		{1, "act-op: (act-d3a5b1) tombstone"},
+		{2, "act-op: (act-d3a5b1) tombstone +1"},
+		{3, "act-op: (act-d3a5b1) tombstone +2"},
+		{42, "act-op: (act-d3a5b1) tombstone +41"},
 	}
 	for _, c := range cases {
 		got := BuildBatchCommitMessage(env, c.count)
@@ -268,12 +277,18 @@ func TestBuildBatchCommitMessage_Unit(t *testing.T) {
 }
 
 // TestShortIssueID asserts the helper truncates known-canonical full ids
-// to `act-XXXX` (8 chars) and passes shorter ids through verbatim.
+// to `act-` + MinShortHexLen hex chars (CommitMarkerLen total) and passes
+// shorter ids through verbatim.
 func TestShortIssueID(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"act-d3a5b1c2e3f4a5b6", "act-d3a5"},
-		{"act-3cdc", "act-3cdc"}, // already canonical length
-		{"act-d3", "act-d3"},     // shorter than canonical → passthrough
+		// Long id (above floor) → truncated to CommitMarkerLen = act- + 6 hex.
+		{"act-d3a5b1c2e3f4a5b6", "act-d3a5b1"},
+		// Exactly at floor → passthrough.
+		{"act-d3a5b1", "act-d3a5b1"},
+		// Historical id below the current floor (4-hex) → passthrough.
+		{"act-3cdc", "act-3cdc"},
+		// Even shorter (below on-disk syntax floor) → passthrough.
+		{"act-d3", "act-d3"},
 		{"", ""},
 		{"act-", "act-"},
 	}

@@ -4,8 +4,14 @@
 // Identifiers have the form `act-<hex>` where the hex part is a prefix of a
 // SHA-256 digest taken over the canonical-JSON encoding of the create-op
 // payload (which itself contains the 16-byte crypto-random nonce as 32 hex
-// chars). The prefix length starts at 4 and grows by one hex character at a
-// time on collision.
+// chars). The prefix length starts at MinShortHexLen and grows by one hex
+// character at a time on collision.
+//
+// Generation floor (MinShortHexLen) is distinct from the resolution floor
+// (MinInputHexLen): historical ids generated under a smaller MinShortHexLen
+// remain valid because the on-disk syntax accepts any length in [4,16] and
+// prefix resolution accepts any length >= MinInputHexLen=1. Bumping
+// MinShortHexLen only changes the size of *newly minted* ids.
 package ids
 
 import (
@@ -18,8 +24,19 @@ import (
 	"github.com/aac/act/internal/canonicaljson"
 )
 
-// MinShortHexLen is the starting length (in hex chars) of the short id.
-const MinShortHexLen = 4
+// MinShortHexLen is the starting length (in hex chars) of newly minted short
+// ids. Widened from 4 to 6 (act-f9a0) ahead of the Phase 1 nested-repo
+// migration: once contributors run several act states concurrently, birthday-
+// collision math says marker collisions appear within a few hundred issues
+// per state at 4 hex (~65k space). 6 hex (~16M space) buys two orders of
+// magnitude of headroom before the same risk recurs.
+//
+// IMPORTANT — backwards compatibility. The on-disk id syntax (`idPattern`)
+// still accepts the historical 4-hex form so existing ids in `.act/ops/`
+// keep resolving. The Min*HexLen constants govern *generation* and the
+// human-readable boundary for display; the *resolution* floor is
+// MinInputHexLen=1 (see internal/ids/prefix.go), which has not changed.
+const MinShortHexLen = 6
 
 // MaxShortHexLen is the largest length we will grow a short id to before
 // giving up.
@@ -107,8 +124,11 @@ func PickUnique(payload CreatePayload, exists func(id string) bool) (string, err
 }
 
 // idPattern enforces the on-disk id syntax: "act-" prefix followed by 4..16
-// lowercase hex chars. Boundaries (4 and 16) come from MinShortHexLen and
-// MaxShortHexLen; both are authoritative per docs/spec-v2.md §ID model.
+// lowercase hex chars. The upper bound (16) is authoritative per
+// docs/spec-v2.md §ID model and matches MaxShortHexLen. The lower bound (4)
+// is intentionally below MinShortHexLen (which is the *generation* floor —
+// 6 since act-f9a0): historical ids minted under MinShortHexLen=4 must keep
+// validating so existing repos can be read after the bump.
 var idPattern = regexp.MustCompile(`^act-[0-9a-f]{4,16}$`)
 
 // IsValidID reports whether s is a syntactically valid short id.

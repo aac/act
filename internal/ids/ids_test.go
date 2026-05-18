@@ -53,8 +53,8 @@ func TestDeriveIDDeterministic(t *testing.T) {
 	if a != b {
 		t.Fatalf("DeriveID not deterministic: %q vs %q", a, b)
 	}
-	if !strings.HasPrefix(a, "act-") || len(a) != 4+MinShortHexLen {
-		t.Fatalf("DeriveID returned malformed id %q", a)
+	if !strings.HasPrefix(a, "act-") || len(a) != len("act-")+MinShortHexLen {
+		t.Fatalf("DeriveID returned malformed id %q (want len=%d, got %d)", a, len("act-")+MinShortHexLen, len(a))
 	}
 }
 
@@ -77,39 +77,42 @@ func TestDeriveIDDiffersOnNonce(t *testing.T) {
 
 func TestExtendIDPrefixGrowth(t *testing.T) {
 	p := samplePayload()
-	id4, err := ExtendID(p, 4)
+	// MinShortHexLen is the generation floor (6 since act-f9a0); ExtendID
+	// rejects anything below it. Exercise the growth path at the floor and
+	// at two longer lengths.
+	id6, err := ExtendID(p, MinShortHexLen)
 	if err != nil {
-		t.Fatalf("ExtendID(4) error: %v", err)
+		t.Fatalf("ExtendID(%d) error: %v", MinShortHexLen, err)
 	}
-	id5, err := ExtendID(p, 5)
+	id7, err := ExtendID(p, MinShortHexLen+1)
 	if err != nil {
-		t.Fatalf("ExtendID(5) error: %v", err)
+		t.Fatalf("ExtendID(%d) error: %v", MinShortHexLen+1, err)
 	}
-	id8, err := ExtendID(p, 8)
+	id10, err := ExtendID(p, MinShortHexLen+4)
 	if err != nil {
-		t.Fatalf("ExtendID(8) error: %v", err)
+		t.Fatalf("ExtendID(%d) error: %v", MinShortHexLen+4, err)
 	}
-	hex4 := strings.TrimPrefix(id4, "act-")
-	hex5 := strings.TrimPrefix(id5, "act-")
-	hex8 := strings.TrimPrefix(id8, "act-")
-	if len(hex4) != 4 || len(hex5) != 5 || len(hex8) != 8 {
-		t.Fatalf("unexpected hex lengths: %d/%d/%d", len(hex4), len(hex5), len(hex8))
+	hex6 := strings.TrimPrefix(id6, "act-")
+	hex7 := strings.TrimPrefix(id7, "act-")
+	hex10 := strings.TrimPrefix(id10, "act-")
+	if len(hex6) != MinShortHexLen || len(hex7) != MinShortHexLen+1 || len(hex10) != MinShortHexLen+4 {
+		t.Fatalf("unexpected hex lengths: %d/%d/%d", len(hex6), len(hex7), len(hex10))
 	}
-	if !strings.HasPrefix(hex5, hex4) {
-		t.Fatalf("hex5 %q is not extension of hex4 %q", hex5, hex4)
+	if !strings.HasPrefix(hex7, hex6) {
+		t.Fatalf("hex7 %q is not extension of hex6 %q", hex7, hex6)
 	}
-	if !strings.HasPrefix(hex8, hex5) {
-		t.Fatalf("hex8 %q is not extension of hex5 %q", hex8, hex5)
+	if !strings.HasPrefix(hex10, hex7) {
+		t.Fatalf("hex10 %q is not extension of hex7 %q", hex10, hex7)
 	}
 }
 
 func TestExtendIDOutOfRange(t *testing.T) {
 	p := samplePayload()
-	if _, err := ExtendID(p, 3); err == nil {
-		t.Fatalf("ExtendID(3) should error")
+	if _, err := ExtendID(p, MinShortHexLen-1); err == nil {
+		t.Fatalf("ExtendID(%d) should error", MinShortHexLen-1)
 	}
-	if _, err := ExtendID(p, 17); err == nil {
-		t.Fatalf("ExtendID(17) should error")
+	if _, err := ExtendID(p, MaxShortHexLen+1); err == nil {
+		t.Fatalf("ExtendID(%d) should error", MaxShortHexLen+1)
 	}
 }
 
@@ -119,7 +122,7 @@ func TestPickUniqueNoCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PickUnique error: %v", err)
 	}
-	want, err := ExtendID(p, 4)
+	want, err := ExtendID(p, MinShortHexLen)
 	if err != nil {
 		t.Fatalf("ExtendID error: %v", err)
 	}
@@ -130,20 +133,20 @@ func TestPickUniqueNoCollision(t *testing.T) {
 
 func TestPickUniqueExtendsOnCollision(t *testing.T) {
 	p := samplePayload()
-	four, err := ExtendID(p, 4)
+	floor, err := ExtendID(p, MinShortHexLen)
 	if err != nil {
 		t.Fatalf("ExtendID error: %v", err)
 	}
-	five, err := ExtendID(p, 5)
+	floorPlus1, err := ExtendID(p, MinShortHexLen+1)
 	if err != nil {
 		t.Fatalf("ExtendID error: %v", err)
 	}
-	got, err := PickUnique(p, func(id string) bool { return id == four })
+	got, err := PickUnique(p, func(id string) bool { return id == floor })
 	if err != nil {
 		t.Fatalf("PickUnique error: %v", err)
 	}
-	if got != five {
-		t.Fatalf("PickUnique = %q, want %q", got, five)
+	if got != floorPlus1 {
+		t.Fatalf("PickUnique = %q, want %q", got, floorPlus1)
 	}
 }
 
@@ -187,10 +190,14 @@ func TestIsValidID(t *testing.T) {
 
 // TestIsValidIDBoundaries pins the lower and upper hex-length bounds enforced
 // by IsValidID against the spec authority cited in ids.go (docs/spec-v2.md
-// §ID model: short id is "act-" + N hex chars, 4 <= N <= 16). Each boundary
-// asserts the exact-cap accept and the cap+/-1 reject so a future tightening
-// or loosening of MaxShortHexLen / MinShortHexLen forces the spec citation to
-// be revisited.
+// §ID model: short id is "act-" + N hex chars, 4 <= N <= 16). The lower bound
+// of the on-disk syntax (4) is intentionally below MinShortHexLen (6 since
+// act-f9a0): historical ids minted under the prior generation floor must keep
+// validating so existing repos can be read. New ids generated today are 6+,
+// but a `act-aaaa` written before the bump is still a syntactically valid id.
+// Each boundary asserts the exact-cap accept and the cap+/-1 reject so a
+// future tightening or loosening of the on-disk bounds forces the spec
+// citation to be revisited.
 func TestIsValidIDBoundaries(t *testing.T) {
 	// Build a hex string of length n using the digit '0'. Hex is the right
 	// alphabet for these tests because IsValidID's only role is syntax.
@@ -207,12 +214,14 @@ func TestIsValidIDBoundaries(t *testing.T) {
 		s    string
 		want bool
 	}{
-		{"min-1 rejects (3 hex)", hexN(MinShortHexLen - 1), false},
-		{"min accepts (4 hex)", hexN(MinShortHexLen), true},
-		{"min+1 accepts (5 hex)", hexN(MinShortHexLen + 1), true},
-		{"max-1 accepts (15 hex)", hexN(MaxShortHexLen - 1), true},
-		{"max accepts (16 hex)", hexN(MaxShortHexLen), true},
-		{"max+1 rejects (17 hex)", hexN(MaxShortHexLen + 1), false},
+		{"3 hex rejects", hexN(3), false},
+		{"4 hex accepts (historical floor)", hexN(4), true},
+		{"5 hex accepts (historical, post-collision)", hexN(5), true},
+		{"6 hex accepts (current generation floor = MinShortHexLen)", hexN(MinShortHexLen), true},
+		{"7 hex accepts (MinShortHexLen+1)", hexN(MinShortHexLen + 1), true},
+		{"15 hex accepts (MaxShortHexLen-1)", hexN(MaxShortHexLen - 1), true},
+		{"16 hex accepts (MaxShortHexLen)", hexN(MaxShortHexLen), true},
+		{"17 hex rejects (MaxShortHexLen+1)", hexN(MaxShortHexLen + 1), false},
 		{"sha256-width rejects (64 hex)", hexN(64), false},
 	}
 	for _, tc := range cases {
