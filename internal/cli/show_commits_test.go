@@ -138,6 +138,8 @@ func TestRunShow_PicksUpWorkCommitsByMarker(t *testing.T) {
 	}
 	mustGit(t, root, "add", "WORK.txt")
 	mustGit(t, root, "commit", "-q", "--no-verify", "-m", "implement the thing ("+short+")")
+	// Host work commit (the marker is meant to live in the HOST log,
+	// which is what doctor and ShowCommits scan).
 	wantSHA := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
 
 	out, code := RunShow(root, ShowOptions{ID: id})
@@ -181,10 +183,14 @@ func TestRunShow_PicksUpWorkCommitsByMarker(t *testing.T) {
 	}
 }
 
-// TestRunShow_NoWorkCommits: an issue with no matching git commits must
-// yield ShowResult.Commits empty (nil) and the human render must omit the
-// 'commits:' section. Uses a real git repo (makeCreateRepo) so the git
-// log command actually runs and returns no matches.
+// TestRunShow_NoWorkCommits: an issue with no matching HOST work
+// commits must yield an empty (nil) ShowResult.Commits and a 'commits'
+// key in ShowJSON.
+//
+// Phase 1 semantics: `act create`'s auto-commit lives in the NESTED
+// .act/ repo, not the host. From the host repo's perspective (which
+// is what HostGitOps scans), a freshly-created issue has no work
+// commits unless the operator authored one — which we don't do here.
 func TestRunShow_NoWorkCommits(t *testing.T) {
 	root := makeCreateRepo(t)
 	createOut, code := RunCreate(root, CreateOptions{Title: "tracking only", Type: "task"})
@@ -192,24 +198,16 @@ func TestRunShow_NoWorkCommits(t *testing.T) {
 		t.Fatalf("create: code = %d, out=%+v", code, createOut)
 	}
 	id := createOut.(CreateResult).ID
-	// Note: act create itself produces a commit `act-op: (act-XXXX) create`
-	// which DOES contain the marker. This is the auto-commit per spec, not
-	// a work commit. AC #1 talks about "work commits" but since they share
-	// the same marker shape, RunShow surfaces them all (the act-op commits
-	// are useful too — they show the agent's tracker activity in git).
-	// The test verifies the contract: when the issue has no commits beyond
-	// what act itself wrote, the commits list reflects only those.
 
 	out, code := RunShow(root, ShowOptions{ID: id})
 	if code != 0 {
 		t.Fatalf("show: code = %d, out=%+v", code, out)
 	}
 	res := out.(ShowResult)
-	// At minimum the act-op create commit appears (one entry); the
-	// significant assertion is that ShowJSON produces a 'commits' key
-	// even if there are zero matches in some other future scenario.
-	if res.Commits == nil {
-		t.Errorf("commits is nil; expected at least the act-op create commit")
+	// Phase 1: zero host work commits for a tracking-only issue is the
+	// expected shape.
+	if len(res.Commits) != 0 {
+		t.Errorf("commits = %v; want empty (no host work commits expected)", res.Commits)
 	}
 	jsonShape := res.ShowJSON()
 	if _, present := jsonShape["commits"]; !present {

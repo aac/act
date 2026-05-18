@@ -246,10 +246,10 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Step 5: write + auto-commit.
+	// Step 5: write + auto-commit. Phase 1: writes target nested .act/ repo.
 	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewActGitOps(repoRoot)
+		gops = gitops.NewActGitOps(paths.Root)
 		gops.Verify = opts.Verify
 	}
 	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{

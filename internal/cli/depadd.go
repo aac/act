@@ -325,7 +325,8 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 
 	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewActGitOps(repoRoot)
+		// Phase 1: writes target the nested .act/ git repo (delta item 2).
+		gops = gitops.NewActGitOps(paths.Root)
 	}
 	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
 		NoCommit: opts.NoCommit,

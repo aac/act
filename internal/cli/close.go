@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aac/act/internal/canonicaljson"
@@ -333,7 +334,14 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	committed := false
 	stagedForCommit := false
 	if !opts.NoCommit {
-		gops := gitops.NewActGitOps(repoRoot)
+		// Phase 1: writes target the nested .act/ git repo. Under this
+		// reframe, the close commit is in the nested repo and invisible
+		// to the host repo's log, so the bundle-into-host-work-commit
+		// machinery (act-a659) no longer applies — close always commits
+		// standalone in the nested repo. The HasNonActChanges branch
+		// below stays dead code under Phase 1 because nested-repo cwd
+		// has no non-.act paths by construction.
+		gops := gitops.NewActGitOps(paths.Root)
 
 		// Stage any deferred op files first (they have no associated hook).
 		rollbackPending := func() {
@@ -380,6 +388,11 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 				IssueID: env.IssueID,
 				Phase:   hooks.PhasePreCommitOp,
 				OpJSON:  body,
+				// Phase 1 contract: cwd=host repo root, $ACT_STATE_PATH=
+				// nested .act/ dir. paths.Root is "<hostRoot>/.act"; its
+				// parent is the host repo root.
+				HostRepoRoot: filepath.Dir(paths.Root),
+				ActStatePath: paths.Root,
 			}
 			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
 				rollbackPending()
@@ -394,28 +407,15 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}
 		}
 
-		// Commit decision (act-a659):
-		//   - per_op strategy: always commit standalone (legacy behavior).
-		//   - per_session: if the working tree has any non-.act changes
-		//     (staged or unstaged work), leave the close op staged so the
-		//     agent's next `git commit -am` subsumes it together with their
-		//     code change. Otherwise commit standalone (preserves the
-		//     no-code-close UX as a single command).
+		// Commit decision under Phase 1 (docs/coordination-plane-design.md
+		// "Consequence for act-a659"): the close commit lives in the
+		// nested .act/ repo, which is invisible to the host repo's log,
+		// so the bundle-into-host-work-commit machinery that justified
+		// per_session's deferred-close path no longer applies. Close
+		// always commits standalone in the nested repo regardless of
+		// strategy; the per_session config knob is dead under Phase 1
+		// and slated for removal in a follow-up.
 		commitNow := true
-		if cfg.EffectiveBundleStrategy() == config.BundleStrategyPerSession {
-			hasOther, herr := gops.HasNonActChanges()
-			if herr != nil {
-				rollbackPending()
-				_ = runUnstage(gops.RepoRoot, opPath)
-				return CloseErrorOutput{
-					Error:   "status_check_failed",
-					Message: herr.Error(),
-				}, 1
-			}
-			if hasOther {
-				commitNow = false
-			}
-		}
 
 		if commitNow {
 			// Commit subject is built by BuildOpCommitMessage; canonical

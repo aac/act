@@ -176,34 +176,48 @@ func foldNeeded(run []string) bool {
 }
 
 // checkOrphanClose: for each closed issue, search the host repo's commit
-// log for a marker referencing the issue. Uses *gitops.HostGitOps —
-// doctor's marker scan is the canonical read-from-host call site under
-// the dual-handle split (act-3604).
+// log AND the nested act repo's commit log for a marker referencing the
+// issue. Uses *gitops.HostGitOps — doctor's marker scan is the canonical
+// read-from-host call site under the dual-handle split (act-3604).
 //
 // Marker forms (post-act-c4c5):
 //   - Trailer form `Act-Id: act-<hex>` in the commit body — the only
 //     emission shape going forward.
 //   - Historical subject-line form `(act-<hex>)` — still matched so
 //     pre-migration history in existing repos resolves cleanly. New
-//     work commits do not emit this form.
+//     work commits do not emit this form. The nested .act/ repo's
+//     op-commits (`act-op: (act-XXXX) <type>`) also carry this form.
 //
 // <hex> is the canonical commit-marker prefix produced by ShortIssueID —
 // exactly MinShortHexLen hex chars for ids at or above that length (6
 // since act-f9a0), and the full id verbatim for historical ids shorter
 // than the floor (e.g. 4-char ids minted before act-f9a0 widened
 // MinShortHexLen to 6). We pass the canonical marker hex to
-// WorkCommitsForIssue; its substring grep matches:
-//   - either canonical marker form for that issue, and
-//   - any longer extended marker that starts with the same prefix (i.e.
-//     same-issue ids that grew on collision).
+// WorkCommitsForIssue; its substring grep matches both 4-char and
+// 6+-char markers since the grep operates on the issue's own hex tail.
 //
-// Both 4-char (historical) and 6+-char (new) markers are matched because
-// the grep operates on the issue's own hex tail, not a fixed-length window.
+// Under Phase 1 (docs/coordination-plane-design.md), the close commit
+// itself lives in the nested .act/ repo. The marker is present in the
+// nested repo's log even when the host repo has no corresponding work
+// commit (the legitimate "no-code close" / tracking-issue case). Doctor
+// recognizes either side as sufficient evidence so a tracking-only close
+// is not flagged as orphan. Delta item 5's full reconcile-lite (no_code
+// flag, type=tracking suppression, --strict promotion) is tracked under
+// act-37f7.
 func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 	if fr == nil {
 		return nil
 	}
 	host := gitops.NewHostGitOps(repoRoot)
+	// The nested act repo lives at <hostRoot>/.act and has its own commit
+	// history (the op-log). We construct a read-only HostGitOps against
+	// it for marker lookup; HostGitOps's interface is the same regardless
+	// of which repo it targets.
+	nestedActPath := filepath.Join(repoRoot, ".act")
+	var nestedHost *gitops.HostGitOps
+	if _, err := os.Stat(filepath.Join(nestedActPath, ".git")); err == nil {
+		nestedHost = gitops.NewHostGitOps(nestedActPath)
+	}
 	var findings []Finding
 	ids := sortedIssueIDs(fr.Issues)
 	for _, id := range ids {
@@ -218,14 +232,23 @@ func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 		short := ShortIssueID(id)
 		markerHex := strings.TrimPrefix(short, "act-")
 		commits, err := host.WorkCommitsForIssue(markerHex, 1)
-		if err != nil || len(commits) == 0 {
-			findings = append(findings, Finding{
-				Check:    "orphan-close",
-				Severity: "warn",
-				IssueID:  id,
-				Message:  fmt.Sprintf("closed issue %s has no commit referencing (%s)", id, short),
-			})
+		if err == nil && len(commits) > 0 {
+			continue
 		}
+		// No marker in host log. Check the nested act repo's log too —
+		// op-commits live there under Phase 1 and embed the same marker.
+		if nestedHost != nil {
+			nc, nerr := nestedHost.WorkCommitsForIssue(markerHex, 1)
+			if nerr == nil && len(nc) > 0 {
+				continue
+			}
+		}
+		findings = append(findings, Finding{
+			Check:    "orphan-close",
+			Severity: "warn",
+			IssueID:  id,
+			Message:  fmt.Sprintf("closed issue %s has no commit referencing (%s)", id, short),
+		})
 	}
 	return findings
 }

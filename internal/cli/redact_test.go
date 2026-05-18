@@ -164,7 +164,7 @@ func TestRunRedact_AcceptanceCriterionPath(t *testing.T) {
 // advance HEAD; the result envelope reports Committed=false.
 func TestRunRedact_NoCommit(t *testing.T) {
 	root, id := makeRedactRepoWithIssue(t)
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunRedact(root, RedactOptions{
 		ID:        id,
@@ -181,7 +181,7 @@ func TestRunRedact_NoCommit(t *testing.T) {
 	if res.Committed {
 		t.Errorf("Committed = true, want false (--no-commit)")
 	}
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
 	}

@@ -412,14 +412,15 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		return errEnvelope("marshal_failed", merr.Error()), true
 	}
 
-	// Single-commit atomic write per §5.D.2.
+	// Single-commit atomic write per §5.D.2. Phase 1: writes target the
+	// nested .act/ git repo (delta item 2). paths.Root is <hostRoot>/.act.
 	var gops *gitops.ActGitOps
 	var bgops blockGitOps
 	if !args.NoCommit {
 		if factory != nil {
-			bgops = factory(s.repoRoot)
+			bgops = factory(paths.Root)
 		} else {
-			gops = gitops.NewActGitOps(s.repoRoot)
+			gops = gitops.NewActGitOps(paths.Root)
 			bgops = realBlockGitOps{inner: gops}
 		}
 	}
