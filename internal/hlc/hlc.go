@@ -48,6 +48,16 @@ type HLC struct {
 
 // Less reports whether a sorts before b. Ordering is lexicographic over the
 // tuple (Wall, Logical, NodeID). Equal tuples return false.
+//
+// NOTE: HLC.Less is the bare-HLC primitive (e.g. ordering claim windows that
+// only carry an HLC, or comparing clock states). For per-field LWW gating and
+// any other path where op-level identity matters, use Stamp.Less — spec
+// §Op-fold mandates that ties on (wall, logical) resolve by op_hash (a full
+// SHA-256 over the canonical {payload, hlc, node_id}), NOT by node_id. node_id
+// is already mixed into op_hash; tiebreaking by node_id here is preserved only
+// as a deterministic-but-spec-irrelevant ordering for the bare-HLC case where
+// no op_hash is in scope. Any new LWW-shaped caller should reach for
+// Stamp.Less, not HLC.Less.
 func (a HLC) Less(b HLC) bool {
 	if a.Wall != b.Wall {
 		return a.Wall < b.Wall
@@ -56,6 +66,41 @@ func (a HLC) Less(b HLC) bool {
 		return a.Logical < b.Logical
 	}
 	return a.NodeID < b.NodeID
+}
+
+// Stamp pairs an HLC reading with the full op_hash of the op that produced it.
+// It is the canonical ordering key for any spec-defined comparison that
+// participates in fold semantics:
+//
+//   - per-field LWW gates (internal/fold/apply.go)
+//   - claim winner selection (internal/claim/claim.go)
+//   - any future surface that must agree with §5.B's tiebreak rule
+//
+// Hash is the full 64-hex-char SHA-256 of canonical_json({payload, hlc, node_id})
+// per spec §5.B.1. The package treats Hash as opaque; callers that compare
+// Stamps must supply consistent hashes for the rule to hold (i.e. both Stamps
+// in a comparison must come from the same hashing pipeline).
+type Stamp struct {
+	HLC  HLC
+	Hash string
+}
+
+// Less reports whether a sorts before b under the spec-mandated tuple
+// (Wall, Logical, Hash). Equal tuples return false.
+//
+// This is the single comparison primitive used by both the LWW apply path
+// (internal/fold/apply.go gateLWW) and the claim winner-selection path
+// (internal/claim/claim.go) so the two cannot disagree on operations with
+// identical (wall, logical) but distinct hashes — the bug originally tracked
+// in act-492e.
+func (a Stamp) Less(b Stamp) bool {
+	if a.HLC.Wall != b.HLC.Wall {
+		return a.HLC.Wall < b.HLC.Wall
+	}
+	if a.HLC.Logical != b.HLC.Logical {
+		return a.HLC.Logical < b.HLC.Logical
+	}
+	return a.Hash < b.Hash
 }
 
 // Clock is a mutex-guarded HLC generator.

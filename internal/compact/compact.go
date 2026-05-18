@@ -394,11 +394,17 @@ func hlcString(h hlc.HLC) string {
 
 // highWaterHLC returns the maximum HLC across all tracked LWW fields. If the
 // state has none, returns the zero HLC.
+//
+// state.LastHLC carries hlc.Stamp (HLC + op_hash) per LWW gating; the high
+// water of just the HLC component is what callers want here (snapshot
+// scheduling / pruning), since the hash is incidental to time-of-last-write.
+// Sentinel: top.NodeID=="" identifies an uninitialised top so the first
+// non-zero stamp always installs.
 func highWaterHLC(state *fold.IssueState) hlc.HLC {
 	var top hlc.HLC
-	for _, h := range state.LastHLC {
-		if top.NodeID == "" || top.Less(h) {
-			top = h
+	for _, stamp := range state.LastHLC {
+		if top.NodeID == "" || top.Less(stamp.HLC) {
+			top = stamp.HLC
 		}
 	}
 	return top

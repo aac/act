@@ -14,24 +14,36 @@
   },
   "last_hlc": {
     "accept": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "ace6353e9736f642a59cd6344196fb50981536ada9e836e7951d6ceeccb18336"
     },
     "priority": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "ace6353e9736f642a59cd6344196fb50981536ada9e836e7951d6ceeccb18336"
     },
     "title": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "ace6353e9736f642a59cd6344196fb50981536ada9e836e7951d6ceeccb18336"
     },
     "type": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "ace6353e9736f642a59cd6344196fb50981536ada9e836e7951d6ceeccb18336"
     }
   },
   "tombstoned": false

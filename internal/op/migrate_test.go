@@ -23,7 +23,7 @@ func TestDispatchByVersionRegistered(t *testing.T) {
 		}
 	})
 	called := false
-	RegisterOpVersion(1, func(any, Envelope, []byte) error {
+	RegisterOpVersion(1, func(any, Envelope, []byte, string) error {
 		called = true
 		return nil
 	})
@@ -34,7 +34,7 @@ func TestDispatchByVersionRegistered(t *testing.T) {
 	if fn == nil {
 		t.Fatalf("DispatchByVersion(1): want non-nil apply function")
 	}
-	if err := fn(nil, Envelope{}, nil); err != nil {
+	if err := fn(nil, Envelope{}, nil, ""); err != nil {
 		t.Fatalf("apply: unexpected error: %v", err)
 	}
 	if !called {

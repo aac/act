@@ -55,7 +55,11 @@ func TestGenerateGoldens(t *testing.T) {
 		if fn == nil {
 			t.Fatalf("dispatch nil for %s", opType)
 		}
-		if err := fn(st, env, body); err != nil {
+		fullHash, err := env.FullHash()
+		if err != nil {
+			t.Fatalf("full hash %s: %v", opType, err)
+		}
+		if err := fn(st, env, body, fullHash); err != nil {
 			t.Fatalf("apply %s: %v", opType, err)
 		}
 	}
@@ -100,7 +104,11 @@ func TestGenerateGoldens(t *testing.T) {
 		if fn == nil {
 			t.Fatalf("dispatch nil for %s", opEnv.OpType)
 		}
-		if err := fn(st, opEnv, opEnv.Payload); err != nil {
+		fullHash, err := opEnv.FullHash()
+		if err != nil {
+			t.Fatalf("full hash: %v", err)
+		}
+		if err := fn(st, opEnv, opEnv.Payload, fullHash); err != nil {
 			t.Fatalf("apply for after: %v", err)
 		}
 		after := renderCanonicalForGolden(t, st)

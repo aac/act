@@ -19,7 +19,11 @@ import (
 // package free of a dependency on the fold package (which itself depends on
 // op). The fold package registers a wrapper at init time that performs the
 // concrete type assertion before delegating to fold.ApplyDispatch.
-type ApplyOpFunc func(state any, env Envelope, payload []byte) error
+//
+// fullHash is the full 64-hex-char op_hash of the envelope; fold dispatch
+// passes it through so apply functions can stamp the LWW gate with the
+// (HLC, op_hash) pair that the spec mandates for tiebreaking.
+type ApplyOpFunc func(state any, env Envelope, payload []byte, fullHash string) error
 
 // opVersionEntry is the value type of OpVersionRegistry. Future op_versions
 // add new entries here; old entries are never removed (per spec §6.4 — old

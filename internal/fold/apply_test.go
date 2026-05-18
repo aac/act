@@ -2,6 +2,8 @@ package fold
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aac/act/internal/hlc"
@@ -36,9 +38,22 @@ func freshState(id string) *IssueState {
 	return newIssueState(id)
 }
 
+// testHash returns a deterministic per-(wall, logical, nodeID) hash for unit
+// tests. Real folds use the canonical op_hash; for apply-level tests we just
+// need a stable string per envelope so the LWW tiebreak path is exercised
+// without re-hashing the wire envelope (which the test envelopes don't fully
+// populate). Format mirrors a 64-hex-char SHA-256 prefix.
+func testHash(env op.Envelope) string {
+	return fmt.Sprintf("%016x%016x%s%s",
+		uint64(env.HLC.Wall),
+		uint64(env.HLC.Logical),
+		env.NodeID,
+		strings.Repeat("0", 32-len(env.NodeID)))
+}
+
 func runCreate(t *testing.T, state *IssueState, env op.Envelope, p op.CreatePayload) {
 	t.Helper()
-	if err := applyCreate(state, env, mustJSON(t, p)); err != nil {
+	if err := applyCreate(state, env, mustJSON(t, p), testHash(env)); err != nil {
 		t.Fatalf("applyCreate: %v", err)
 	}
 }
@@ -75,7 +90,7 @@ func TestApply_CreateThenUpdateTitle(t *testing.T) {
 
 	e2 := mkEnv(id, "update_field", 2, 0, "11111111")
 	uf := op.UpdateFieldPayload{Field: "title", Value: json.RawMessage(`"new"`)}
-	if err := applyUpdateField(st, e2, mustJSON(t, uf)); err != nil {
+	if err := applyUpdateField(st, e2, mustJSON(t, uf), testHash(e2)); err != nil {
 		t.Fatalf("applyUpdateField: %v", err)
 	}
 	if st.Fields["title"] != "new" {
@@ -92,10 +107,10 @@ func TestApply_TwoUpdateFieldsLaterHLCWins(t *testing.T) {
 	uf1 := op.UpdateFieldPayload{Field: "title", Value: json.RawMessage(`"first"`)}
 	uf2 := op.UpdateFieldPayload{Field: "title", Value: json.RawMessage(`"second"`)}
 
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf1)); err != nil {
+	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf1), testHash(mkEnv(id, "update_field", 10, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 20, 0, "11111111"), mustJSON(t, uf2)); err != nil {
+	if err := applyUpdateField(st, mkEnv(id, "update_field", 20, 0, "11111111"), mustJSON(t, uf2), testHash(mkEnv(id, "update_field", 20, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["title"] != "second" {
@@ -114,10 +129,10 @@ func TestApply_OutOfOrderUpdateFieldHLCWinnerWins(t *testing.T) {
 	uf2 := op.UpdateFieldPayload{Field: "title", Value: json.RawMessage(`"winner"`)}
 	uf1 := op.UpdateFieldPayload{Field: "title", Value: json.RawMessage(`"loser"`)}
 
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 100, 0, "11111111"), mustJSON(t, uf2)); err != nil {
+	if err := applyUpdateField(st, mkEnv(id, "update_field", 100, 0, "11111111"), mustJSON(t, uf2), testHash(mkEnv(id, "update_field", 100, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 50, 0, "11111111"), mustJSON(t, uf1)); err != nil {
+	if err := applyUpdateField(st, mkEnv(id, "update_field", 50, 0, "11111111"), mustJSON(t, uf1), testHash(mkEnv(id, "update_field", 50, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["title"] != "winner" {
@@ -131,11 +146,11 @@ func TestApply_UpdateFieldAfterCloseStillApplies(t *testing.T) {
 	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
 		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
 
-	if err := applyClose(st, mkEnv(id, "close", 5, 0, "11111111"), mustJSON(t, op.ClosePayload{Reason: "done"})); err != nil {
+	if err := applyClose(st, mkEnv(id, "close", 5, 0, "11111111"), mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 5, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	uf := op.UpdateFieldPayload{Field: "title", Value: json.RawMessage(`"after-close"`)}
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf)); err != nil {
+	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf), testHash(mkEnv(id, "update_field", 10, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["title"] != "after-close" {
@@ -151,7 +166,8 @@ func TestApply_AddDepIdempotent(t *testing.T) {
 	st := freshState(id)
 	p := op.AddDepPayload{Parent: "act-bbbb", EdgeType: "blocks"}
 	for i := 0; i < 3; i++ {
-		if err := applyAddDep(st, mkEnv(id, "add_dep", int64(i+1), 0, "11111111"), mustJSON(t, p)); err != nil {
+		e := mkEnv(id, "add_dep", int64(i+1), 0, "11111111")
+		if err := applyAddDep(st, e, mustJSON(t, p), testHash(e)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -161,7 +177,7 @@ func TestApply_AddDepIdempotent(t *testing.T) {
 	}
 	// Different edge_type is a distinct edge.
 	p2 := op.AddDepPayload{Parent: "act-bbbb", EdgeType: "relates"}
-	if err := applyAddDep(st, mkEnv(id, "add_dep", 10, 0, "11111111"), mustJSON(t, p2)); err != nil {
+	if err := applyAddDep(st, mkEnv(id, "add_dep", 10, 0, "11111111"), mustJSON(t, p2), testHash(mkEnv(id, "add_dep", 10, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(getDeps(st)); got != 2 {
@@ -173,12 +189,12 @@ func TestApply_RemoveDepPresentAndAbsent(t *testing.T) {
 	id := "act-aaaa"
 	st := freshState(id)
 	if err := applyAddDep(st, mkEnv(id, "add_dep", 1, 0, "11111111"),
-		mustJSON(t, op.AddDepPayload{Parent: "act-bbbb", EdgeType: "blocks"})); err != nil {
+		mustJSON(t, op.AddDepPayload{Parent: "act-bbbb", EdgeType: "blocks"}), testHash(mkEnv(id, "add_dep", 1, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	// Remove non-matching: state unchanged.
 	if err := applyRemoveDep(st, mkEnv(id, "remove_dep", 2, 0, "11111111"),
-		mustJSON(t, op.RemoveDepPayload{Parent: "act-cccc", EdgeType: "blocks"})); err != nil {
+		mustJSON(t, op.RemoveDepPayload{Parent: "act-cccc", EdgeType: "blocks"}), testHash(mkEnv(id, "remove_dep", 2, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if len(getDeps(st)) != 1 {
@@ -186,7 +202,7 @@ func TestApply_RemoveDepPresentAndAbsent(t *testing.T) {
 	}
 	// Remove present.
 	if err := applyRemoveDep(st, mkEnv(id, "remove_dep", 3, 0, "11111111"),
-		mustJSON(t, op.RemoveDepPayload{Parent: "act-bbbb", EdgeType: "blocks"})); err != nil {
+		mustJSON(t, op.RemoveDepPayload{Parent: "act-bbbb", EdgeType: "blocks"}), testHash(mkEnv(id, "remove_dep", 3, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if len(getDeps(st)) != 0 {
@@ -199,14 +215,15 @@ func TestApply_AddRemoveAcceptByIndex(t *testing.T) {
 	st := freshState(id)
 	for i, c := range []string{"a", "b", "c"} {
 		_ = i
-		if err := applyAddAccept(st, mkEnv(id, "add_accept", int64(i+1), 0, "11111111"),
-			mustJSON(t, op.AddAcceptPayload{Criterion: c})); err != nil {
+		e := mkEnv(id, "add_accept", int64(i+1), 0, "11111111")
+		if err := applyAddAccept(st, e,
+			mustJSON(t, op.AddAcceptPayload{Criterion: c}), testHash(e)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Remove index 1 ("b"). Effective accept becomes [a, c].
 	if err := applyRemoveAccept(st, mkEnv(id, "remove_accept", 10, 0, "11111111"),
-		mustJSON(t, op.RemoveAcceptPayload{Index: 1})); err != nil {
+		mustJSON(t, op.RemoveAcceptPayload{Index: 1}), testHash(mkEnv(id, "remove_accept", 10, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	rendered := RenderState(st)
@@ -220,12 +237,12 @@ func TestApply_ClaimEarliestWins(t *testing.T) {
 	id := "act-aaaa"
 	st := freshState(id)
 	if err := applyClaim(st, mkEnv(id, "claim", 100, 0, "11111111"),
-		mustJSON(t, op.ClaimPayload{Assignee: "alice"})); err != nil {
+		mustJSON(t, op.ClaimPayload{Assignee: "alice"}), testHash(mkEnv(id, "claim", 100, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	// Apply an earlier claim — should win.
 	if err := applyClaim(st, mkEnv(id, "claim", 50, 0, "22222222"),
-		mustJSON(t, op.ClaimPayload{Assignee: "bob"})); err != nil {
+		mustJSON(t, op.ClaimPayload{Assignee: "bob"}), testHash(mkEnv(id, "claim", 50, 0, "22222222"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["assignee"] != "bob" {
@@ -236,7 +253,7 @@ func TestApply_ClaimEarliestWins(t *testing.T) {
 	}
 	// Apply a still-later claim — should NOT override.
 	if err := applyClaim(st, mkEnv(id, "claim", 200, 0, "33333333"),
-		mustJSON(t, op.ClaimPayload{Assignee: "carol"})); err != nil {
+		mustJSON(t, op.ClaimPayload{Assignee: "carol"}), testHash(mkEnv(id, "claim", 200, 0, "33333333"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["assignee"] != "bob" {
@@ -248,12 +265,12 @@ func TestApply_CloseIdempotent(t *testing.T) {
 	id := "act-aaaa"
 	st := freshState(id)
 	if err := applyClose(st, mkEnv(id, "close", 10, 0, "11111111"),
-		mustJSON(t, op.ClosePayload{Reason: "first"})); err != nil {
+		mustJSON(t, op.ClosePayload{Reason: "first"}), testHash(mkEnv(id, "close", 10, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	// A second close with later HLC overwrites reason (LWW).
 	if err := applyClose(st, mkEnv(id, "close", 20, 0, "11111111"),
-		mustJSON(t, op.ClosePayload{Reason: "second"})); err != nil {
+		mustJSON(t, op.ClosePayload{Reason: "second"}), testHash(mkEnv(id, "close", 20, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["status"] != "closed" {
@@ -264,7 +281,7 @@ func TestApply_CloseIdempotent(t *testing.T) {
 	}
 	// Idempotent: a third close with EARLIER HLC must NOT change anything.
 	if err := applyClose(st, mkEnv(id, "close", 5, 0, "11111111"),
-		mustJSON(t, op.ClosePayload{Reason: "earlier"})); err != nil {
+		mustJSON(t, op.ClosePayload{Reason: "earlier"}), testHash(mkEnv(id, "close", 5, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["closed_reason"] != "second" {
@@ -278,11 +295,11 @@ func TestApply_UpdateFieldStatusIgnored(t *testing.T) {
 	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
 		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
 	if err := applyClose(st, mkEnv(id, "close", 5, 0, "11111111"),
-		mustJSON(t, op.ClosePayload{Reason: "done"})); err != nil {
+		mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 5, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	uf := op.UpdateFieldPayload{Field: "status", Value: json.RawMessage(`"open"`)}
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf)); err != nil {
+	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf), testHash(mkEnv(id, "update_field", 10, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields["status"] != "closed" {
@@ -297,7 +314,7 @@ func TestApply_RedactRendersPlaceholder(t *testing.T) {
 		op.CreatePayload{Title: "secret", Description: "private", Type: "task", Nonce: "00000000000000000000000000000000"})
 
 	if err := applyRedact(st, mkEnv(id, "redact", 5, 0, "11111111"),
-		mustJSON(t, op.RedactPayload{FieldPath: "description"})); err != nil {
+		mustJSON(t, op.RedactPayload{FieldPath: "description"}), testHash(mkEnv(id, "redact", 5, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	rendered := RenderState(st)
@@ -314,7 +331,7 @@ func TestApply_TombstoneRendersNil(t *testing.T) {
 	st := freshState(id)
 	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
 		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
-	if err := applyTombstone(st, mkEnv(id, "tombstone", 2, 0, "11111111"), []byte(`{}`)); err != nil {
+	if err := applyTombstone(st, mkEnv(id, "tombstone", 2, 0, "11111111"), []byte(`{}`), testHash(mkEnv(id, "tombstone", 2, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if !st.Tombstoned {
@@ -329,7 +346,7 @@ func TestApply_ImportRecordsMetadata(t *testing.T) {
 	id := "act-aaaa"
 	st := freshState(id)
 	if err := applyImport(st, mkEnv(id, "import", 1, 0, "11111111"),
-		mustJSON(t, op.ImportPayload{SourceRef: "github://owner/repo/issues/42"})); err != nil {
+		mustJSON(t, op.ImportPayload{SourceRef: "github://owner/repo/issues/42"}), testHash(mkEnv(id, "import", 1, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if st.Fields[keyImportSource] != "github://owner/repo/issues/42" {
@@ -346,7 +363,7 @@ func TestApply_MigrateRecordsMetadata(t *testing.T) {
 	id := "act-aaaa"
 	st := freshState(id)
 	if err := applyMigrate(st, mkEnv(id, "migrate", 1, 0, "11111111"),
-		mustJSON(t, op.MigratePayload{FromVersion: 1, ToVersion: 2})); err != nil {
+		mustJSON(t, op.MigratePayload{FromVersion: 1, ToVersion: 2}), testHash(mkEnv(id, "migrate", 1, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	m, ok := st.Fields[keyLastMigration].(map[string]any)
@@ -388,7 +405,7 @@ func TestApply_DispatchAllOpTypesSmoke(t *testing.T) {
 			t.Fatalf("ApplyDispatch(%q) = nil", s.opType)
 		}
 		env := mkEnv(id, s.opType, wall, 0, "11111111")
-		if err := fn(st, env, mustJSON(t, s.payload)); err != nil {
+		if err := fn(st, env, mustJSON(t, s.payload), testHash(env)); err != nil {
 			t.Fatalf("apply %s: %v", s.opType, err)
 		}
 		wall++
@@ -422,11 +439,11 @@ func TestApply_RenderStripsInternalKeys(t *testing.T) {
 	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
 		op.CreatePayload{Title: "t", Type: "task", Nonce: "00000000000000000000000000000000"})
 	if err := applyImport(st, mkEnv(id, "import", 2, 0, "11111111"),
-		mustJSON(t, op.ImportPayload{SourceRef: "src"})); err != nil {
+		mustJSON(t, op.ImportPayload{SourceRef: "src"}), testHash(mkEnv(id, "import", 2, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := applyRedact(st, mkEnv(id, "redact", 3, 0, "11111111"),
-		mustJSON(t, op.RedactPayload{FieldPath: "title"})); err != nil {
+		mustJSON(t, op.RedactPayload{FieldPath: "title"}), testHash(mkEnv(id, "redact", 3, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
 	rendered := RenderState(st)
