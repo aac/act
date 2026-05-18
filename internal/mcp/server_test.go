@@ -31,7 +31,7 @@ func makeRealRepo(t *testing.T) string {
 	}
 	mustGitMCP(t, dir, "add", "README")
 	mustGitMCP(t, dir, "commit", "-q", "--no-verify", "-m", "init")
-	out, code := cli.RunInit(dir, false, false, "machine-mcp", "mcp@example.com",
+	out, code := cli.RunInit(dir, false, "machine-mcp", "mcp@example.com",
 		func() time.Time { return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC) })
 	if code != 0 {
 		t.Fatalf("RunInit failed: code=%d out=%+v", code, out)
@@ -81,7 +81,7 @@ func makeRepo(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir .git: %v", err)
 	}
-	_, code := cli.RunInit(root, false, false, "machine-mcp", "mcp@example.com",
+	_, code := cli.RunInit(root, false, "machine-mcp", "mcp@example.com",
 		func() time.Time { return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC) })
 	if code != 0 {
 		t.Fatalf("RunInit failed: code=%d", code)
@@ -436,7 +436,7 @@ func TestActFinish(t *testing.T) {
 		t.Errorf("short_id empty")
 	}
 	// Verify commit message includes (act-XXXX).
-	subj := gitOutput(t, root, "log", "-1", "--format=%s")
+	subj := gitOutput(t, filepath.Join(root, ".act"), "log", "-1", "--format=%s")
 	if !strings.Contains(subj, "("+short+")") {
 		t.Errorf("commit subject %q missing (%s)", subj, short)
 	}
@@ -471,7 +471,7 @@ func TestActBlock(t *testing.T) {
 
 	// Inspect HEAD: both op files must be in the same commit. Use
 	// `git show --name-only HEAD` (subject + filenames).
-	files := gitOutput(t, root, "show", "--name-only", "--format=", "HEAD")
+	files := gitOutput(t, filepath.Join(root, ".act"), "show", "--name-only", "--format=", "HEAD")
 	lines := strings.Split(files, "\n")
 	jsonCount := 0
 	hasUpdateField := false
@@ -499,7 +499,7 @@ func TestActBlock(t *testing.T) {
 		t.Errorf("HEAD missing add_dep op file; files=%q", files)
 	}
 	// Commit subject begins with `act-block:`.
-	subj := gitOutput(t, root, "log", "-1", "--format=%s")
+	subj := gitOutput(t, filepath.Join(root, ".act"), "log", "-1", "--format=%s")
 	if !strings.HasPrefix(subj, "act-block:") {
 		t.Errorf("commit subject %q missing act-block: prefix", subj)
 	}
@@ -588,7 +588,7 @@ func TestActFileBlocker(t *testing.T) {
 	}
 
 	// Both op files must land in one commit.
-	files := gitOutput(t, root, "show", "--name-only", "--format=", "HEAD")
+	files := gitOutput(t, filepath.Join(root, ".act"), "show", "--name-only", "--format=", "HEAD")
 	lines := strings.Split(files, "\n")
 	hasCreate := false
 	hasAddDep := false
@@ -607,7 +607,7 @@ func TestActFileBlocker(t *testing.T) {
 	if !hasCreate || !hasAddDep {
 		t.Errorf("HEAD must touch both create and add_dep ops; got %q", files)
 	}
-	subj := gitOutput(t, root, "log", "-1", "--format=%s")
+	subj := gitOutput(t, filepath.Join(root, ".act"), "log", "-1", "--format=%s")
 	if !strings.Contains(subj, "create +1") {
 		t.Errorf("subject %q missing batch suffix `create +1`", subj)
 	}
@@ -657,7 +657,7 @@ func TestActFileBlocker_MultipleBlockers(t *testing.T) {
 		}
 	}
 
-	subj := gitOutput(t, root, "log", "-1", "--format=%s")
+	subj := gitOutput(t, filepath.Join(root, ".act"), "log", "-1", "--format=%s")
 	if !strings.Contains(subj, "create +3") {
 		t.Errorf("subject %q missing `create +3` (1 create + 3 deps)", subj)
 	}

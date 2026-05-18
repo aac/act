@@ -493,7 +493,11 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	// observe it on the no-dep-flag path only.
 	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewActGitOps(repoRoot)
+		// Phase 1: writes target the nested .act/ git repo, not the host
+		// repo (docs/coordination-plane-design.md delta item 2). paths.Root
+		// is <hostRoot>/.act, the working tree of the nested repo set up
+		// by act init.
+		gops = gitops.NewActGitOps(paths.Root)
 	}
 	var werr error
 	if len(depEnvs) == 0 {

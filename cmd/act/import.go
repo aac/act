@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/importer"
@@ -38,7 +39,8 @@ func runImport(args []string) int {
 
 	var g *gitops.ActGitOps
 	if !*noCommit {
-		g = gitops.NewActGitOps(root)
+		// Phase 1: writes target the nested .act/ git repo.
+		g = gitops.NewActGitOps(filepath.Join(root, ".act"))
 	}
 
 	res, runErr := importer.Run(root, importer.Options{

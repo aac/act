@@ -148,7 +148,7 @@ func TestRunDelete_Cascade(t *testing.T) {
 	// Single git commit batches all three tombstones using the canonical
 	// batch subject `act-op: (act-XXXX) tombstone +N` (count of *extra*
 	// ops beyond the head). 3 ops => `+2`.
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.HasPrefix(subj, "act-op: (") {
 		t.Errorf("commit subject %q missing canonical 'act-op: (act-XXXX)' prefix", subj)
 	}

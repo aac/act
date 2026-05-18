@@ -259,7 +259,7 @@ func TestRunReopen_UpdateStatusOpenStillRejectedOnClosed(t *testing.T) {
 // advance HEAD; the result envelope reports committed=false.
 func TestRunReopen_NoCommit(t *testing.T) {
 	root, id := makeReopenRepoWithClosedIssue(t)
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunReopen(root, ReopenOptions{ID: id, NoCommit: true})
 	if code != 0 {
@@ -273,7 +273,7 @@ func TestRunReopen_NoCommit(t *testing.T) {
 		t.Errorf("Committed = true, want false (--no-commit)")
 	}
 
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
 	}

@@ -308,11 +308,14 @@ func writeRawEnvelopeAndCommit(t *testing.T, root string, env op.Envelope, opTyp
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatalf("write op: %v", err)
 	}
-	// Stage and commit with the canonical subject so the marker lands in
-	// the commit log where doctor's grep will find it.
-	mustGit(t, root, "add", path)
+	// Stage and commit in the nested .act/ repo where op-commits live
+	// post-c1b4. The marker lands in the nested log, which is one of the
+	// two places doctor's marker-scan looks (the host log is the other).
+	nestedRoot := filepath.Join(root, ".act")
+	relPath, _ := filepath.Rel(nestedRoot, path)
+	mustGit(t, nestedRoot, "add", relPath)
 	subj := BuildOpCommitMessage(env)
-	mustGit(t, root, "commit", "-q", "--no-verify", "-m", subj)
+	mustGit(t, nestedRoot, "commit", "-q", "--no-verify", "-m", subj)
 }
 
 // writeWorkCommit synthesises a "real" code-touching commit (not an

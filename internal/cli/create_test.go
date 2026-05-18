@@ -14,9 +14,15 @@ import (
 	"github.com/aac/act/internal/op"
 )
 
-// makeCreateRepo initializes a git repo with `.act/` and a valid
-// `.act/config.json` (NodeID = "0123abcd"). It returns the absolute
-// repo root.
+// makeCreateRepo initializes a git repo with a nested .act/ git repo +
+// valid .act/config.json (NodeID = "0123abcd") matching the Phase 1
+// two-repo layout (docs/coordination-plane-design.md). It returns the
+// absolute host repo root.
+//
+// We intentionally do NOT call RunInit here so the test fixture is
+// minimal — no host pre-commit hook, no CONTRIBUTING.md emission, no
+// host-side commit — just enough on-disk shape for ActGitOps to write
+// op files into the nested repo and commit them.
 func makeCreateRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -42,6 +48,16 @@ func makeCreateRepo(t *testing.T) string {
 	if err := config.WriteConfig(paths, cfg); err != nil {
 		t.Fatalf("WriteConfig: %v", err)
 	}
+
+	// Phase 1: nested .act/ git repo. Initialize it with the same
+	// identity as the host so commits attribute consistently in tests.
+	mustGit(t, paths.Root, "init", "-q", "-b", "main")
+	mustGit(t, paths.Root, "config", "user.email", "u@example.com")
+	mustGit(t, paths.Root, "config", "user.name", "U")
+	mustGit(t, paths.Root, "config", "commit.gpgsign", "false")
+	// Initial commit so HEAD exists; subsequent op commits attach to it.
+	mustGit(t, paths.Root, "add", "-A")
+	mustGit(t, paths.Root, "commit", "-q", "--no-verify", "-m", "act: bootstrap nested state")
 	return dir
 }
 
@@ -142,17 +158,19 @@ func TestRunCreate_PersistsAllPayloadFields(t *testing.T) {
 
 func TestRunCreate_AutoCommitsByDefault(t *testing.T) {
 	root := makeCreateRepo(t)
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	// Phase 1: op commits land in the nested .act/ repo, not the host.
+	actDir := filepath.Join(root, ".act")
+	headBefore := strings.TrimSpace(runOut(t, actDir, "git", "rev-parse", "HEAD"))
 
 	_, code := RunCreate(root, CreateOptions{Title: "t1", Type: "task"})
 	if code != 0 {
 		t.Fatalf("code = %d", code)
 	}
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, actDir, "git", "rev-parse", "HEAD"))
 	if headAfter == headBefore {
-		t.Fatalf("expected new commit; HEAD unchanged %s", headAfter)
+		t.Fatalf("expected new commit; nested HEAD unchanged %s", headAfter)
 	}
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, actDir, "git", "log", "-1", "--format=%s"))
 	if !strings.HasPrefix(subj, "act-op: ") || !strings.HasSuffix(subj, " create") {
 		t.Errorf("subject = %q", subj)
 	}
@@ -160,15 +178,16 @@ func TestRunCreate_AutoCommitsByDefault(t *testing.T) {
 
 func TestRunCreate_NoCommit(t *testing.T) {
 	root := makeCreateRepo(t)
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	actDir := filepath.Join(root, ".act")
+	headBefore := strings.TrimSpace(runOut(t, actDir, "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{Title: "t1", Type: "task", NoCommit: true})
 	if code != 0 {
 		t.Fatalf("code = %d", code)
 	}
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, actDir, "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
-		t.Fatalf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
+		t.Fatalf("expected no commit; nested HEAD %s -> %s", headBefore, headAfter)
 	}
 	id := out.(CreateResult).ID
 	matches, _ := filepath.Glob(filepath.Join(root, ".act", "ops", id, "*", "*-create.json"))
@@ -443,17 +462,20 @@ func writeCloseOp(t *testing.T, root, parentID string) {
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatalf("write close: %v", err)
 	}
-	// Stage and commit the file (so subsequent commits in the test
-	// repo do not pull this file in via auto-add).
+	// Stage and commit the file in the NESTED .act/ repo (Phase 1)
+	// so subsequent commits in the test repo do not pull this file
+	// in via auto-add. The path passed to `git add` is the absolute
+	// path inside the nested working tree.
+	actDir := filepath.Join(root, ".act")
 	cmd := exec.Command("git", "add", path)
-	cmd.Dir = root
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git add close: %v", err)
+	cmd.Dir = actDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add close: %v\n%s", err, out)
 	}
 	cmd = exec.Command("git", "commit", "-q", "--no-verify", "-m", "close parent")
-	cmd.Dir = root
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git commit close: %v", err)
+	cmd.Dir = actDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit close: %v\n%s", err, out)
 	}
 }
 
@@ -470,7 +492,7 @@ func TestRunCreate_BlockedBy_SingleAtomicCommit(t *testing.T) {
 	}
 	parentID := parentOut.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:     "blocked",
@@ -483,13 +505,13 @@ func TestRunCreate_BlockedBy_SingleAtomicCommit(t *testing.T) {
 	childID := out.(CreateResult).ID
 
 	// One commit, not two.
-	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	commitsAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-list", "--count", headBefore+"..HEAD"))
 	if commitsAfter != "1" {
 		t.Errorf("expected 1 new commit, got %s", commitsAfter)
 	}
 
 	// Subject carries the +N batch marker (the create + 1 dep op).
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.Contains(subj, "create +1") {
 		t.Errorf("subject %q missing batch suffix `create +1`", subj)
 	}
@@ -536,7 +558,7 @@ func TestRunCreate_BlockedBy_MultipleDeps(t *testing.T) {
 	bID := b.(CreateResult).ID
 	cID := c.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:     "child of three",
@@ -547,11 +569,11 @@ func TestRunCreate_BlockedBy_MultipleDeps(t *testing.T) {
 	}
 	childID := out.(CreateResult).ID
 
-	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	commitsAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-list", "--count", headBefore+"..HEAD"))
 	if commitsAfter != "1" {
 		t.Errorf("expected 1 commit, got %s", commitsAfter)
 	}
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.Contains(subj, "create +3") {
 		t.Errorf("subject %q missing `create +3` (1 create + 3 deps = 4 ops)", subj)
 	}
@@ -612,7 +634,7 @@ func TestRunCreate_BlockedBy_DuplicateTargetsDedup(t *testing.T) {
 func TestRunCreate_BlockedBy_UnknownTarget(t *testing.T) {
 	root := makeCreateRepo(t)
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:     "would-be orphan",
@@ -627,7 +649,7 @@ func TestRunCreate_BlockedBy_UnknownTarget(t *testing.T) {
 	}
 
 	// No commit should have landed.
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("HEAD moved %s -> %s; should be unchanged on unknown-target failure", headBefore, headAfter)
 	}
@@ -667,7 +689,7 @@ func TestRunCreate_BlockedBy_NoCommit(t *testing.T) {
 	pOut, _ := RunCreate(root, CreateOptions{Title: "p"})
 	pID := pOut.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	out, code := RunCreate(root, CreateOptions{
 		Title:     "c",
 		BlockedBy: []string{pID},
@@ -678,7 +700,7 @@ func TestRunCreate_BlockedBy_NoCommit(t *testing.T) {
 	}
 	childID := out.(CreateResult).ID
 
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
 	}
@@ -777,7 +799,7 @@ func TestRunCreate_Blocks_SingleAtomicCommit(t *testing.T) {
 	}
 	existingID := existingOut.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:  "follow-up blocker",
@@ -790,13 +812,13 @@ func TestRunCreate_Blocks_SingleAtomicCommit(t *testing.T) {
 	newID := out.(CreateResult).ID
 
 	// Exactly one new commit.
-	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	commitsAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-list", "--count", headBefore+"..HEAD"))
 	if commitsAfter != "1" {
 		t.Errorf("expected 1 new commit, got %s", commitsAfter)
 	}
 
 	// Subject carries `create +1` and keys the NEW issue (not the existing).
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.Contains(subj, "create +1") {
 		t.Errorf("subject %q missing `create +1`", subj)
 	}
@@ -859,7 +881,7 @@ func TestRunCreate_Blocks_MultipleDeps(t *testing.T) {
 	bID := b.(CreateResult).ID
 	cID := c.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:  "blocks three",
@@ -870,11 +892,11 @@ func TestRunCreate_Blocks_MultipleDeps(t *testing.T) {
 	}
 	newID := out.(CreateResult).ID
 
-	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	commitsAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-list", "--count", headBefore+"..HEAD"))
 	if commitsAfter != "1" {
 		t.Errorf("expected 1 commit, got %s", commitsAfter)
 	}
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.Contains(subj, "create +3") {
 		t.Errorf("subject %q missing `create +3`", subj)
 	}
@@ -924,7 +946,7 @@ func TestRunCreate_Blocks_DuplicateTargetsDedup(t *testing.T) {
 func TestRunCreate_Blocks_UnknownTarget(t *testing.T) {
 	root := makeCreateRepo(t)
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:  "would-be orphan",
@@ -942,7 +964,7 @@ func TestRunCreate_Blocks_UnknownTarget(t *testing.T) {
 		t.Errorf("message %q does not mention --blocks", e.Message)
 	}
 
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("HEAD moved on unknown-target failure")
 	}
@@ -977,7 +999,7 @@ func TestRunCreate_Blocks_NoCommit(t *testing.T) {
 	eOut, _ := RunCreate(root, CreateOptions{Title: "existing"})
 	eID := eOut.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	out, code := RunCreate(root, CreateOptions{
 		Title:    "new",
 		Blocks:   []string{eID},
@@ -988,7 +1010,7 @@ func TestRunCreate_Blocks_NoCommit(t *testing.T) {
 	}
 	newID := out.(CreateResult).ID
 
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
 	}
@@ -1011,7 +1033,7 @@ func TestRunCreate_Blocks_MixedWithBlockedBy(t *testing.T) {
 	prereqID := prereqOut.(CreateResult).ID
 	downstreamID := downstreamOut.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunCreate(root, CreateOptions{
 		Title:     "middle",
@@ -1023,11 +1045,11 @@ func TestRunCreate_Blocks_MixedWithBlockedBy(t *testing.T) {
 	}
 	newID := out.(CreateResult).ID
 
-	commitsAfter := strings.TrimSpace(runOut(t, root, "git", "rev-list", "--count", headBefore+"..HEAD"))
+	commitsAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-list", "--count", headBefore+"..HEAD"))
 	if commitsAfter != "1" {
 		t.Errorf("expected 1 commit, got %s", commitsAfter)
 	}
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.Contains(subj, "create +2") {
 		t.Errorf("subject %q missing `create +2` (1 create + 1 blocked-by + 1 blocks = 3 ops)", subj)
 	}
@@ -1065,7 +1087,7 @@ func TestRunCreate_Blocks_SharedIDWithBlockedBy_Rejected(t *testing.T) {
 	xOut, _ := RunCreate(root, CreateOptions{Title: "x"})
 	xID := xOut.(CreateResult).ID
 
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	out, code := RunCreate(root, CreateOptions{
 		Title:     "would-be cycle",
 		BlockedBy: []string{xID},
@@ -1079,7 +1101,7 @@ func TestRunCreate_Blocks_SharedIDWithBlockedBy_Rejected(t *testing.T) {
 		t.Errorf("error envelope = %+v (type %T)", out, out)
 	}
 	// HEAD must not move on a rejected create.
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("HEAD moved on rejected 2-cycle create")
 	}

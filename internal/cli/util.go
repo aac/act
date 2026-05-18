@@ -182,6 +182,11 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 			IssueID: env.IssueID,
 			Phase:   hooks.PhasePreCommitOp,
 			OpJSON:  body,
+			// Phase 1 contract: cwd=host repo root, $ACT_STATE_PATH=
+			// nested .act/ dir. paths.Root is "<hostRoot>/.act"; its
+			// parent is the host repo root.
+			HostRepoRoot: filepath.Dir(paths.Root),
+			ActStatePath: paths.Root,
 		}
 		if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
 			_ = unstage(gops, opPath)

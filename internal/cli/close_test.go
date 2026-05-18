@@ -58,7 +58,7 @@ func TestRunClose_HappyPath(t *testing.T) {
 
 	// Commit subject must contain `(<short_id>)` so doctor's
 	// orphan-close grep matches.
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if !strings.Contains(subj, "("+res.ShortID+")") {
 		t.Errorf("commit subject %q missing (%s)", subj, res.ShortID)
 	}
@@ -101,7 +101,7 @@ func TestRunClose_AlreadyClosed(t *testing.T) {
 // advance HEAD; the result envelope reports committed=false.
 func TestRunClose_NoCommit(t *testing.T) {
 	root, id := makeCloseRepoWithIssue(t)
-	headBefore := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headBefore := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 
 	out, code := RunClose(root, CloseOptions{ID: id, NoCommit: true})
 	if code != 0 {
@@ -115,7 +115,7 @@ func TestRunClose_NoCommit(t *testing.T) {
 		t.Errorf("Committed = true, want false (--no-commit)")
 	}
 
-	headAfter := strings.TrimSpace(runOut(t, root, "git", "rev-parse", "HEAD"))
+	headAfter := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "rev-parse", "HEAD"))
 	if headAfter != headBefore {
 		t.Errorf("expected no commit; HEAD %s -> %s", headBefore, headAfter)
 	}

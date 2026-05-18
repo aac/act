@@ -36,6 +36,14 @@ func TestConcurrentDistinctOps(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping concurrency e2e under -short")
 	}
+	// Phase 1 (docs/coordination-plane-design.md): act state lives in
+	// a nested .act/ git repo, gitignored from the host. Multi-machine
+	// op-sync against a shared remote is Phase 2 territory ("act
+	// sync"). The fixture this test uses (siteA + siteB sharing host
+	// origin) pushes/pulls op files through the host remote, which
+	// the host's .gitignore now blocks. Re-enable this test when
+	// Phase 2 ships and the nested repo gains its own remote-sync.
+	t.Skip("Phase 1: multi-machine act-state sync is Phase 2 work (docs/coordination-plane-design.md)")
 	siteA, siteB, _ := makeShared(t)
 
 	// 1. A creates the issue and pushes it.
@@ -94,6 +102,7 @@ func TestConcurrentClaimRace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping concurrency e2e under -short")
 	}
+	t.Skip("Phase 1: multi-machine act-state sync is Phase 2 work (docs/coordination-plane-design.md)")
 	const iterations = 5
 
 	for iter := 0; iter < iterations; iter++ {
@@ -170,6 +179,7 @@ func TestRebaseContention(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping concurrency e2e under -short")
 	}
+	t.Skip("Phase 1: multi-machine act-state sync is Phase 2 work (docs/coordination-plane-design.md)")
 	const iterations = 3
 
 	for iter := 0; iter < iterations; iter++ {
@@ -252,6 +262,7 @@ func TestConcurrentDistinctOpsBidirectional(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping concurrency e2e under -short")
 	}
+	t.Skip("Phase 1: multi-machine act-state sync is Phase 2 work (docs/coordination-plane-design.md)")
 	siteA, siteB, _ := makeShared(t)
 
 	id := createIssueOnA(t, siteA, "bidir")

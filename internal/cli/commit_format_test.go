@@ -13,6 +13,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ var canonicalSubjectRE = regexp.MustCompile(
 //   - The subject ends with the expected op_type (modulo the `+N` suffix).
 func assertCanonicalSubject(t *testing.T, root, wantOpType string) string {
 	t.Helper()
-	subj := strings.TrimSpace(runOut(t, root, "git", "log", "-1", "--format=%s"))
+	subj := strings.TrimSpace(runOut(t, filepath.Join(root, ".act"), "git", "log", "-1", "--format=%s"))
 	if strings.Contains(subj, "act-act-") {
 		t.Fatalf("subject %q contains double-prefix `act-act-`", subj)
 	}

@@ -142,10 +142,14 @@ func unknownDepVerbMsg(verb string) string {
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
 // machine-id + git email for node_id derivation, then delegates to RunInit.
+//
+// Phase 1 (docs/coordination-plane-design.md) removed the pre-existing
+// `--no-commit` flag: the nested .act/ repo's initial commit is what `act
+// init` does, and there's no flag-gated rollout. Existing repos use the
+// migration tracked under act-603d.
 func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "reinitialize even if .act/ already exists")
-	noCommit := fs.Bool("no-commit", false, "create .act/ but do not stage and commit it (default: auto-commit)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -162,7 +166,7 @@ func runInit(args []string) int {
 		return 3
 	}
 
-	out, code := cli.RunInit(root, *force, !*noCommit, getMachineID(), getGitEmail(), nil)
+	out, code := cli.RunInit(root, *force, getMachineID(), getGitEmail(), nil)
 	emitInit(*asJSON, out, code == 0)
 	return code
 }
@@ -187,13 +191,31 @@ func emitInit(asJSON bool, payload any, success bool) {
 			return
 		}
 		fmt.Printf("Initialized .act/ at %s with node_id %s\n", m["act_dir"], m["node_id"])
-		if committed, _ := m["committed"].(bool); committed {
-			fmt.Println(`Committed initial state ("act init: tracker initialized"). Run "act create" to file your first issue.`)
-		} else if cerr, _ := m["commit_error"].(string); cerr != "" {
-			fmt.Fprintf(os.Stderr, "warning: auto-commit failed (%s); .act/ is on disk, commit manually with: git add .act .gitignore && git commit -m \"act init: tracker initialized\"\n", cerr)
-		} else {
-			fmt.Println(`Run "git add .act .gitignore && git commit" to track the new state, then "act create" to file your first issue.`)
+		// Phase 1 two-repo bootstrap: surface what landed and what didn't.
+		// `nested_committed` is the load-bearing piece (without it doctor
+		// can't reconcile). The rest are best-effort host-side niceties.
+		if nested, _ := m["nested_committed"].(bool); nested {
+			fmt.Println(`Bootstrapped nested .act/ git repo with initial commit.`)
 		}
+		if hc, _ := m["host_committed"].(bool); hc {
+			fmt.Println(`Committed host-side changes (.gitignore + CONTRIBUTING stanza).`)
+		} else if gi, _ := m["gitignore_updated"].(bool); gi {
+			fmt.Println(`Added .act/ to host .gitignore (commit pending; run git commit when ready).`)
+		}
+		if hi, _ := m["hook_installed"].(bool); hi {
+			fmt.Println(`Installed host pre-commit hook to reject accidental .act/* stages.`)
+		}
+		if ce, _ := m["contributing_emitted"].(bool); ce {
+			fmt.Println(`Appended Act-Id trailer stanza to CONTRIBUTING.md (public-looking remote detected).`)
+		}
+		if pf, ok := m["partial_failures"].([]any); ok && len(pf) > 0 {
+			fmt.Fprintln(os.Stderr, "warning: some host-side steps did not complete:")
+			for _, f := range pf {
+				fmt.Fprintf(os.Stderr, "  - %v\n", f)
+			}
+			fmt.Fprintln(os.Stderr, "  nested .act/ is in place; re-run act init or remediate the listed steps manually.")
+		}
+		fmt.Println(`Run "act create" to file your first issue.`)
 		return
 	}
 	emitEnvelope(asJSON, payload)

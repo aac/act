@@ -597,9 +597,9 @@ func (s *Server) callInit(raw json.RawMessage) (any, bool) {
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
 	}
-	// MCP-driven init defaults to auto-commit so the calling agent doesn't
-	// have to chain a separate git commit step.
-	out, code := cli.RunInit(s.repoRoot, args.Force, true, "", "", nil)
+	// MCP-driven init under Phase 1 always bootstraps the nested .act/ repo
+	// with its initial commit; there's no --no-commit toggle anymore.
+	out, code := cli.RunInit(s.repoRoot, args.Force, "", "", nil)
 	return out, code != 0
 }
 

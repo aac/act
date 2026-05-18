@@ -66,12 +66,30 @@ var recognized = map[string]string{
 // is the canonical-JSON serialization of the op envelope; it is piped to
 // the hook's stdin verbatim, with no trailing newline. Closing stdin
 // signals EOF to the script.
+//
+// Phase 1 of the coordination-plane design (docs/coordination-plane-design.md
+// delta item 4) pins the hook execution contract: hooks always run with
+// cwd=HostRepoRoot and the environment variable $ACT_STATE_PATH set to the
+// nested .act/ directory. This means a hook script can shell out to project
+// commands (gofmt, go test, npm test, etc.) without first having to climb
+// out of the .act/ subtree to find the project root — and can locate the
+// act state path explicitly when it needs to inspect op files. HostRepoRoot
+// and ActStatePath are exposed to the hook as:
+//
+//   - cwd = HostRepoRoot
+//   - env $ACT_STATE_PATH = ActStatePath
+//
+// Both are absolute paths. When HostRepoRoot is empty Run falls back to
+// the calling process's cwd (the pre-Phase-1 behavior) so existing tests
+// that don't set the field keep working.
 type HookContext struct {
-	OpID    string // sha256 of canonical JSON; exposed as $ACT_OP_ID
-	OpType  string // create|close|claim; exposed as $ACT_OP_TYPE
-	IssueID string // exposed as $ACT_ISSUE_ID
-	Phase   Phase  // exposed as $ACT_HOOK_PHASE
-	OpJSON  []byte // payload for stdin; not modified
+	OpID         string // sha256 of canonical JSON; exposed as $ACT_OP_ID
+	OpType       string // create|close|claim; exposed as $ACT_OP_TYPE
+	IssueID      string // exposed as $ACT_ISSUE_ID
+	Phase        Phase  // exposed as $ACT_HOOK_PHASE
+	OpJSON       []byte // payload for stdin; not modified
+	HostRepoRoot string // absolute path to host repo; cwd for the hook
+	ActStatePath string // absolute path to nested .act/; exposed as $ACT_STATE_PATH
 }
 
 // HookFailedError is returned by Run when the hook process exits non-zero
@@ -164,12 +182,23 @@ func Run(ctx HookContext, executablePath string, timeout time.Duration) error {
 	// window mandated by the spec. Instead, we manage the timeout with
 	// a goroutine that sends SIGTERM then SIGKILL.
 	cmd := exec.Command(executablePath)
-	cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"ACT_OP_ID="+ctx.OpID,
 		"ACT_OP_TYPE="+ctx.OpType,
 		"ACT_ISSUE_ID="+ctx.IssueID,
 		"ACT_HOOK_PHASE="+string(ctx.Phase),
 	)
+	if ctx.ActStatePath != "" {
+		env = append(env, "ACT_STATE_PATH="+ctx.ActStatePath)
+	}
+	cmd.Env = env
+	// Phase 1 contract: hooks run with cwd=HostRepoRoot. When the caller
+	// hasn't supplied one (legacy callers, internal tests that don't care)
+	// we fall back to the process cwd, which preserves pre-Phase-1
+	// behavior.
+	if ctx.HostRepoRoot != "" {
+		cmd.Dir = ctx.HostRepoRoot
+	}
 	// Place the hook in its own process group so the timeout watchdog
 	// can reliably kill the entire subtree (e.g. shell + sleep child).
 	setProcessGroup(cmd)

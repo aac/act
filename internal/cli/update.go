@@ -486,7 +486,8 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// committed=true means at least one commit happened.
 	var gops *gitops.ActGitOps
 	if !effectiveNoCommit {
-		gops = gitops.NewActGitOps(repoRoot)
+		// Phase 1: writes target the nested .act/ git repo (delta item 2).
+		gops = gitops.NewActGitOps(paths.Root)
 		gops.Verify = opts.Verify
 	}
 	for i, env := range envelopes {
@@ -567,16 +568,20 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		wait = 60 * time.Second
 	}
 
-	gops := gitops.NewActGitOps(repoRoot)
+	// Phase 1: writes target the nested .act/ git repo, so the wrapper
+	// stages `ops` (relative to the nested repo) instead of `.act/ops`
+	// (which would resolve into a nested-inside-nested path).
+	gops := gitops.NewActGitOps(paths.Root)
 	gops.Verify = opts.Verify
 
-	// claim's GitOps interface comment ("Commit stages the .act/ops subtree
+	// claim's GitOps interface comment ("Commit stages the ops subtree
 	// and creates a single commit") is satisfied by wrapping the production
 	// gitops with a staging step. Production gitops.Commit only commits;
 	// the claim package writes ops directly via op.ProbeAndWrite (skipping
-	// WriteOpAndAutoCommit's StageOpFile), so we must stage `.act/ops`
-	// before the commit fires.
-	wrapped := &claimGitOps{inner: gops, repoRoot: repoRoot}
+	// WriteOpAndAutoCommit's StageOpFile), so we must stage the ops dir
+	// before the commit fires. Under Phase 1 the wrapper's cwd is the
+	// nested .act/ working tree so the staging path is plain "ops".
+	wrapped := &claimGitOps{inner: gops, repoRoot: paths.Root}
 
 	res, err := claim.RunClaim(repoRoot, full, claim.Options{
 		Assignee:    cfg.NodeID, // assignee defaults to the local node id
@@ -723,10 +728,13 @@ type claimGitOps struct {
 }
 
 func (c *claimGitOps) Commit(message string) error {
-	// Stage the entire .act/ops subtree so newly-written op files (and
-	// the corresponding shard directories) are picked up.
-	if _, err := c.runGit("add", "--", ".act/ops"); err != nil {
-		return fmt.Errorf("claimGitOps: stage .act/ops: %w", err)
+	// Stage the entire ops/ subtree so newly-written op files (and the
+	// corresponding shard directories) are picked up. The path is plain
+	// "ops" because under Phase 1 the wrapper's cwd is the nested .act/
+	// working tree; "ops" inside it resolves to <hostRoot>/.act/ops, the
+	// directory the op writer actually lays files into.
+	if _, err := c.runGit("add", "--", "ops"); err != nil {
+		return fmt.Errorf("claimGitOps: stage ops: %w", err)
 	}
 	return c.inner.Commit(message)
 }

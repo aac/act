@@ -374,10 +374,12 @@ func writeRawClaimUpdate(t *testing.T, rootOps, issueID, assignee string, h hlc.
 	if err != nil {
 		t.Fatalf("ProbeAndWrite: %v", err)
 	}
-	// rootOps == "<repoRoot>/.act/ops"; back out twice to get repoRoot
-	// so the staging git command runs in the right working tree.
-	repoRoot := filepath.Dir(filepath.Dir(rootOps))
-	mustGit(t, repoRoot, "add", path)
-	mustGit(t, repoRoot, "commit", "-q", "--no-verify", "-m", "plant claim")
+	// Phase 1: rootOps is "<hostRoot>/.act/ops". The nested .act/ repo
+	// is its parent, and the staging git command must run in THAT
+	// working tree so the .act/ gitignore on the host doesn't filter
+	// the new op file out.
+	actDir := filepath.Dir(rootOps)
+	mustGit(t, actDir, "add", path)
+	mustGit(t, actDir, "commit", "-q", "--no-verify", "-m", "plant claim")
 	return path
 }

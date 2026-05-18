@@ -300,10 +300,10 @@ func RunRedact(repoRoot string, opts RedactOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Step 6: write + auto-commit via the shared helper.
+	// Step 6: write + auto-commit via the shared helper. Phase 1: nested .act/ repo.
 	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewActGitOps(repoRoot)
+		gops = gitops.NewActGitOps(paths.Root)
 		gops.Verify = opts.Verify
 	}
 	if werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
