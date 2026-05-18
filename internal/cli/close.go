@@ -333,7 +333,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	committed := false
 	stagedForCommit := false
 	if !opts.NoCommit {
-		gops := gitops.NewGitOps(repoRoot)
+		gops := gitops.NewActGitOps(repoRoot)
 
 		// Stage any deferred op files first (they have no associated hook).
 		rollbackPending := func() {

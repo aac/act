@@ -96,7 +96,7 @@ func TestWriteOpsAndAutoCommit_RollbackOnCommitFailure(t *testing.T) {
 
 	rec := withRecordingUnstageFn(t)
 	envs, bodies := envelopesForRollback(t, 3)
-	g := gitops.NewGitOps(dir)
+	g := gitops.NewActGitOps(dir)
 
 	err := WriteOpsAndAutoCommit(envs, bodies, paths, g, WriteOpts{}, "act-block: test")
 	if err == nil {
@@ -147,7 +147,7 @@ func TestWriteOpsAndAutoCommit_RollbackOnWriteFailure(t *testing.T) {
 	}
 	dir, paths := makeWriteRepo(t)
 	rec := withRecordingUnstageFn(t)
-	g := gitops.NewGitOps(dir)
+	g := gitops.NewActGitOps(dir)
 
 	// Op 1 writes into the 2023-11 shard. Op 2 targets the 2024-12 shard,
 	// whose parent we'll pre-create as a non-directory regular file so

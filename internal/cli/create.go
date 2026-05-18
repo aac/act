@@ -491,9 +491,9 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	// Multi-op batches do not fire per-op-type hooks (matching the
 	// composed `act_block` pattern); projects with a `create` hook will
 	// observe it on the no-dep-flag path only.
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewGitOps(repoRoot)
+		gops = gitops.NewActGitOps(repoRoot)
 	}
 	var werr error
 	if len(depEnvs) == 0 {

@@ -60,6 +60,65 @@ func NewGitOps(repoRoot string) *GitOps {
 	return &GitOps{RepoRoot: repoRoot, runner: exec.Command}
 }
 
+// ActGitOps is the handle authorized to write act ops and query the act
+// state's git history. Under Phase 1 of the coordination-plane design
+// (docs/coordination-plane-design.md delta item 2) this will target the
+// nested .act/ repo; today it shares findRepoRoot with HostGitOps, so both
+// resolve to the same working tree. The split is a type-system enforcement
+// of the "writes go through act's handle" invariant — every call site that
+// stages an op or commits an act change must use *ActGitOps.
+//
+// ActGitOps is a type alias for *GitOps so it exposes the full write
+// surface (Commit, StageOpFile, Push, PullRebase, SquashActOpRange) plus
+// all the read helpers. Migration consists of flipping construction calls
+// from NewGitOps to NewActGitOps; the method set is identical.
+type ActGitOps = GitOps
+
+// NewActGitOps constructs an ActGitOps for the writer side of the dual-
+// handle split. Today this is the same construction as NewGitOps; the
+// distinct name documents the writer-vs-reader role at every call site.
+func NewActGitOps(repoRoot string) *ActGitOps {
+	return NewGitOps(repoRoot)
+}
+
+// HostGitOps is the read-only handle act uses to scan the host repo's
+// commit log for `(act-XXXX)` markers. Today the host and act states
+// share a working tree; under Phase 1 the host repo and the nested act
+// repo will be distinct git directories and this handle will target the
+// host (the act-9e8c findRepoRoot resolver work).
+//
+// HostGitOps deliberately exposes only the read surface that doctor and
+// show need (RepoRoot, WorkCommitsForIssue). The write methods on the
+// underlying *GitOps (Commit, StageOpFile, Push, PullRebase,
+// SquashActOpRange) are a compile-time absence from HostGitOps's method
+// set — the only way to perform writes is to drop down to *ActGitOps,
+// which makes the policy ("act never writes to the host repo") enforced
+// by the type system rather than by convention.
+type HostGitOps struct {
+	inner *GitOps
+}
+
+// NewHostGitOps constructs a HostGitOps for the reader side of the dual-
+// handle split. The repoRoot argument is the host repo's working tree —
+// under Phase 1, the same path as the act state's root; once the nested
+// repo migration lands, the two roots diverge and this constructor will
+// be passed the host root specifically.
+func NewHostGitOps(repoRoot string) *HostGitOps {
+	return &HostGitOps{inner: NewGitOps(repoRoot)}
+}
+
+// RepoRoot returns the working tree path the host handle targets.
+func (h *HostGitOps) RepoRoot() string {
+	return h.inner.RepoRoot
+}
+
+// WorkCommitsForIssue surfaces the `(act-<prefix4>` marker grep against
+// the host repo's git log. Read-only operation — see *GitOps.WorkCommitsForIssue
+// for the contract.
+func (h *HostGitOps) WorkCommitsForIssue(prefix4 string, limit int) ([]WorkCommit, error) {
+	return h.inner.WorkCommitsForIssue(prefix4, limit)
+}
+
 // run executes `git <args...>` with cwd=RepoRoot and returns stdout. stderr
 // is included in the error message on failure.
 func (g *GitOps) run(args ...string) (string, error) {

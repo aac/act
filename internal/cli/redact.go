@@ -301,9 +301,9 @@ func RunRedact(repoRoot string, opts RedactOptions) (output any, exitCode int) {
 	}
 
 	// Step 6: write + auto-commit via the shared helper.
-	var gops *gitops.GitOps
+	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
-		gops = gitops.NewGitOps(repoRoot)
+		gops = gitops.NewActGitOps(repoRoot)
 		gops.Verify = opts.Verify
 	}
 	if werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{

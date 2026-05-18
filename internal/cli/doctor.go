@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/fold"
+	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
@@ -175,12 +175,15 @@ func foldNeeded(run []string) bool {
 	return false
 }
 
-// checkOrphanClose: for each closed issue, search `git log --all --grep`
-// for `(act-XXXX)`; finding if no matching commit is found.
+// checkOrphanClose: for each closed issue, search the host repo's commit
+// log for the `(act-XXXX)` marker. Uses *gitops.HostGitOps — doctor's
+// marker scan is the canonical read-from-host call site under the dual-
+// handle split (act-3604).
 func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 	if fr == nil {
 		return nil
 	}
+	host := gitops.NewHostGitOps(repoRoot)
 	var findings []Finding
 	ids := sortedIssueIDs(fr.Issues)
 	for _, id := range ids {
@@ -196,10 +199,10 @@ func checkOrphanClose(repoRoot string, fr *fold.FoldResult) []Finding {
 		if strings.HasPrefix(id, "act-") && len(id) >= 8 {
 			short = id[:8] // act-XXXX
 		}
-		// `git log --all --grep '(act-XXXX)' --pretty=%H`
-		cmd := exec.Command("git", "-C", repoRoot, "log", "--all", "--grep", "("+short+")", "--pretty=%H")
-		out, err := cmd.Output()
-		if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		// WorkCommitsForIssue takes the 4-char hex tail after "act-".
+		prefix4 := strings.TrimPrefix(short, "act-")
+		commits, err := host.WorkCommitsForIssue(prefix4, 1)
+		if err != nil || len(commits) == 0 {
 			findings = append(findings, Finding{
 				Check:    "orphan-close",
 				Severity: "warn",
