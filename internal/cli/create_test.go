@@ -33,7 +33,14 @@ func makeCreateRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("x\n"), 0o644); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
-	mustGit(t, dir, "add", "README")
+	// Phase 1 contract (docs/coordination-plane-design.md): the host
+	// repo gitignores `.act/`. Doctor's gitignore-effective probe will
+	// error on a test fixture that doesn't satisfy this, so we set up
+	// the same shape RunInit would produce.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".act/\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	mustGit(t, dir, "add", "README", ".gitignore")
 	mustGit(t, dir, "commit", "-q", "--no-verify", "-m", "init")
 
 	paths := config.Layout(dir)

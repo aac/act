@@ -36,6 +36,12 @@ type CloseOptions struct {
 	NoCommit bool
 	Push     bool
 	Isolated bool
+	// NoCode marks this close as legitimately producing no code change
+	// (tracking-only, wrong-claim retraction, doc correction, etc.).
+	// Plumbed into ClosePayload.NoCode; doctor's reconcile-lite case (b)
+	// suppresses warnings for closes with this flag set. See
+	// docs/coordination-plane-design.md "Doctor reconciliation" (act-37f7).
+	NoCode bool
 }
 
 // CloseResult is the JSON-serialisable success envelope for a write that
@@ -247,7 +253,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	payload := op.ClosePayload{Reason: opts.Reason}
+	payload := op.ClosePayload{Reason: opts.Reason, NoCode: opts.NoCode}
 	if verr := payload.Validate(); verr != nil {
 		return CloseErrorOutput{
 			Error:   "payload_invalid",

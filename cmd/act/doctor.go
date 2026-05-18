@@ -20,6 +20,7 @@ func runDoctor(args []string) int {
 	fix := fs.Bool("fix", false, "auto-remediate index-divergence/index-schema findings")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	compact := fs.Bool("compact", false, "trigger manual compaction of eligible issues")
+	strict := fs.Bool("strict", false, "promote warn findings to error (exit 1 on any finding)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -38,6 +39,7 @@ func runDoctor(args []string) int {
 		Fix:     *fix,
 		AsJSON:  *asJSON,
 		Compact: *compact,
+		Strict:  *strict,
 	})
 	if code != 0 && code != 1 {
 		// 2/3 are error envelopes.

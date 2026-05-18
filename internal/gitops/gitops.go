@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/aac/act/internal/claim"
@@ -117,6 +118,38 @@ func (h *HostGitOps) RepoRoot() string {
 // for the contract.
 func (h *HostGitOps) WorkCommitsForIssue(markerHex string, limit int) ([]WorkCommit, error) {
 	return h.inner.WorkCommitsForIssue(markerHex, limit)
+}
+
+// AllMarkers scans the host repo's full git log for any `(act-XXXX` or
+// `Act-Id: act-XXXX` markers and returns one record per (sha, markerID)
+// pair. Doctor's reconcile-lite uses this to find:
+//   - case (a): markers in code with no matching issue in act state.
+//   - case (d): markers referencing unknown ids (and dispatches the
+//     external-PR heuristic on author email to suppress fork merges).
+//
+// Read-only operation. The grep pattern mirrors WorkCommitsForIssue but
+// captures the full id rather than checking a specific one.
+func (h *HostGitOps) AllMarkers() ([]MarkerCommit, error) {
+	return h.inner.AllMarkers()
+}
+
+// InternalContributors returns the set of author emails from the host
+// repo's recent history (most recent `limit` commits). Used by the
+// external-PR heuristic: a marker authored by an email outside this set
+// is treated as a fork-PR contribution and case (d) warnings are
+// suppressed for it. The limit is intentionally generous (50 by default)
+// so a small team's churn pattern stays inside the set without needing
+// per-repo config (delta item 5, act-37f7).
+func (h *HostGitOps) InternalContributors(limit int) (map[string]struct{}, error) {
+	return h.inner.InternalContributors(limit)
+}
+
+// CheckIgnored reports whether `path` (relative to the host repo root)
+// is ignored by .gitignore. Doctor's gitignore-effective probe uses
+// this to confirm `.act/` is excluded from the host's tracked files
+// (Phase 1 OSS-unblock prerequisite).
+func (h *HostGitOps) CheckIgnored(path string) (bool, error) {
+	return h.inner.CheckIgnored(path)
 }
 
 // run executes `git <args...>` with cwd=RepoRoot and returns stdout. stderr
@@ -466,4 +499,176 @@ func (g *GitOps) WorkCommitsForIssue(markerHex string, limit int) ([]WorkCommit,
 		})
 	}
 	return commits, nil
+}
+
+// MarkerCommit is a single (commit, marker-id) pair. One git commit can
+// carry multiple markers (rare — e.g. a fix-up that closes two issues —
+// but the shape supports it).
+type MarkerCommit struct {
+	SHA         string `json:"sha"`
+	Subject     string `json:"subject"`
+	AuthorEmail string `json:"author_email"`
+	// IssueID is the canonical short id form (`act-<hex>`) extracted from
+	// the marker. Doctor compares this against the act state's id-space.
+	IssueID string `json:"issue_id"`
+}
+
+// markerPattern matches either the historical subject form
+// `(act-<hex>` or the trailer form `Act-Id: act-<hex>`. Capture group 1
+// or 2 is the hex tail; the caller normalises to `act-<hex>` form. The
+// hex tail is at least 4 chars (idPattern's syntax floor, MinShortHexLen
+// is the *generation* floor and unrelated). We do not anchor the right
+// side: existing markers can be the short form or the full-id form.
+//
+// The pattern is compiled once and reused; it operates on commit message
+// text (subject + body), not on git's --grep output.
+var markerPattern = regexp.MustCompile(`(?:\(act-([0-9a-f]{4,})|Act-Id: act-([0-9a-f]{4,}))`)
+
+// AllMarkers walks `git log --all` and returns one MarkerCommit per
+// (commit, marker) pair. The output is in git-log order (most-recent
+// first). Empty repos return (nil, nil).
+//
+// Implementation note: we run `git log --all --grep=` with the marker
+// regex to filter at git's level (avoids streaming every commit through
+// Go), then re-scan each returned commit message with markerPattern to
+// extract the id(s). The --grep is a filter, the re-scan is the
+// extractor — git's grep gives us no capture groups so we need both.
+func (g *GitOps) AllMarkers() ([]MarkerCommit, error) {
+	// Same pattern as WorkCommitsForIssue but without the issue-specific
+	// hex constraint. The `[0-9a-f]\\{4,\\}` form is BRE alternation —
+	// `--extended-regexp` switches to ERE so `{4,}` is literal.
+	pattern := `(\(act-[0-9a-f]{4,}|Act-Id: act-[0-9a-f]{4,})`
+	args := []string{
+		"log", "--all",
+		"--extended-regexp",
+		"--grep=" + pattern,
+		// %B is the full commit body (subject + body). %x1E (Record
+		// Separator) terminates the body so we can split unambiguously
+		// even if the body contains newlines, tabs, or any printable
+		// char. %x1F (Unit Separator) delimits fields within a record.
+		// Standard ASCII control chars almost never appear in real
+		// commit messages.
+		"--pretty=format:%H%x1F%s%x1F%ae%x1F%B%x1E",
+	}
+	out, err := g.run(args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not have any commits yet") ||
+			strings.Contains(err.Error(), "bad default revision 'HEAD'") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out = strings.TrimRight(out, "\x1e\n")
+	if out == "" {
+		return nil, nil
+	}
+	var markers []MarkerCommit
+	for _, rec := range strings.Split(out, "\x1e") {
+		rec = strings.TrimLeft(rec, "\n")
+		if rec == "" {
+			continue
+		}
+		fields := strings.SplitN(rec, "\x1f", 4)
+		if len(fields) != 4 {
+			continue
+		}
+		sha, subject, email, body := fields[0], fields[1], fields[2], fields[3]
+		for _, m := range markerPattern.FindAllStringSubmatch(body, -1) {
+			hex := m[1]
+			if hex == "" {
+				hex = m[2]
+			}
+			if hex == "" {
+				continue
+			}
+			markers = append(markers, MarkerCommit{
+				SHA:         sha,
+				Subject:     subject,
+				AuthorEmail: email,
+				IssueID:     "act-" + hex,
+			})
+		}
+	}
+	return markers, nil
+}
+
+// InternalContributors returns the set of author emails counted as
+// "regular" contributors over the most-recent `limit` commits on the
+// host repo. The heuristic for "regular" is `commit count >= 2` — a
+// single-commit author is treated as external (typical of a one-off
+// fork PR commit). `limit <= 0` falls back to a sane default (50).
+//
+// The set is used by doctor's external-PR heuristic to suppress case
+// (a)/(d) findings on commits attributed to one-off contributors. The
+// threshold is deliberately low: a small team's churn pattern keeps
+// every regular's count well above 1, while a fork's drive-by PR
+// commit sits at exactly 1 and gets filtered.
+//
+// Empty repos return (empty-set, nil) so the doctor can still run.
+func (g *GitOps) InternalContributors(limit int) (map[string]struct{}, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	args := []string{
+		"log", "-n", fmt.Sprintf("%d", limit),
+		"--pretty=format:%ae",
+	}
+	out, err := g.run(args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not have any commits yet") ||
+			strings.Contains(err.Error(), "bad default revision 'HEAD'") {
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
+	}
+	out = strings.TrimRight(out, "\n")
+	contribs := map[string]struct{}{}
+	if out == "" {
+		return contribs, nil
+	}
+	counts := map[string]int{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		counts[line]++
+	}
+	for email, n := range counts {
+		if n >= 2 {
+			contribs[email] = struct{}{}
+		}
+	}
+	return contribs, nil
+}
+
+// CheckIgnored runs `git check-ignore <path>` against the repo and
+// reports whether the given path (relative to RepoRoot, or absolute) is
+// ignored. Doctor uses this to verify .act/ is actually gitignored — a
+// missed .gitignore entry would leak nested act state into the host
+// repo's tracked history, defeating Phase 1's "outside contributors see
+// exactly the code" property.
+//
+// Returns (true, nil) when ignored, (false, nil) when not ignored,
+// (false, err) on any other failure. `git check-ignore` semantics: exit
+// 0 = ignored, exit 1 = not ignored (no output), exit 128 = error.
+func (g *GitOps) CheckIgnored(path string) (bool, error) {
+	cmd := exec.Command("git", "check-ignore", path)
+	cmd.Dir = g.RepoRoot
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			switch exitErr.ExitCode() {
+			case 1:
+				// Not ignored: this is the normal "ignore returns false"
+				// path, not an error.
+				return false, nil
+			case 128:
+				return false, fmt.Errorf("gitops: check-ignore %q: %s", path, strings.TrimSpace(stderr.String()))
+			}
+		}
+		return false, err
+	}
+	return true, nil
 }

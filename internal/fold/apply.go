@@ -449,6 +449,14 @@ func applyClose(state *IssueState, env op.Envelope, payload []byte, fullHash str
 	state.LastHLC["closed_reason"] = stamp
 	state.Fields["closed_by_node"] = env.NodeID
 	state.LastHLC["closed_by_node"] = stamp
+	// Phase 1 reconcile-lite (act-37f7): persist the close payload's
+	// no_code flag so doctor's case (b) check can suppress legitimate
+	// no-code closes. Only set when true to keep the rendered state
+	// compact for the typical code-producing close.
+	if p.NoCode {
+		state.Fields["closed_no_code"] = true
+		state.LastHLC["closed_no_code"] = stamp
+	}
 	return nil
 }
 
@@ -476,9 +484,11 @@ func applyReopen(state *IssueState, env op.Envelope, payload []byte, fullHash st
 	delete(state.Fields, "closed_at")
 	delete(state.Fields, "closed_reason")
 	delete(state.Fields, "closed_by_node")
+	delete(state.Fields, "closed_no_code")
 	state.LastHLC["closed_at"] = stamp
 	state.LastHLC["closed_reason"] = stamp
 	state.LastHLC["closed_by_node"] = stamp
+	state.LastHLC["closed_no_code"] = stamp
 	return nil
 }
 
