@@ -302,7 +302,9 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 		}
 	}
 
-	// Dependency edges.
+	// Dependency edges. RenderState normalises "deps" to []map[string]string
+	// regardless of whether state came from a live fold or a JSON-round-tripped
+	// snapshot, so a single typed assertion is sufficient (see act-8c78).
 	if deps, ok := rendered["deps"].([]map[string]string); ok {
 		for _, d := range deps {
 			if _, err := tx.Exec(
@@ -314,16 +316,17 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 		}
 	}
 
-	// External (opaque-ref) dependency entries. The set semantics are enforced
-	// at the apply layer; here we just persist what the fold produced. Accept
-	// both the live []string and the post-JSON-round-trip []any so callers
-	// that hydrate state from a serialized fixture aren't silently lossy.
-	for _, ref := range coerceStringSlice(rendered["external_deps"]) {
-		if _, err := tx.Exec(
-			`INSERT INTO issue_external_deps (issue_id, ref) VALUES (?, ?)`,
-			id, ref,
-		); err != nil {
-			return fmt.Errorf("index: insert external_dep %s->%s: %w", id, ref, err)
+	// External (opaque-ref) dependency entries. RenderState normalises
+	// "external_deps" to []string for both live and post-snapshot state, so
+	// the assertion is on a single canonical type.
+	if refs, ok := rendered["external_deps"].([]string); ok {
+		for _, ref := range refs {
+			if _, err := tx.Exec(
+				`INSERT INTO issue_external_deps (issue_id, ref) VALUES (?, ?)`,
+				id, ref,
+			); err != nil {
+				return fmt.Errorf("index: insert external_dep %s->%s: %w", id, ref, err)
+			}
 		}
 	}
 
@@ -341,25 +344,6 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 		id, 1,
 	); err != nil {
 		return fmt.Errorf("index: insert meta %s: %w", id, err)
-	}
-	return nil
-}
-
-// coerceStringSlice accepts either a live []string or a JSON-round-tripped
-// []any (which decodes elements as `any`/string at the value level). Used by
-// external_deps insertion; could be extended to other string-list fields.
-func coerceStringSlice(v any) []string {
-	switch x := v.(type) {
-	case []string:
-		return x
-	case []any:
-		out := make([]string, 0, len(x))
-		for _, e := range x {
-			if s, ok := e.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
 	}
 	return nil
 }
