@@ -41,6 +41,18 @@ act help                # tutorial; act help workflow for the canonical loop
 
 To build from source instead: `git clone https://github.com/aac/act && cd act && go install ./cmd/act`.
 
+## Skill installation (Claude Code)
+
+The canonical workflow doc for any project using `act` is the Claude Code skill at `~/.claude/skills/act/SKILL.md` (plus its `references/` companions). The skill is bundled into the `act` binary itself via `go:embed` — there is no separate download. Install or refresh it with:
+
+```sh
+act install-skill              # writes to ~/.claude/skills/act/
+act install-skill --force      # overwrite local edits to canonical files
+act install-skill --dest PATH  # alternate destination
+```
+
+`install-skill` is idempotent: files already matching the embedded copy are skipped; files that diverge are reported and left untouched unless `--force` is passed. Re-run after every `act` upgrade to keep agents on the current workflow.
+
 ## Status
 
 `act` is at v0.1 and actively dogfooded on this repo's own backlog plus a few adjacent projects. Storage layout will see some churn before v1 as the coordination model settles.
