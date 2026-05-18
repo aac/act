@@ -20,10 +20,10 @@ import (
 // payloads, and any field shape that needs round-tripping (e.g. accept lists
 // or deps) lives inside Fields as a JSON-native value.
 type goldenStateJSON struct {
-	ID         string             `json:"id"`
-	Fields     map[string]any     `json:"fields"`
-	LastHLC    map[string]hlc.HLC `json:"last_hlc"`
-	Tombstoned bool               `json:"tombstoned"`
+	ID         string               `json:"id"`
+	Fields     map[string]any       `json:"fields"`
+	LastHLC    map[string]hlc.Stamp `json:"last_hlc"`
+	Tombstoned bool                 `json:"tombstoned"`
 }
 
 // loadGoldenState parses a state file into an IssueState. Map values are kept
@@ -148,7 +148,11 @@ func TestGoldenApply(t *testing.T) {
 			if fn == nil {
 				t.Fatalf("ApplyDispatch(%q) = nil", env.OpType)
 			}
-			if err := fn(st, env, env.Payload); err != nil {
+			fullHash, err := env.FullHash()
+			if err != nil {
+				t.Fatalf("full hash: %v", err)
+			}
+			if err := fn(st, env, env.Payload, fullHash); err != nil {
 				t.Fatalf("apply: %v", err)
 			}
 

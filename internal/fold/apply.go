@@ -27,13 +27,22 @@ func formatRFC3339Millis(ms int64) string {
 	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
-// updateLastHLC records env.HLC as the new high-water mark for fields, but
-// only when env.HLC is strictly greater than any prior value (LWW gate).
-// Returns true when the caller should proceed to mutate the field.
-func gateLWW(state *IssueState, field string, h hlc.HLC) bool {
+// gateLWW records stamp as the new high-water mark for field, but only when
+// stamp is strictly greater than any prior value under hlc.Stamp.Less (the
+// (wall, logical, op_hash) ordering mandated by spec §Op-fold). Returns true
+// when the caller should proceed to mutate the field.
+//
+// Using Stamp.Less here is what keeps the LWW path in agreement with the
+// claim winner-selection path (internal/claim.claimLess), which has always
+// tiebroken by op_hash. Prior to act-492e this used hlc.HLC.Less, which
+// tiebreaks by NodeID — a deterministic but spec-wrong ordering for the LWW
+// gate. Two ops with identical (wall, logical) from different nodes would
+// resolve by NodeID for LWW and by op_hash for claims, producing divergent
+// converged state across replicas.
+func gateLWW(state *IssueState, field string, stamp hlc.Stamp) bool {
 	cur, ok := state.LastHLC[field]
-	if !ok || cur.Less(h) {
-		state.LastHLC[field] = h
+	if !ok || cur.Less(stamp) {
+		state.LastHLC[field] = stamp
 		return true
 	}
 	return false
@@ -79,7 +88,7 @@ func ApplyDispatch(opType string) ApplyFunc {
 
 // applyCreate populates initial fields. It refuses a second create on a
 // state that already carries a "created_at" stamp — first-create wins.
-func applyCreate(state *IssueState, env op.Envelope, payload []byte) error {
+func applyCreate(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	if state.ID != env.IssueID {
 		return fmt.Errorf("create: state.ID %q != env.IssueID %q", state.ID, env.IssueID)
 	}
@@ -92,33 +101,34 @@ func applyCreate(state *IssueState, env op.Envelope, payload []byte) error {
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("create: unmarshal payload: %w", err)
 	}
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
 	state.Fields["title"] = p.Title
-	state.LastHLC["title"] = env.HLC
+	state.LastHLC["title"] = stamp
 	if p.Description != "" {
 		state.Fields["description"] = p.Description
-		state.LastHLC["description"] = env.HLC
+		state.LastHLC["description"] = stamp
 	}
 	priority := 1
 	if p.Priority != nil {
 		priority = *p.Priority
 	}
 	state.Fields["priority"] = priority
-	state.LastHLC["priority"] = env.HLC
+	state.LastHLC["priority"] = stamp
 	itype := p.Type
 	if itype == "" {
 		itype = "task"
 	}
 	state.Fields["type"] = itype
-	state.LastHLC["type"] = env.HLC
+	state.LastHLC["type"] = stamp
 	if p.Parent != "" {
 		state.Fields["parent"] = p.Parent
-		state.LastHLC["parent"] = env.HLC
+		state.LastHLC["parent"] = stamp
 	}
 	// Initialize accept list (may be empty).
 	accept := make([]string, len(p.Accept))
 	copy(accept, p.Accept)
 	state.Fields["accept"] = accept
-	state.LastHLC["accept"] = env.HLC
+	state.LastHLC["accept"] = stamp
 
 	state.Fields["status"] = "open"
 	state.Fields["created_at"] = formatRFC3339Millis(env.HLC.Wall)
@@ -128,7 +138,7 @@ func applyCreate(state *IssueState, env op.Envelope, payload []byte) error {
 // applyUpdateField applies an LWW per-field write. The "status" field is
 // rejected by validate; if such a payload reaches here we still ignore it
 // to keep the apply layer defensive (per the acceptance criteria).
-func applyUpdateField(state *IssueState, env op.Envelope, payload []byte) error {
+func applyUpdateField(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.UpdateFieldPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("update_field: unmarshal: %w", err)
@@ -141,7 +151,7 @@ func applyUpdateField(state *IssueState, env op.Envelope, payload []byte) error 
 		// Unknown field name: leave state unchanged (per spec acceptance).
 		return nil
 	}
-	if !gateLWW(state, p.Field, env.HLC) {
+	if !gateLWW(state, p.Field, hlc.Stamp{HLC: env.HLC, Hash: fullHash}) {
 		return nil
 	}
 	var v any
@@ -161,7 +171,7 @@ func isAllowedUpdateField(name string) bool {
 }
 
 // applyAddDep set-adds (parent, edge_type) into state.Fields["deps"].
-func applyAddDep(state *IssueState, env op.Envelope, payload []byte) error {
+func applyAddDep(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.AddDepPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("add_dep: unmarshal: %w", err)
@@ -174,14 +184,15 @@ func applyAddDep(state *IssueState, env op.Envelope, payload []byte) error {
 	}
 	deps = append(deps, map[string]string{"parent": p.Parent, "edge_type": p.EdgeType})
 	state.Fields["deps"] = deps
-	if cur, ok := state.LastHLC["deps"]; !ok || cur.Less(env.HLC) {
-		state.LastHLC["deps"] = env.HLC
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["deps"]; !ok || cur.Less(stamp) {
+		state.LastHLC["deps"] = stamp
 	}
 	return nil
 }
 
 // applyRemoveDep removes any matching (parent, edge_type) tuple.
-func applyRemoveDep(state *IssueState, env op.Envelope, payload []byte) error {
+func applyRemoveDep(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.RemoveDepPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("remove_dep: unmarshal: %w", err)
@@ -195,8 +206,9 @@ func applyRemoveDep(state *IssueState, env op.Envelope, payload []byte) error {
 		out = append(out, d)
 	}
 	state.Fields["deps"] = out
-	if cur, ok := state.LastHLC["deps"]; !ok || cur.Less(env.HLC) {
-		state.LastHLC["deps"] = env.HLC
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["deps"]; !ok || cur.Less(stamp) {
+		state.LastHLC["deps"] = stamp
 	}
 	return nil
 }
@@ -231,7 +243,7 @@ func getDeps(state *IssueState) []map[string]string {
 // tuples because act treats refs as opaque — there is no second endpoint to
 // store and no edge taxonomy to model. The high-water HLC tracks the
 // "external_deps" field key for any add/remove on this issue.
-func applyAddExternalDep(state *IssueState, env op.Envelope, payload []byte) error {
+func applyAddExternalDep(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.AddExternalDepPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("add_external_dep: unmarshal: %w", err)
@@ -244,8 +256,9 @@ func applyAddExternalDep(state *IssueState, env op.Envelope, payload []byte) err
 	}
 	refs = append(refs, p.Ref)
 	state.Fields["external_deps"] = refs
-	if cur, ok := state.LastHLC["external_deps"]; !ok || cur.Less(env.HLC) {
-		state.LastHLC["external_deps"] = env.HLC
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["external_deps"]; !ok || cur.Less(stamp) {
+		state.LastHLC["external_deps"] = stamp
 	}
 	return nil
 }
@@ -254,7 +267,7 @@ func applyAddExternalDep(state *IssueState, env op.Envelope, payload []byte) err
 // remove that targets a not-present ref is a no-op (idempotent absence) —
 // the orchestrator owns the lifecycle and may re-fire a clear without
 // having to first observe whether the ref still exists.
-func applyRemoveExternalDep(state *IssueState, env op.Envelope, payload []byte) error {
+func applyRemoveExternalDep(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.RemoveExternalDepPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("remove_external_dep: unmarshal: %w", err)
@@ -268,8 +281,9 @@ func applyRemoveExternalDep(state *IssueState, env op.Envelope, payload []byte) 
 		out = append(out, r)
 	}
 	state.Fields["external_deps"] = out
-	if cur, ok := state.LastHLC["external_deps"]; !ok || cur.Less(env.HLC) {
-		state.LastHLC["external_deps"] = env.HLC
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["external_deps"]; !ok || cur.Less(stamp) {
+		state.LastHLC["external_deps"] = stamp
 	}
 	return nil
 }
@@ -298,7 +312,7 @@ func getExternalDeps(state *IssueState) []string {
 }
 
 // applyAddAccept appends a criterion to state.Fields["accept"] (a []string).
-func applyAddAccept(state *IssueState, env op.Envelope, payload []byte) error {
+func applyAddAccept(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.AddAcceptPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("add_accept: unmarshal: %w", err)
@@ -306,15 +320,16 @@ func applyAddAccept(state *IssueState, env op.Envelope, payload []byte) error {
 	accept := getAccept(state)
 	accept = append(accept, p.Criterion)
 	state.Fields["accept"] = accept
-	if cur, ok := state.LastHLC["accept"]; !ok || cur.Less(env.HLC) {
-		state.LastHLC["accept"] = env.HLC
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["accept"]; !ok || cur.Less(stamp) {
+		state.LastHLC["accept"] = stamp
 	}
 	return nil
 }
 
 // applyRemoveAccept resolves Index against the current accept list and adds
 // the matching text to the removed-set. Out-of-range indices are ignored.
-func applyRemoveAccept(state *IssueState, env op.Envelope, payload []byte) error {
+func applyRemoveAccept(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.RemoveAcceptPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("remove_accept: unmarshal: %w", err)
@@ -334,8 +349,9 @@ func applyRemoveAccept(state *IssueState, env op.Envelope, payload []byte) error
 	target := effective[p.Index]
 	removed[target] = true
 	setRemovedAcceptSet(state, removed)
-	if cur, ok := state.LastHLC["accept"]; !ok || cur.Less(env.HLC) {
-		state.LastHLC["accept"] = env.HLC
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["accept"]; !ok || cur.Less(stamp) {
+		state.LastHLC["accept"] = stamp
 	}
 	return nil
 }
@@ -380,7 +396,7 @@ func setRemovedAcceptSet(state *IssueState, m map[string]bool) {
 // §5.B.3: if state already records a claim with smaller HLC, this op is
 // ignored. Otherwise the HLC tuple is recorded under keyClaimHLC and used
 // for subsequent comparison.
-func applyClaim(state *IssueState, env op.Envelope, payload []byte) error {
+func applyClaim(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.ClaimPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("claim: unmarshal: %w", err)
@@ -390,16 +406,19 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte) error {
 	if isClosed(state) {
 		return nil
 	}
-	priorHLC, hasPrior := state.LastHLC[keyClaimHLC]
-	if hasPrior && !env.HLC.Less(priorHLC) {
-		// Existing claim is earlier (or equal); ignore this op.
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	priorStamp, hasPrior := state.LastHLC[keyClaimHLC]
+	if hasPrior && !stamp.Less(priorStamp) {
+		// Existing claim is earlier (or equal under (wall, logical, hash));
+		// ignore this op. The Stamp.Less tiebreak matches the spec's claim
+		// winner selection in internal/claim.
 		return nil
 	}
-	state.LastHLC[keyClaimHLC] = env.HLC
+	state.LastHLC[keyClaimHLC] = stamp
 	state.Fields["assignee"] = p.Assignee
-	state.LastHLC["assignee"] = env.HLC
+	state.LastHLC["assignee"] = stamp
 	state.Fields["status"] = "in_progress"
-	state.LastHLC["status"] = env.HLC
+	state.LastHLC["status"] = stamp
 	return nil
 }
 
@@ -414,21 +433,22 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte) error {
 // Surfacing it through the fold path is deferred until the envelope
 // schema carries it; for now `act show` reads closed_by_node from the
 // op stream (which is sufficient for the audit acceptance criteria).
-func applyClose(state *IssueState, env op.Envelope, payload []byte) error {
+func applyClose(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.ClosePayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("close: unmarshal: %w", err)
 	}
-	if !gateLWW(state, "status", env.HLC) {
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if !gateLWW(state, "status", stamp) {
 		return nil
 	}
 	state.Fields["status"] = "closed"
 	state.Fields["closed_at"] = formatRFC3339Millis(env.HLC.Wall)
-	state.LastHLC["closed_at"] = env.HLC
+	state.LastHLC["closed_at"] = stamp
 	state.Fields["closed_reason"] = p.Reason
-	state.LastHLC["closed_reason"] = env.HLC
+	state.LastHLC["closed_reason"] = stamp
 	state.Fields["closed_by_node"] = env.NodeID
-	state.LastHLC["closed_by_node"] = env.HLC
+	state.LastHLC["closed_by_node"] = stamp
 	return nil
 }
 
@@ -441,23 +461,24 @@ func applyClose(state *IssueState, env op.Envelope, payload []byte) error {
 // admits the reopen only when env.HLC dominates the current status
 // stamp. A reopen older than a subsequent close is dominated and
 // ignored, preserving close-LWW semantics.
-func applyReopen(state *IssueState, env op.Envelope, payload []byte) error {
+func applyReopen(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.ReopenPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("reopen: unmarshal: %w", err)
 	}
 	_ = p // reason is recorded in the op log; not persisted to state today.
-	if cur, ok := state.LastHLC["status"]; ok && !cur.Less(env.HLC) {
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if cur, ok := state.LastHLC["status"]; ok && !cur.Less(stamp) {
 		return nil
 	}
 	state.Fields["status"] = "open"
-	state.LastHLC["status"] = env.HLC
+	state.LastHLC["status"] = stamp
 	delete(state.Fields, "closed_at")
 	delete(state.Fields, "closed_reason")
 	delete(state.Fields, "closed_by_node")
-	state.LastHLC["closed_at"] = env.HLC
-	state.LastHLC["closed_reason"] = env.HLC
-	state.LastHLC["closed_by_node"] = env.HLC
+	state.LastHLC["closed_at"] = stamp
+	state.LastHLC["closed_reason"] = stamp
+	state.LastHLC["closed_by_node"] = stamp
 	return nil
 }
 
@@ -472,7 +493,7 @@ func isClosed(state *IssueState) bool {
 
 // applyRedact records a redacted field path. Rendering enforcement happens
 // at read time via RenderState.
-func applyRedact(state *IssueState, _ op.Envelope, payload []byte) error {
+func applyRedact(state *IssueState, _ op.Envelope, payload []byte, _ string) error {
 	var p op.RedactPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("redact: unmarshal: %w", err)
@@ -484,7 +505,7 @@ func applyRedact(state *IssueState, _ op.Envelope, payload []byte) error {
 }
 
 // applyImport records the source ref under a reserved bookkeeping key.
-func applyImport(state *IssueState, _ op.Envelope, payload []byte) error {
+func applyImport(state *IssueState, _ op.Envelope, payload []byte, _ string) error {
 	var p op.ImportPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("import: unmarshal: %w", err)
@@ -495,7 +516,7 @@ func applyImport(state *IssueState, _ op.Envelope, payload []byte) error {
 
 // applyMigrate records the latest migration (from->to). The actual transform
 // is the concern of act-5af9.
-func applyMigrate(state *IssueState, _ op.Envelope, payload []byte) error {
+func applyMigrate(state *IssueState, _ op.Envelope, payload []byte, _ string) error {
 	var p op.MigratePayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("migrate: unmarshal: %w", err)
@@ -509,7 +530,7 @@ func applyMigrate(state *IssueState, _ op.Envelope, payload []byte) error {
 
 // applyTombstone marks the issue tombstoned. The fold engine's stub also
 // flagged this; here we own the semantics canonically.
-func applyTombstone(state *IssueState, _ op.Envelope, _ []byte) error {
+func applyTombstone(state *IssueState, _ op.Envelope, _ []byte, _ string) error {
 	state.Tombstoned = true
 	return nil
 }

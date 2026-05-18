@@ -244,7 +244,7 @@ func TestUpsert_SnapshotRoundTrip_DepEdges(t *testing.T) {
 				"ext-ref-2",
 			},
 		},
-		LastHLC: map[string]hlc.HLC{},
+		LastHLC: map[string]hlc.Stamp{},
 	}
 
 	if err := idx.Upsert(postSnapshotState); err != nil {
@@ -370,7 +370,7 @@ func TestUpsert_LiveAndSnapshotStatesEquivalent(t *testing.T) {
 			},
 			"external_deps": []string{"ext-1"},
 		},
-		LastHLC: map[string]hlc.HLC{},
+		LastHLC: map[string]hlc.Stamp{},
 	}
 	if err := idx.Upsert(liveState); err != nil {
 		t.Fatalf("Upsert live: %v", err)
@@ -404,7 +404,7 @@ func TestUpsert_LiveAndSnapshotStatesEquivalent(t *testing.T) {
 	snapState := &fold.IssueState{
 		ID:      "act-d002",
 		Fields:  decoded,
-		LastHLC: map[string]hlc.HLC{},
+		LastHLC: map[string]hlc.Stamp{},
 	}
 	if err := idx.Upsert(snapState); err != nil {
 		t.Fatalf("Upsert snap: %v", err)

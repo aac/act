@@ -417,19 +417,18 @@ func winnerOnDisk(rootOps, issueID string) (string, string, error) {
 
 // claimLess implements the (wall, logical, full_hash) ordering used for
 // claim winner selection.
+//
+// Delegates to hlc.Stamp.Less so the claim winner-selection path and the LWW
+// gate path in internal/fold use a single comparison primitive — the fix for
+// act-492e, which had these two paths tiebreaking differently (by op_hash
+// here, by node_id in the old hlc.HLC.Less LWW gate).
 func claimLess(a, b struct {
 	hlc      hlc.HLC
 	fullHash string
 	hash8    string
 	assignee string
 }) bool {
-	if a.hlc.Wall != b.hlc.Wall {
-		return a.hlc.Wall < b.hlc.Wall
-	}
-	if a.hlc.Logical != b.hlc.Logical {
-		return a.hlc.Logical < b.hlc.Logical
-	}
-	return a.fullHash < b.fullHash
+	return hlc.Stamp{HLC: a.hlc, Hash: a.fullHash}.Less(hlc.Stamp{HLC: b.hlc, Hash: b.fullHash})
 }
 
 // loadIssueEnvelopes reads all *.json op files under rootOps/<issueID>/ and

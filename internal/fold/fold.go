@@ -25,10 +25,16 @@ import (
 // Per-field LWW tracking is exposed as LastHLC for use by act-296e. Apply
 // functions are expected to write into Fields and update LastHLC entries
 // keyed by field name.
+//
+// LastHLC values are hlc.Stamp (HLC + full op_hash) so the LWW gate's tiebreak
+// matches the spec (§Op-fold ties on (wall, logical) resolve by op_hash) and
+// the claim winner-selection path in internal/claim. Storing the full hash
+// rather than just the HLC is what keeps the two paths in sync; see
+// hlc.Stamp.Less for the canonical comparator.
 type IssueState struct {
 	ID         string
 	Fields     map[string]any
-	LastHLC    map[string]hlc.HLC
+	LastHLC    map[string]hlc.Stamp
 	Tombstoned bool
 }
 
@@ -42,7 +48,12 @@ type FoldResult struct {
 // ApplyFunc applies a single op envelope to the given issue state. The payload
 // bytes are passed alongside the envelope so apply functions can decode the
 // per-op-type payload without re-marshaling.
-type ApplyFunc func(state *IssueState, env op.Envelope, payload []byte) error
+//
+// fullHash is the full 64-hex-char op_hash of this op (the canonical SHA-256
+// over {payload, hlc, node_id}) and is the tiebreak component for any LWW
+// gate the apply function stamps. fold.Fold computes it once at parse time
+// and threads it through here so apply functions don't have to re-hash.
+type ApplyFunc func(state *IssueState, env op.Envelope, payload []byte, fullHash string) error
 
 // sortedOp is the in-memory representation of a parsed op: the envelope, its
 // canonical hash (used for tiebreaks in the global sort), and the source path
@@ -58,7 +69,7 @@ func newIssueState(id string) *IssueState {
 	return &IssueState{
 		ID:      id,
 		Fields:  map[string]any{},
-		LastHLC: map[string]hlc.HLC{},
+		LastHLC: map[string]hlc.Stamp{},
 	}
 }
 
@@ -184,7 +195,7 @@ func applyAll(ops []sortedOp, applyDispatch func(string) ApplyFunc) (*FoldResult
 		if fn == nil {
 			return nil, fmt.Errorf("fold: %s: no apply func for op_type %q", so.path, so.env.OpType)
 		}
-		if err := fn(state, so.env, so.env.Payload); err != nil {
+		if err := fn(state, so.env, so.env.Payload, so.fullHash); err != nil {
 			return nil, fmt.Errorf("fold: apply %s: %w", so.path, err)
 		}
 		res.OpsConsumed++
@@ -201,13 +212,14 @@ func StubDispatch(opType string) ApplyFunc {
 	if !op.ValidOpTypes[opType] {
 		return nil
 	}
-	return func(state *IssueState, env op.Envelope, _ []byte) error {
+	return func(state *IssueState, env op.Envelope, _ []byte, fullHash string) error {
 		state.Fields["__last_op"] = opType
 		state.Fields["__last_hash"] = env.NodeID
 		// Record the per-issue HLC high-water mark in LastHLC under a
 		// reserved key. Per-field LWW tracking lives in act-296e.
-		if cur, ok := state.LastHLC["__any"]; !ok || cur.Less(env.HLC) {
-			state.LastHLC["__any"] = env.HLC
+		next := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+		if cur, ok := state.LastHLC["__any"]; !ok || cur.Less(next) {
+			state.LastHLC["__any"] = next
 		}
 		if env.OpType == "tombstone" {
 			state.Tombstoned = true

@@ -6,12 +6,15 @@ import (
 
 // Per-field LWW rules.
 //
-// All scalar fields use Last-Writer-Wins keyed by the per-field HLC tuple
-// (wall, logical, op_hash) per spec §Op-fold and concurrency. The tuple
-// comparator lives in hlc.HLC.Less for (wall, logical) and the gateLWW helper
-// in apply.go records a strict-greater-than gate. node_id is intentionally
-// excluded from the comparator: it is mixed into the op hash already, and the
-// hash is the canonical tiebreak for equal (wall, logical) tuples.
+// All scalar fields use Last-Writer-Wins keyed by the per-field stamp tuple
+// (wall, logical, op_hash) per spec §Op-fold and concurrency. The canonical
+// comparator is hlc.Stamp.Less (defined in internal/hlc); gateLWW in apply.go
+// uses it to enforce a strict-greater-than gate. node_id is intentionally
+// excluded: it is already mixed into op_hash, which is the canonical tiebreak
+// for equal (wall, logical) tuples — and matches the comparator used by the
+// claim winner-selection path in internal/claim, so the two cannot disagree
+// on operations with identical (wall, logical) from distinct nodes
+// (the act-492e bug).
 //
 // Field-by-field rules:
 //
@@ -103,6 +106,6 @@ func ResolveStatus(state *IssueState) (string, hlc.HLC) {
 	if s == "" {
 		s = "open"
 	}
-	h := state.LastHLC["status"]
-	return s, h
+	stamp := state.LastHLC["status"]
+	return s, stamp.HLC
 }

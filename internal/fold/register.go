@@ -11,7 +11,7 @@ import (
 // by code that does not import fold. The wrapper here type-asserts the
 // generic state value back to *IssueState before delegating to ApplyDispatch.
 func init() {
-	op.RegisterOpVersion(1, func(state any, env op.Envelope, payload []byte) error {
+	op.RegisterOpVersion(1, func(state any, env op.Envelope, payload []byte, fullHash string) error {
 		s, ok := state.(*IssueState)
 		if !ok {
 			return fmt.Errorf("fold: op_version=1 dispatch: state is %T, want *IssueState", state)
@@ -20,6 +20,6 @@ func init() {
 		if fn == nil {
 			return fmt.Errorf("fold: op_version=1 dispatch: no apply for op_type %q", env.OpType)
 		}
-		return fn(s, env, payload)
+		return fn(s, env, payload, fullHash)
 	})
 }

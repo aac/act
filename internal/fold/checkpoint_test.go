@@ -189,9 +189,9 @@ func countingDispatch(counter *int64) func(string) ApplyFunc {
 		if inner == nil {
 			return nil
 		}
-		return func(state *IssueState, env op.Envelope, payload []byte) error {
+		return func(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 			atomic.AddInt64(counter, 1)
-			return inner(state, env, payload)
+			return inner(state, env, payload, fullHash)
 		}
 	}
 }

@@ -10,24 +10,36 @@
   },
   "last_hlc": {
     "accept": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "2e5120e8cdec252b0a40f5fe5f8aca850f73acb42d2ff05008780b0c5ec6e302"
     },
     "priority": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "2e5120e8cdec252b0a40f5fe5f8aca850f73acb42d2ff05008780b0c5ec6e302"
     },
     "title": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "2e5120e8cdec252b0a40f5fe5f8aca850f73acb42d2ff05008780b0c5ec6e302"
     },
     "type": {
-      "wall": "2023-11-14T22:13:20.000Z",
-      "logical": 0,
-      "node_id": "11111111"
+      "HLC": {
+        "wall": "2023-11-14T22:13:20.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "2e5120e8cdec252b0a40f5fe5f8aca850f73acb42d2ff05008780b0c5ec6e302"
     }
   },
   "tombstoned": false

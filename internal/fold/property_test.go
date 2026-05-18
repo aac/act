@@ -228,12 +228,12 @@ func TestPropertyAddRemoveDepIdempotent(t *testing.T) {
 		for _, it := range items {
 			if it.isAdd {
 				p, _ := json.Marshal(op.AddDepPayload{Parent: parent, EdgeType: edge})
-				if err := applyAddDep(st, op.Envelope{HLC: it.h, NodeID: it.h.NodeID}, p); err != nil {
+				if err := applyAddDep(st, op.Envelope{HLC: it.h, NodeID: it.h.NodeID}, p, it.hash); err != nil {
 					t.Fatal(err)
 				}
 			} else {
 				p, _ := json.Marshal(op.RemoveDepPayload{Parent: parent, EdgeType: edge})
-				if err := applyRemoveDep(st, op.Envelope{HLC: it.h, NodeID: it.h.NodeID}, p); err != nil {
+				if err := applyRemoveDep(st, op.Envelope{HLC: it.h, NodeID: it.h.NodeID}, p, it.hash); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -269,6 +269,7 @@ func TestPropertyClaimEarliestWinner(t *testing.T) {
 		type claim struct {
 			h        hlc.HLC
 			assignee string
+			hash     string
 		}
 		claims := make([]claim, 0, n)
 		used := map[string]bool{}
@@ -287,13 +288,24 @@ func TestPropertyClaimEarliestWinner(t *testing.T) {
 					break
 				}
 			}
-			claims = append(claims, claim{h: h, assignee: fixedAssignees[i%len(fixedAssignees)]})
+			assignee := fixedAssignees[i%len(fixedAssignees)]
+			payload, _ := json.Marshal(op.ClaimPayload{Assignee: assignee})
+			env := buildEnvelope(issueID, "claim", h, op.ClaimPayload{Assignee: assignee})
+			_ = payload
+			fullHash, err := env.FullHash()
+			if err != nil {
+				t.Fatalf("FullHash: %v", err)
+			}
+			claims = append(claims, claim{h: h, assignee: assignee, hash: fullHash})
 		}
 
-		// Find the expected winner: smallest HLC by (wall, logical, node_id).
+		// Find the expected winner: smallest Stamp by (wall, logical, op_hash) —
+		// the spec-mandated tiebreak that the apply path now uses (act-492e).
 		winner := claims[0]
 		for _, c := range claims[1:] {
-			if c.h.Less(winner.h) {
+			cs := hlc.Stamp{HLC: c.h, Hash: c.hash}
+			ws := hlc.Stamp{HLC: winner.h, Hash: winner.hash}
+			if cs.Less(ws) {
 				winner = c
 			}
 		}
@@ -308,7 +320,7 @@ func TestPropertyClaimEarliestWinner(t *testing.T) {
 				HLC:     c.h,
 				NodeID:  c.h.NodeID,
 			}
-			if err := applyClaim(st, env, payload); err != nil {
+			if err := applyClaim(st, env, payload, c.hash); err != nil {
 				t.Fatalf("applyClaim: %v", err)
 			}
 		}
