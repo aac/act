@@ -19,8 +19,37 @@ Decisions made for this repo, with the discovery that prompted each. Mostly thes
 - *Review step in the loop, with orchestrator-judged scope* (2026-05): the canonical loop has a review step (see global skill). Lessons from the first overall review (act-da03): (1) confidence filter at >70% gave high-signal findings instead of taste-level noise — keep this default; (2) pin the commit ref explicitly in reviewer prompts (the first review's intro line cited a stale hash); (3) ask for a "what's working well" closing section so subsequent work knows what NOT to break; (4) reviews are first-class tracked tasks in act, with derivative-issues-on-close as the audit pattern.
 - *Close stages into the work commit; do NOT `git commit` before `act close`* (2026-05, act-a659): under the default `per_session` bundle strategy, `act close` writes the close op file, runs `.act/hooks/close`, and stages the op — but defers the commit when the working tree has uncommitted non-`.act` changes. The agent's next `git commit -am '<msg> (act-XXXX)'` subsumes the staged close op into the work commit. Net result: typical loops produce 2 commits (claim + work-with-close) instead of 3 (claim + work + close). Two practical consequences for the canonical loop in this repo: (1) reverse the historic order — `act close` comes BEFORE `git commit`, not after; (2) `--push` on `act close` errors when the close stays staged because there's nothing on HEAD yet to publish. The CloseResult JSON now includes `staged_for_commit: true` and `commit_marker: "(act-XXXX)"` so the agent's prompt can build the next commit message verbatim. No-code closes (clean working tree outside `.act/`) still commit standalone — single-command UX preserved for closing tracking-only or wrong-claim issues. Discovered when act-728d's `per_session` bundling shipped and the post-bundling analysis found typical lifecycles have no intermediate ops to bundle, so the noise reduction was zero in practice.
 
+## Documentation discipline
+
+The global skill says it once at a high level; this section is the operational rule for *this* repo because both prior drift bugs (`act-6fca`, `act-ac52`) shipped past green test suites that asserted on internal state instead of the user-visible surface.
+
+**Rule.** Every user-visible behavior claim made in a doc requires an asserting test that exercises the claimed behavior at the user-visible boundary. Adding the claim and the test is the same commit; the claim is not "shipped" until the assertion exists.
+
+A claim is **user-visible** when any of the following surfaces it to an agent or a human reading the project cold:
+- A subcommand `--help` line or flag-help string (`fs.String(... "...")`).
+- Any text inside `act help` (`helpOverview`, `helpWorkflow`, `helpOpsModel`, `helpErrors` in `cmd/act/help.go`).
+- README sections that show example invocations or describe behavior.
+- `CLAUDE.md` (this file) or the global skill at `~/.claude/skills/act/SKILL.md` when the rule is about act's behavior, not its workflow conventions.
+- `docs/spec-v2.md` invariants that callers (CLI, MCP, tests) are expected to honor.
+
+**What counts (with examples):**
+- "Prefix ok" on `--under <id>` → a test driving `act ready --under <unique-prefix>` and asserting it resolves (not "the resolver returned the right id").
+- The canonical-loop step "6. git push" in `act help` → a test asserting `act help` output contains `git push` in the loop section.
+- The commit-marker format `(act-XXXX)` claimed in `act help workflow` and the spec → a test reading `git log -1 --format=%s` (not the op-file envelope).
+- The "claim is atomic; concurrent claimers resolve last-write-wins" claim in README → a concurrent test driving two parallel claims and asserting only one wins, the other gets `claim_lost`.
+
+**What does NOT count** (still write tests, but not under this rule):
+- An internal helper's invariant that isn't documented anywhere user-visible (e.g. `ops.foldEnvelopes` returns the latest by HLC). Test it, but it isn't a doc claim.
+- A package-private function's behavior. Internal unit tests are the right home.
+- A planned/aspirational behavior in a design doc that hasn't shipped yet.
+
+**Naming convention.** Tests that assert a user-visible doc claim are named `TestDocClaim_*` and live alongside the package whose surface they exercise (`internal/cli/docclaim_test.go`, `cmd/act/docclaim_test.go`). A sweep test (`internal/cli/docs_sweep_test.go`) holds a registry of `(doc, claim, required_TestDocClaim_*)` tuples and fails if a registered claim is missing its assertion or vice-versa. When you add a new user-visible claim, append a tuple to the registry and write the matching test in the same commit. Run `go test ./...` before close to catch the orphan.
+
+**Why this discipline, not "more tests".** Both prior drift bugs had thorough internal tests. The prefix-ok bug had a passing test that asserted `ResolvePrefix` returned the right candidate when given a 2-char prefix — but the CLI command bailed before reaching the resolver because of an unrelated length check. The internal test passed; the user-visible behavior was broken. Asserting at the boundary the doc names is what catches that class of bug.
+
 ## Promotion log
 
 When a rule here graduates to the global skill, leave a one-liner in this section so the history is preserved:
 
 - 2026-05-10: Initial skill extraction. Canonical loop, halt conditions, sub-agent isolation, mid-flight discovery pattern, commit discipline, review step, and documentation discipline all promoted to `~/.claude/skills/act/SKILL.md`. This file slimmed to project-specific overrides + rationale archive.
+- 2026-05-17: Documentation discipline elaborated locally (act-ff5c). The global skill says it; this repo carries the operational rule, the `TestDocClaim_*` naming convention, and the sweep registry because it's where the drift bugs landed. Promote to the skill if a second act-using project develops the same surface area.
