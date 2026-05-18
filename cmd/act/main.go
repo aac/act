@@ -133,6 +133,8 @@ func main() {
 		os.Exit(runDoctor(args))
 	case "migrate":
 		os.Exit(runMigrate(args))
+	case "migrate-to-nested":
+		os.Exit(runMigrateToNested(args))
 	case "import":
 		os.Exit(runImport(args))
 	case "mcp":
@@ -154,7 +156,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, import, mcp, mine, install-skill")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill")
 }
 
 // unknownSubcommandMsg returns the canonical "you typed a subcommand

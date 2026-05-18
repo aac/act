@@ -65,6 +65,27 @@ func makeCreateRepo(t *testing.T) string {
 	// Initial commit so HEAD exists; subsequent op commits attach to it.
 	mustGit(t, paths.Root, "add", "-A")
 	mustGit(t, paths.Root, "commit", "-q", "--no-verify", "-m", "act: bootstrap nested state")
+
+	// Phase 1 dogfood gate: make the fixture pass the `nested-layout`
+	// doctor check by writing the host-side artifacts a real init/migrate
+	// would produce. Without these, RunDoctor's default check set
+	// (which now includes nested-layout) fires error findings on every
+	// fixture-based test.
+	//
+	// We write the artifacts directly rather than calling RunInit to keep
+	// the fixture minimal — same shape on disk, half the work, no risk
+	// of init's host-commit step racing the test's own setup commit.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".act/\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	hooksDir := filepath.Join(dir, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatalf("mkdir hooks: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"),
+		[]byte("#!/usr/bin/env sh\n"+preCommitHookBlock), 0o755); err != nil {
+		t.Fatalf("write pre-commit: %v", err)
+	}
 	return dir
 }
 
