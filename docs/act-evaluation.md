@@ -49,7 +49,7 @@ The reviewer's report (2026-05-10) is the cleanest single source. Highlights:
 
 - HLC tiebreak by NodeID vs claim tiebreak by op_hash — divergent rules in different code paths (act-492e). Latent multi-writer correctness gap.
 - LWW-over-terminal-state hole: a claim with later HLC than a close could in principle resurrect a closed issue (act-b7ad). Edge case, real bug.
-- `IsValidID` caps at 16 hex; spec implies 40 internally (act-7574). Latent until prefix collisions push past 16.
+- ~~`IsValidID` caps at 16 hex; spec implies 40 internally (act-7574). Latent until prefix collisions push past 16.~~ Resolved: spec clarified to authoritatively state on-disk ids are short-form, 4..16 hex; the 64-hex sha256 digest is an internal derivation value, never written as an `id`/`issue_id` (act-7574).
 
 **Closed since first-pass eval:** act-6181 (act create JSON shape) shipped. The four-blocker list at first-pass alpha-readiness has narrowed to three latent multi-writer issues — none of which would bite a solo or small-multi-agent trial.
 

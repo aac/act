@@ -184,3 +184,42 @@ func TestIsValidID(t *testing.T) {
 		}
 	}
 }
+
+// TestIsValidIDBoundaries pins the lower and upper hex-length bounds enforced
+// by IsValidID against the spec authority cited in ids.go (docs/spec-v2.md
+// §ID model: short id is "act-" + N hex chars, 4 <= N <= 16). Each boundary
+// asserts the exact-cap accept and the cap+/-1 reject so a future tightening
+// or loosening of MaxShortHexLen / MinShortHexLen forces the spec citation to
+// be revisited.
+func TestIsValidIDBoundaries(t *testing.T) {
+	// Build a hex string of length n using the digit '0'. Hex is the right
+	// alphabet for these tests because IsValidID's only role is syntax.
+	hexN := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = '0'
+		}
+		return "act-" + string(b)
+	}
+
+	cases := []struct {
+		name string
+		s    string
+		want bool
+	}{
+		{"min-1 rejects (3 hex)", hexN(MinShortHexLen - 1), false},
+		{"min accepts (4 hex)", hexN(MinShortHexLen), true},
+		{"min+1 accepts (5 hex)", hexN(MinShortHexLen + 1), true},
+		{"max-1 accepts (15 hex)", hexN(MaxShortHexLen - 1), true},
+		{"max accepts (16 hex)", hexN(MaxShortHexLen), true},
+		{"max+1 rejects (17 hex)", hexN(MaxShortHexLen + 1), false},
+		{"sha256-width rejects (64 hex)", hexN(64), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsValidID(tc.s); got != tc.want {
+				t.Errorf("IsValidID(%q) = %v, want %v", tc.s, got, tc.want)
+			}
+		})
+	}
+}

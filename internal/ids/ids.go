@@ -23,6 +23,12 @@ const MinShortHexLen = 4
 
 // MaxShortHexLen is the largest length we will grow a short id to before
 // giving up.
+//
+// The 16-hex cap is authoritative per docs/spec-v2.md §ID model and the
+// "Issue schema (folded state)" validation rules: IDs on disk are always the
+// short form, "act-" + N hex chars where 4 <= N <= 16. The 64-char sha256
+// digest (`full_hex` in the spec) is an internal intermediate value used to
+// derive the short id; it is never written as an `id` or `issue_id` field.
 const MaxShortHexLen = 16
 
 // NonceBytes is the number of bytes of crypto-random nonce embedded in each
@@ -100,6 +106,9 @@ func PickUnique(payload CreatePayload, exists func(id string) bool) (string, err
 	return "", fmt.Errorf("ids: all prefix lengths %d..%d collide", MinShortHexLen, MaxShortHexLen)
 }
 
+// idPattern enforces the on-disk id syntax: "act-" prefix followed by 4..16
+// lowercase hex chars. Boundaries (4 and 16) come from MinShortHexLen and
+// MaxShortHexLen; both are authoritative per docs/spec-v2.md §ID model.
 var idPattern = regexp.MustCompile(`^act-[0-9a-f]{4,16}$`)
 
 // IsValidID reports whether s is a syntactically valid short id.
