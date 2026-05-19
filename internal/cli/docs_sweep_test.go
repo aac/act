@@ -119,6 +119,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_AmbiguousPrefix_ExitsTwoWithIdAmbiguous",
 	},
 	{
+		name:         "errors-push-exhausted",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "push_exhausted",
+		testName:     "TestDocClaim_Errors_PushExhausted",
+	},
+	{
+		name:         "errors-remote-unreachable",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "remote_unreachable",
+		testName:     "TestDocClaim_Errors_RemoteUnreachable",
+	},
+	{
 		name:         "prefix-ok-under-flag",
 		docFile:      "cmd/act/ready.go",
 		claimPattern: "(prefix ok)",
