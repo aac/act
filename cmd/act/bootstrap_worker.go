@@ -9,27 +9,33 @@ import (
 	"github.com/aac/act/internal/cli"
 )
 
-// runBootstrapWorker dispatches `act bootstrap-worker <target-path>
-// [--force] [--json]`.
+// runBootstrapWorker dispatches `act bootstrap-worker`.
 //
-// Phase 1.5 prerequisite for the coordination-plane Phase 2 work
-// (docs/coordination-plane-phase2-plan.md ticket 7). Copies the host
-// repo's `.act/` state tree into the given worker target so a dispatched
-// sub-agent can immediately run act commands against state that mirrors
-// the orchestrator's view.
+// Two modes:
 //
-// The Phase 2 `--from-remote <url>` flag is intentionally not added here;
-// the subcommand is designed so adding it later is a clean addition (a
-// new branch in this function and a corresponding RunBootstrapWorker
-// option), not a refactor of the cwd-resolves-source path.
+//	act bootstrap-worker <target-path> [--force] [--json]
+//	    Phase 1.5 cwd-source path: copy the host repo's `.act/` tree
+//	    (resolved from cwd) into <target>/.act/.
 //
-// dispatch_hlc is recorded into the target's
-// `.act/.bootstrap-meta.json` file. See the doc comment on
-// internal/cli/bootstrap_worker.go for the rationale.
+//	act bootstrap-worker --from-remote <url> <target-path>
+//	    [--force] [--json] [--timeout-seconds <N>]
+//	    Phase 2 ticket 7 (act-0480c9): clone <url> --depth 1 into a
+//	    staging dir, atomic-rename to <target>/.act/, stamp
+//	    act.role=worker, validate via `act ready`. Honors
+//	    act.bootstrapTimeoutSeconds (default 30s); the --timeout-seconds
+//	    flag is a test/override knob.
+//
+// --from-remote and the cwd-source path are mutually exclusive: passing
+// --from-remote bypasses the cwd resolver entirely. dispatch_hlc is
+// recorded into the target's `.act/.bootstrap-meta.json` only under the
+// cwd-source path; the from-remote path emits dispatch_hlc on stdout
+// (the cloned tree already carries the source history).
 func runBootstrapWorker(args []string) int {
 	fs := flag.NewFlagSet("bootstrap-worker", flag.ContinueOnError)
 	force := fs.Bool("force", false, "overwrite an existing non-empty <target>/.act/ in the worker")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	fromRemote := fs.String("from-remote", "", "clone .act/ from this git URL instead of copying from cwd (Phase 2 ticket 7)")
+	timeoutSeconds := fs.Int("timeout-seconds", 0, "override act.bootstrapTimeoutSeconds for --from-remote (0 = use config / default 30s)")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -39,15 +45,17 @@ func runBootstrapWorker(args []string) int {
 	}
 	if fs.NArg() < 1 {
 		emitBadFlag(*asJSON,
-			"act bootstrap-worker: usage: act bootstrap-worker <target-path> [--force] [--json]")
+			"act bootstrap-worker: usage: act bootstrap-worker [--from-remote <url>] <target-path> [--force] [--json] [--timeout-seconds N]")
 		return 2
 	}
 	target := fs.Arg(0)
 
 	out, code := cli.RunBootstrapWorker(cli.BootstrapWorkerOptions{
-		Target: target,
-		Force:  *force,
-		AsJSON: *asJSON,
+		Target:         target,
+		Force:          *force,
+		AsJSON:         *asJSON,
+		FromRemoteURL:  *fromRemote,
+		TimeoutSeconds: *timeoutSeconds,
 	})
 
 	if code != 0 {
@@ -74,6 +82,11 @@ func runBootstrapWorker(args []string) int {
 	fmt.Printf("  source:    %s\n", res.SourceRoot)
 	fmt.Printf("  ops:       %d files\n", res.OpsCopied)
 	fmt.Printf("  snapshots: %d files\n", res.SnapshotsCopied)
-	fmt.Printf("  dispatch_hlc recorded in %s/.act/%s\n", res.Target, cli.BootstrapMetaFileName)
+	if *fromRemote == "" {
+		fmt.Printf("  dispatch_hlc recorded in %s/.act/%s\n", res.Target, cli.BootstrapMetaFileName)
+	} else {
+		fmt.Printf("  dispatch_hlc: %s\n", res.DispatchHLC)
+		fmt.Printf("  act.role:    worker\n")
+	}
 	return 0
 }

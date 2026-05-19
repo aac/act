@@ -63,6 +63,15 @@ const (
 	// `no origin-upstream configured; run 'act remote add-upstream <url>'`.
 	ErrUpstreamNotConfigured = "upstream_not_configured"
 
+	// Phase 2 ticket 7 (act-0480c9). `bootstrap_timeout` fires when
+	// `act bootstrap-worker --from-remote` exceeds the wall-clock budget
+	// (act.bootstrapTimeoutSeconds, default 30s); exits 4 with
+	// `details.timeout_seconds`. `target_not_empty` fires when the target
+	// `.act/` already exists and is non-empty without --force; exits 2
+	// per the universal table.
+	ErrBootstrapTimeout = "bootstrap_timeout"
+	ErrTargetNotEmpty   = "target_not_empty"
+
 	// Internal/per-command error slugs in active use across cli/*.go.
 	// They are surfaced as the `error` field of the envelope; tests and
 	// JSON consumers depend on them, so renaming is a breaking change.

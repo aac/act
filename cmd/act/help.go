@@ -159,9 +159,12 @@ BOOTSTRAPPING A WORKER WORKTREE
   the target so the dispatched worker can run act commands against state
   that mirrors the orchestrator's view:
 
-    act bootstrap-worker <target-path>          # seed <target>/.act/
+    act bootstrap-worker <target-path>          # seed <target>/.act/ from cwd
     act bootstrap-worker <target-path> --force  # replace non-empty target
     act bootstrap-worker <target-path> --json   # machine-readable summary
+    act bootstrap-worker --from-remote <url> <target-path>
+                                                # clone .act/ from a remote URL
+                                                # (Phase 2 ticket 7)
 
   The copy stages into <target>/.act.bootstrap/ first and atomic-renames
   to <target>/.act/ on success, so a mid-copy failure never leaves a
@@ -171,9 +174,16 @@ BOOTSTRAPPING A WORKER WORKTREE
   records the source root, copied_at timestamp, and a dispatch_hlc that
   future Phase 2 'act harvest' may use as a fallback ordering signal.
 
-  Phase 1.5 (current): cwd resolves the source repo. Phase 2 will add
-  '--from-remote <url>' to clone from a remote instead; both modes will
-  coexist for sandboxed-no-network workers.
+  --from-remote bypasses the cwd resolver: 'git clone --depth 1 <url>'
+  populates the staging dir, the rename atomic-commits it, then
+  act.role=worker is written to the new clone's nested .git/config so
+  the post-receive hook and upstream-sync trigger know they're running
+  on a worker. The clone is bounded by act.bootstrapTimeoutSeconds
+  (default 30s; override via --timeout-seconds N for tests); a stalled
+  clone past the budget is killed, .act.bootstrap/ is torn down, and
+  the command exits 4 with envelope code 'bootstrap_timeout'. A target
+  with a non-empty pre-existing .act/ exits 2 with 'target_not_empty'
+  unless --force is passed.
 
 HARVESTING A WORKER'S OPS BACK
   Mirror of bootstrap-worker. When a dispatched sub-agent finishes work

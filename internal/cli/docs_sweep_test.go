@@ -368,6 +368,37 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "| `reason` | string |",
 		testName:     "TestDocClaim_RemoteSync_SyncLogSchemaFields",
 	},
+	// bootstrap-from-remote-* (Phase 2 ticket 7, act-0480c9): the
+	// `act bootstrap-worker --from-remote` mode and the two new error
+	// codes (`bootstrap_timeout`, `target_not_empty`) it introduces.
+	// Drift shape: someone changes the --from-remote help line away
+	// from the spec wording, or the role-write target moves off
+	// .act/.git/config, and a cold-start agent reading either surface
+	// gets misled.
+	{
+		name:         "bootstrap-from-remote-help-listed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "--from-remote",
+		testName:     "TestDocClaim_BootstrapFromRemote_HelpListsFlag",
+	},
+	{
+		name:         "bootstrap-from-remote-role-worker",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "act.role=worker",
+		testName:     "TestDocClaim_BootstrapFromRemote_SetsWorkerRole",
+	},
+	{
+		name:         "bootstrap-from-remote-timeout-envelope",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`bootstrap_timeout`",
+		testName:     "TestDocClaim_BootstrapFromRemote_TimeoutEnvelope",
+	},
+	{
+		name:         "bootstrap-from-remote-target-not-empty",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`target_not_empty`",
+		testName:     "TestDocClaim_BootstrapFromRemote_TargetNotEmptyEnvelope",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
