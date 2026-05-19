@@ -21,6 +21,7 @@ func runDoctor(args []string) int {
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	compact := fs.Bool("compact", false, "trigger manual compaction of eligible issues")
 	strict := fs.Bool("strict", false, "promote warn findings to error (exit 1 on any finding)")
+	noFetch := fs.Bool("no-fetch", false, "suppress the inline `git fetch --dry-run` probe used by case (g) reachability and case (h) upstream-drift detection; case (h) is suppressed entirely")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -40,8 +41,12 @@ func runDoctor(args []string) int {
 		AsJSON:  *asJSON,
 		Compact: *compact,
 		Strict:  *strict,
+		NoFetch: *noFetch,
 	})
-	if code != 0 && code != 1 {
+	// Exit 4 is the Phase 2 case-(g) origin-unreachable code — same
+	// envelope shape as a Phase 1 error finding (DoctorResult on the
+	// success-shape return), so the rendering path below handles it.
+	if code != 0 && code != 1 && code != 4 {
 		// 2/3 are error envelopes.
 		m, _ := toMap(out)
 		emitDoctorError(*asJSON, m)
@@ -64,6 +69,19 @@ func runDoctor(args []string) int {
 		return 1
 	}
 	fmt.Print(cli.FormatDoctorHuman(res))
+	// Phase 2 ticket 9: cases (f), (g), (h) — emit the bare finding
+	// message to stderr so an agent (or human) tailing stderr sees the
+	// load-bearing literals (`local: N unpushed commits...`, `remote:
+	// origin unreachable...`, `upstream: origin-upstream is N commits
+	// behind...`) without parsing the bracketed human-text output. The
+	// stderr emission is in addition to the stdout finding line; the
+	// two surfaces serve different consumers.
+	for _, f := range res.Findings {
+		switch f.Check {
+		case cli.CheckUnpushedCommits, cli.CheckRemoteReachable, cli.CheckUpstreamDrift:
+			fmt.Fprintln(os.Stderr, f.Message)
+		}
+	}
 	return code
 }
 

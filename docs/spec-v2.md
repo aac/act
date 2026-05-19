@@ -1463,3 +1463,85 @@ exit 0."
 |------|------|-------|---------|
 | `bootstrap_timeout` | 4 | `act bootstrap-worker --from-remote` | Clone exceeded the wall-clock budget. Carries `details.timeout_seconds` (the value enforced) and `details.url`. |
 | `target_not_empty` | 2 | `act bootstrap-worker` | Target `.act/` exists and is non-empty; `--force` is required to overwrite. Carries `details.target`. |
+
+## Doctor reconciliation (Phase 2 ticket 9)
+
+Phase 2 ticket 9 (act-aa4f19) extends `act doctor` with five new
+reconciliation cases on top of the Phase 1 reconcile-lite surface
+(docs/coordination-plane-design.md "Doctor reconciliation"). The cases
+all read state local to the nested `.act/.git` repo — `act.role`,
+`remote.origin.url`, `remote.origin-upstream.url`, and the loose-ref
+SHAs of `refs/remotes/origin/<branch>` and
+`refs/remotes/origin-upstream/<branch>`.
+
+### Cases (a'), (c'), (f), (g), (h)
+
+| Case | Check name | Trigger | Severity | Exit |
+|------|------------|---------|----------|------|
+| (a') | `remote-attached-orchestrator` | `act.role=orchestrator` AND `origin` configured AND no post-receive hook installed at `.act/.git/hooks/post-receive` | error | 1 |
+| (c') | `worker-without-origin` | `act.role=worker` AND `origin` is unset | error | 1 |
+| (f)  | `unpushed-commits` | `git rev-list --count origin/<branch>..HEAD` > 0 on the nested `.act/.git` | warn (error under `--strict`) | 0 |
+| (g)  | `remote-reachable` | `git fetch origin --dry-run` fails inside `fetchDryRunTimeout` (5s) | error | 4 |
+| (h)  | `upstream-drift` | `git rev-list --count origin-upstream/<branch>..origin/<branch>` > `act.upstreamDriftThresholdCommits` (default 50) | warn (error under `--strict`) | 0 |
+
+Pinned stderr literals (these strings are user-visible and asserted by
+the `TestDocClaim_DoctorCase_*` registry entries — drift in either the
+spec or the implementation surfaces as a `go test` failure):
+
+- Case (f): `local: <N> unpushed commits ahead of origin`
+- Case (g): `remote: origin unreachable; run 'act remote sync' from the orchestrator or check connectivity`
+- Case (h): `upstream: origin-upstream is <N> commits behind origin; run 'act remote sync'`
+
+Case (a') and case (c') findings carry remedy literals in their human
+messages:
+
+- Case (a'): the finding names the missing hook path and the recovery
+  command (`act remote enable`).
+- Case (c'): the finding includes the substring `act.role=worker but
+  no origin configured` and names the recovery command
+  (`act bootstrap-worker --from-remote`).
+
+### `--no-fetch` flag
+
+`act doctor --no-fetch` suppresses the inline `git fetch --dry-run`
+probe used by cases (g) and (h). Per the §5 addendum: case (h)
+detection requires a successful upstream fetch and cannot run against
+stale cache, so `--no-fetch` suppresses case (h) emission entirely.
+Case (g) under `--no-fetch` is downgraded to a warning (exit 0) so
+operators on disconnected networks can still run doctor without the
+reachability probe blocking the report.
+
+### Remote-status JSON block
+
+Doctor's `--json` output gains a top-level `remote_status` object
+(always emitted; fields default to their zero values when not
+applicable). The five fields:
+
+```json
+{
+  "remote_status": {
+    "remote_reachable": true,
+    "local_unpushed_count": 0,
+    "upstream_drift_commits": 0,
+    "slow_writes_last_hour": 0,
+    "fetch_failure_reason": ""
+  }
+}
+```
+
+Field semantics:
+
+- `remote_reachable` — result of the case-(g) probe. True when the
+  dry-run fetch succeeded OR when `origin` is not configured. False
+  only when the probe ran and failed.
+- `local_unpushed_count` — result of case-(f) `git rev-list --count
+  origin/<branch>..HEAD`. Zero when `origin` is unconfigured.
+- `upstream_drift_commits` — result of case-(h) `git rev-list --count
+  origin-upstream/<branch>..origin/<branch>`. Zero when
+  `origin-upstream` is unconfigured OR `--no-fetch` was passed.
+- `slow_writes_last_hour` — count of entries in `.act/.slow-writes`
+  whose `timestamp` parses as RFC3339 and falls within the last hour.
+  Reads the schema pinned by ticket 3b (see "Slow-write observation").
+- `fetch_failure_reason` — trimmed stderr of the failing case-(g)
+  fetch probe. Empty unless the probe ran and failed. Bounded to 256
+  bytes so a noisy upstream cannot blow up the JSON envelope.
