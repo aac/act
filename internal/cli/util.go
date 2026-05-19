@@ -118,6 +118,13 @@ type WriteOpts struct {
 	// Isolated, when true, signals the offline path: the commit happens but
 	// no network operation runs (no pull-rebase, no push).
 	Isolated bool
+	// Offline, when true, commits locally and skips the synchronous push
+	// (Phase 2 ticket 3b). The commit's SHA is appended to
+	// `.act/.pending-pushes` so a subsequent non-offline write flushes
+	// the deferred publish before its own. Mutually exclusive with
+	// --push (ErrInvalidFlags). Combination with --no-commit is silently
+	// reduced to --no-commit semantics (no commit → nothing to defer).
+	Offline bool
 }
 
 // ErrInvalidFlags is returned when WriteOpts contains an illegal flag
@@ -146,6 +153,9 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	}
 	if opts.Isolated && opts.Push {
 		return fmt.Errorf("%w: --isolated and --push are mutually exclusive", ErrInvalidFlags)
+	}
+	if opts.Offline && opts.Push {
+		return fmt.Errorf("%w: --offline and --push are mutually exclusive", ErrInvalidFlags)
 	}
 	if !opts.NoCommit && gops == nil {
 		return fmt.Errorf("cli: gitops is required unless --no-commit is set")
@@ -199,12 +209,48 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	// check greps for the literal parenthesized marker, so every write op
 	// (not just close) embeds it. See act-d3a5.
 	msg := BuildOpCommitMessage(env)
-	if err := gops.Commit(msg); err != nil {
+	// Phase 2 ticket 3b: use CommitOp so the stage→commit duration is
+	// measured and a slow write triggers the stderr warning + structured
+	// log append. opID for the slow-write record is the op envelope's
+	// hash (full sha256); op_type maps the envelope's OpType verbatim.
+	// The hash error is non-fatal — losing the op_id annotation on the
+	// rare slow-write record is acceptable when the underlying envelope
+	// is malformed enough to fail hashing.
+	opIDForSlow, _ := env.Hash()
+	swCtx := gitops.SlowWriteContext{
+		OpType:    env.OpType,
+		OpID:      opIDForSlow,
+		StateRoot: gops.RepoRoot,
+	}
+	if err := gops.CommitOp(msg, swCtx); err != nil {
 		// Best-effort un-stage so the working tree returns to its
 		// pre-attempt state; the op file is intentionally left on disk so
 		// the user can retry without rebuilding the envelope.
 		_ = unstage(gops, opPath)
 		return fmt.Errorf("cli: commit: %w", err)
+	}
+
+	// Phase 2 ticket 3b: --offline path. Defer the push by appending a
+	// pending-push record. The commit has already landed locally; the
+	// next non-offline write will flush this entry (and any others
+	// queued by previous offline writes) before its own push.
+	if opts.Offline {
+		if err := RecordPendingPush(gops, gops.RepoRoot, env.OpType); err != nil {
+			return fmt.Errorf("cli: record pending-push: %w", err)
+		}
+		return nil
+	}
+
+	// Phase 2 ticket 3b: flush any pending pushes from prior --offline
+	// writes BEFORE the current write's own push. The flush is a single
+	// `git push` (covers all backlog commits reachable from HEAD), so
+	// the cost is one round trip regardless of queue size. Flush
+	// failures surface unchanged — we do NOT swallow them, because a
+	// stale pending-pushes file would silently mask an ongoing remote
+	// outage. The current commit stays local-only on flush failure;
+	// the next attempt re-flushes from the persisted state.
+	if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
+		return fmt.Errorf("cli: flush pending-pushes: %w", err)
 	}
 
 	// Phase 2 ticket 3a: synchronous publish. If origin is configured we
@@ -254,6 +300,9 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	}
 	if opts.Isolated && opts.Push {
 		return fmt.Errorf("%w: --isolated and --push are mutually exclusive", ErrInvalidFlags)
+	}
+	if opts.Offline && opts.Push {
+		return fmt.Errorf("%w: --offline and --push are mutually exclusive", ErrInvalidFlags)
 	}
 	if !opts.NoCommit && gops == nil {
 		return fmt.Errorf("cli: gitops is required unless --no-commit is set")
@@ -307,10 +356,35 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 		staged = append(staged, p)
 	}
 
-	// Step 4: single commit.
-	if err := gops.Commit(commitMessage); err != nil {
+	// Step 4: single commit. Phase 2 ticket 3b: timed via CommitOp so the
+	// slow-write observation fires on batch commits too. The batch
+	// represents a single logical op for slow-write attribution; we use
+	// the first envelope's id / op_type as the record annotation.
+	opIDForSlow, _ := envs[0].Hash()
+	swCtx := gitops.SlowWriteContext{
+		OpType:    envs[0].OpType,
+		OpID:      opIDForSlow,
+		StateRoot: gops.RepoRoot,
+	}
+	if err := gops.CommitOp(commitMessage, swCtx); err != nil {
 		rollback()
 		return fmt.Errorf("cli: commit: %w", err)
+	}
+
+	// Step 5a: --offline → defer the push by recording a pending-push
+	// entry for the just-landed commit. Same semantics as the single-op
+	// path; the batch is one local commit so one entry is sufficient.
+	if opts.Offline {
+		if err := RecordPendingPush(gops, gops.RepoRoot, envs[0].OpType); err != nil {
+			return fmt.Errorf("cli: record pending-push: %w", err)
+		}
+		return nil
+	}
+
+	// Step 5b: flush any prior --offline backlog before this batch's
+	// own push. See the single-op rationale in WriteOpAndAutoCommit.
+	if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
+		return fmt.Errorf("cli: flush pending-pushes: %w", err)
 	}
 
 	// Step 5: Phase 2 ticket 3a synchronous publish. See WriteOpAndAutoCommit

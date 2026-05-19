@@ -28,10 +28,12 @@ type ReopenOptions struct {
 	Reason string
 	// AsJSON toggles JSON envelope rendering at the call site.
 	AsJSON bool
-	// NoCommit, Push, Isolated mirror the universal write flags.
+	// NoCommit, Push, Isolated, Offline mirror the universal write flags.
 	NoCommit bool
 	Push     bool
 	Isolated bool
+	// Offline (Phase 2 ticket 3b).
+	Offline bool
 	// Verify, when true, runs git commit hooks rather than --no-verify.
 	Verify bool
 }
@@ -123,6 +125,12 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		return ReopenErrorOutput{
 			Error:   "bad_flag",
 			Message: "act reopen: --isolated and --push are mutually exclusive",
+		}, 2
+	}
+	if opts.Offline && opts.Push {
+		return ReopenErrorOutput{
+			Error:   "bad_flag",
+			Message: "act reopen: --offline and --push are mutually exclusive",
 		}, 2
 	}
 
@@ -256,6 +264,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		NoCommit: opts.NoCommit,
 		Push:     opts.Push,
 		Isolated: opts.Isolated,
+		Offline:  opts.Offline,
 	})
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {

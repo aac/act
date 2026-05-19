@@ -40,11 +40,13 @@ type DeleteOptions struct {
 	// AsJSON toggles JSON envelope rendering. The cli return shape is
 	// identical regardless; main.go decides how to render.
 	AsJSON bool
-	// NoCommit, Push, Isolated, Verify mirror the universal write flags.
+	// NoCommit, Push, Isolated, Offline, Verify mirror the universal write flags.
 	NoCommit bool
 	Push     bool
 	Isolated bool
-	Verify   bool
+	// Offline (Phase 2 ticket 3b).
+	Offline bool
+	Verify  bool
 }
 
 // DeleteResult is the JSON-serialisable success envelope.
@@ -146,6 +148,12 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		return DeleteErrorOutput{
 			Error:   "bad_flag",
 			Message: "act delete: --isolated and --push are mutually exclusive",
+		}, 2
+	}
+	if opts.Offline && opts.Push {
+		return DeleteErrorOutput{
+			Error:   "bad_flag",
+			Message: "act delete: --offline and --push are mutually exclusive",
 		}, 2
 	}
 
@@ -342,6 +350,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		NoCommit: opts.NoCommit,
 		Push:     opts.Push,
 		Isolated: opts.Isolated,
+		Offline:  opts.Offline,
 	}, commitMsg)
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {

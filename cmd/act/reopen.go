@@ -19,6 +19,7 @@ func runReopen(args []string) int {
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
+	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
 	verify := fs.Bool("verify", false, "run git commit hooks rather than --no-verify")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
@@ -49,6 +50,7 @@ func runReopen(args []string) int {
 		NoCommit: *noCommit,
 		Push:     *push,
 		Isolated: *isolated,
+		Offline:  *offline,
 		Verify:   *verify,
 	})
 	if code != 0 {

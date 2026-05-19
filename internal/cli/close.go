@@ -32,10 +32,14 @@ type CloseOptions struct {
 	// AsJSON toggles JSON envelope rendering. The cli return shape is
 	// identical regardless; main.go decides how to render.
 	AsJSON bool
-	// NoCommit, Push, Isolated mirror the universal write flags.
+	// NoCommit, Push, Isolated, Offline mirror the universal write flags.
 	NoCommit bool
 	Push     bool
 	Isolated bool
+	// Offline (Phase 2 ticket 3b): commit locally, skip the push, append
+	// a pending-push record. The next non-offline close (or any other
+	// non-offline write) flushes the deferred push before its own.
+	Offline bool
 	// NoCode marks this close as legitimately producing no code change
 	// (tracking-only, wrong-claim retraction, doc correction, etc.).
 	// Plumbed into ClosePayload.NoCode; doctor's reconcile-lite case (b)
@@ -173,6 +177,12 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		return CloseErrorOutput{
 			Error:   "bad_flag",
 			Message: "act close: --isolated and --push are mutually exclusive",
+		}, 2
+	}
+	if opts.Offline && opts.Push {
+		return CloseErrorOutput{
+			Error:   "bad_flag",
+			Message: "act close: --offline and --push are mutually exclusive",
 		}, 2
 	}
 
@@ -435,7 +445,16 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			} else {
 				msg = BuildOpCommitMessage(env)
 			}
-			if err := gops.Commit(msg); err != nil {
+			// Phase 2 ticket 3b: timed via CommitOp so slow-write
+			// observation fires on close commits too. op_id is the
+			// close envelope's hash; op_type is "close".
+			opIDForSlow, _ := env.Hash()
+			swCtx := gitops.SlowWriteContext{
+				OpType:    env.OpType,
+				OpID:      opIDForSlow,
+				StateRoot: gops.RepoRoot,
+			}
+			if err := gops.CommitOp(msg, swCtx); err != nil {
 				rollbackPending()
 				_ = runUnstage(gops.RepoRoot, opPath)
 				return CloseErrorOutput{
@@ -445,20 +464,37 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}
 			committed = true
 
-			// Phase 2 ticket 3a: synchronous publish on every close that
-			// commits. If origin is configured, AutoPushAfterCommit invokes
-			// PushWithRetry. On *PushExhaustedError we surface envelope
-			// `push_exhausted` (exit 4 per spec §error-envelope) with
-			// details.retry_count / shallow_unshallow_attempted populated
-			// from the structured error. On ErrFetchFailed (and only that
-			// sentinel) we surface envelope `remote_unreachable` (also exit
-			// 4). Other push errors surface as the legacy `push_failed`
-			// (exit 1) so the test suite for pre-3a behavior keeps passing.
-			// The commit has already landed; on push failure we do NOT roll
-			// it back — the close op is on disk locally and recoverable
-			// via the harvest path.
-			if err := gops.AutoPushAfterCommit(); err != nil {
-				return closeErrorForPushFailure(err)
+			// Phase 2 ticket 3b: --offline → defer the publish via a
+			// pending-push record. The next non-offline write flushes
+			// the entry before its own push.
+			if opts.Offline {
+				if err := RecordPendingPush(gops, gops.RepoRoot, env.OpType); err != nil {
+					return CloseErrorOutput{
+						Error:   "record_pending_push_failed",
+						Message: err.Error(),
+					}, 1
+				}
+			} else {
+				// Phase 2 ticket 3b: flush any prior --offline backlog
+				// before this close's own push.
+				if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
+					return closeErrorForPushFailure(err)
+				}
+				// Phase 2 ticket 3a: synchronous publish on every close that
+				// commits. If origin is configured, AutoPushAfterCommit invokes
+				// PushWithRetry. On *PushExhaustedError we surface envelope
+				// `push_exhausted` (exit 4 per spec §error-envelope) with
+				// details.retry_count / shallow_unshallow_attempted populated
+				// from the structured error. On ErrFetchFailed (and only that
+				// sentinel) we surface envelope `remote_unreachable` (also exit
+				// 4). Other push errors surface as the legacy `push_failed`
+				// (exit 1) so the test suite for pre-3a behavior keeps passing.
+				// The commit has already landed; on push failure we do NOT roll
+				// it back — the close op is on disk locally and recoverable
+				// via the harvest path.
+				if err := gops.AutoPushAfterCommit(); err != nil {
+					return closeErrorForPushFailure(err)
+				}
 			}
 		} else {
 			// Close op is staged; the agent's next `git commit -am` will

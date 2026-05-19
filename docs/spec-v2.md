@@ -512,6 +512,55 @@ Precedence rules:
 
 Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony. On retry exhaustion the command exits 4 with envelope `push_exhausted`; on a non-recoverable fetch failure during the retry loop, the command exits 4 with envelope `remote_unreachable`. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path.
 
+### Offline mode (Phase 2, act-4a604d)
+
+The universal `--offline` flag is accepted by every write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`). When set, the command commits locally as usual but skips the synchronous push that ticket 3a wired. Instead, the local commit's SHA is appended to `.act/.pending-pushes` and the next non-offline write flushes the deferred publish before its own push.
+
+Distinction from `--isolated`: `--isolated` is the strict local-only mode (no fetch, no push, no pending-push tracking) used by `--claim` and importer tooling. `--offline` is the lighter "skip push but remember to push later" mode — the commit lands locally and the next non-offline write catches up automatically.
+
+`--offline` + `--push` is a usage error (exit 2): the two are direct opposites. `--offline` + `--no-commit` is silently reduced to `--no-commit` semantics (no commit happens, so there's nothing to defer).
+
+**Pinned `.act/.pending-pushes` schema.** JSON-lines, one record per line, newline-terminated. Each record has exactly three fields:
+
+```json
+{"timestamp": "2026-05-19T14:23:01.234Z", "sha": "abc123…", "op_type": "create"}
+```
+
+Fields:
+- `timestamp` — RFC3339 with millisecond precision, UTC (`Z` suffix).
+- `"sha":` — full sha of the local commit that was NOT pushed.
+- `op_type` — one of `create|close|update|dep_add|reopen|delete`.
+
+The file is capped at 100 entries (rolling); appends beyond the cap drop the oldest entries. The cap is a safety bound — a healthy workflow has at most one or two entries between flushes.
+
+### Slow-write observation (Phase 2, act-4a604d)
+
+`actGitOps.Commit()` measures monotonic time between the stage point (after `git add` for the op file) and the return from `git commit`. If the elapsed duration exceeds `act.slowWriteThresholdMs` (default 1000ms), the command emits a single warning to stderr and appends a structured record to `.act/.slow-writes`.
+
+**Pinned stderr warning text.** The literal pattern emitted on a slow write:
+
+```
+act: slow write detected (1247ms > 1000ms threshold); see .act/.slow-writes
+```
+
+The exact substrings `act: slow write detected (` and `; see .act/.slow-writes` are load-bearing and asserted by `TestDocClaim_SlowWrite_WarningText`.
+
+**Pinned `.act/.slow-writes` schema.** JSON-lines, one record per line, newline-terminated:
+
+```json
+{"timestamp": "2026-05-19T14:23:01.234Z", "op_id": "act-abc123def456", "duration_ms": 1247, "op_type": "create"}
+```
+
+Fields:
+- `timestamp` — RFC3339 with millisecond precision, UTC (`Z` suffix).
+- `op_id` — full id of the op being committed (the op the slow commit is for).
+- `"duration_ms":` — integer milliseconds, monotonic delta between stage and commit.
+- `op_type` — one of `create|close|update|dep_add|reopen|delete` (matches the op-envelope `op_type` enum).
+
+The file is capped at 100 entries (rolling); the cap is the same as `.act/.pending-pushes`. Doctor's case-(g) summary (ticket 9) reads this file directly with no transform.
+
+**Fault-injection hook.** `ACT_TEST_SLOW_COMMIT_MS=<n>` is a test-only env var that injects a `time.Sleep(<n>ms)` in the commit path between the stage point and the git commit invocation. Tests use this to drive the slow path deterministically without depending on disk/git latency. Documented in `internal/gitops/gitops.go` adjacent to the slow-write measurement code.
+
 ### Universal exit codes
 
 - `0` — success.

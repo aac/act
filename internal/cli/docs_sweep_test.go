@@ -461,6 +461,43 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Phase 1.5 → Phase 2 cutover",
 		testName:     "TestDocClaim_MigrationRunbook_Phase2Cutover",
 	},
+	// slow-write-*, pending-push-*, offline-* (Phase 2 ticket 3b,
+	// act-4a604d): the `--offline` flag plus slow-write measurement
+	// and pending-push deferred-publish queue. The four entries below
+	// pin the user-visible surfaces a cold-start agent would consult:
+	//   - slow-write-warning-text: literal stderr prefix for a slow
+	//     write, asserted by exec'ing a fault-injected commit.
+	//   - slow-write-log-schema: the `duration_ms` field name in the
+	//     pinned schema for .act/.slow-writes.
+	//   - pending-push-schema: the `sha` field name in the pinned
+	//     schema for .act/.pending-pushes.
+	//   - offline-flag-help: the --offline help string on `act create`
+	//     (the flag is wired on all six write subcommands; the help
+	//     string is shared via the consistent "commit locally" prefix).
+	{
+		name:         "slow-write-warning-text",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "act: slow write detected (",
+		testName:     "TestDocClaim_SlowWrite_WarningText",
+	},
+	{
+		name:         "slow-write-log-schema",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: `"duration_ms":`,
+		testName:     "TestDocClaim_SlowWrite_LogSchema",
+	},
+	{
+		name:         "pending-push-schema",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: `"sha":`,
+		testName:     "TestDocClaim_PendingPush_Schema",
+	},
+	{
+		name:         "offline-flag-help",
+		docFile:      "cmd/act/create.go",
+		claimPattern: "commit locally, skip push",
+		testName:     "TestDocClaim_Offline_FlagHelp",
+	},
 	// orchestrator-sync-* (Phase 2 ticket 6b, act-a9a59e): the
 	// orchestrator-write upstream-sync trigger in
 	// internal/gitops/gitops.go fires `act remote sync` in the
