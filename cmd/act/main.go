@@ -50,7 +50,7 @@ func main() {
 	// no host repo at all, the per-command findRepoRoot call returns its
 	// existing "not in a git working tree" error envelope and we don't
 	// override that.
-	if shouldCheckNoState(sub) {
+	if shouldCheckNoState(sub, args) {
 		if root, err := findRepoRoot(); err == nil {
 			actDir := filepath.Join(root, ".act")
 			if _, serr := os.Stat(actDir); os.IsNotExist(serr) {
@@ -58,7 +58,7 @@ func main() {
 					fmt.Fprintln(os.Stderr, "act: no act state in this repo — this is normal in CI / fresh clones")
 					os.Exit(0)
 				}
-				if isWriteNoStateCommand(sub) || sub == "dep" {
+				if isWriteNoStateCommand(sub) || isWriteDepInvocation(sub, args) {
 					emitEnvelope(hasJSONFlag(args), map[string]any{
 						"error":   "act_not_initialized",
 						"message": `act: no act state — run "act init" to bootstrap`,
@@ -321,11 +321,42 @@ var writeNoStateCommands = map[string]bool{
 // at all. Subcommands not in either map (e.g. `init`, `mcp`, `version`,
 // `help`, unknown subcommands) bypass the guard and go through the
 // normal dispatch path. `dep` is a write surface but its dispatch lives
-// in its own branch in main(); we treat it as a write here so the guard
-// fires before that branch (sub=="dep" routes to writeNoState via the
-// explicit map entry).
-func shouldCheckNoState(sub string) bool {
-	return readOnlyNoStateCommands[sub] || writeNoStateCommands[sub] || sub == "dep"
+// in its own branch in main(); we treat write-shaped `dep` invocations
+// (e.g. `dep add`) as writes here so the guard fires before that branch.
+// Argparse-only `dep` paths — bare `dep`, `dep --help`, `dep <unknown-verb>`,
+// `dep <flag-shaped-token>` — bypass the guard entirely because they
+// error or print usage before touching any state (see act-993b93).
+func shouldCheckNoState(sub string, args []string) bool {
+	if readOnlyNoStateCommands[sub] || writeNoStateCommands[sub] {
+		return true
+	}
+	return isWriteDepInvocation(sub, args)
+}
+
+// isWriteDepInvocation reports whether an `act dep ...` invocation is a
+// state-mutating verb (currently only `dep add`) as opposed to an
+// argparse-only path that errors or prints usage before touching state.
+// The guard fires only for the former.
+func isWriteDepInvocation(sub string, args []string) bool {
+	if sub != "dep" {
+		return false
+	}
+	if len(args) == 0 {
+		return false // bare `act dep` → usage
+	}
+	verb := args[0]
+	if verb == "-h" || verb == "--help" || verb == "help" {
+		return false // help routes to usage
+	}
+	if strings.HasPrefix(verb, "-") {
+		return false // flag-shaped first token routes to bad-flag/usage
+	}
+	switch verb {
+	case "add":
+		return true
+	default:
+		return false // unknown verb routes to unknown-verb error
+	}
 }
 
 // isReadOnlyNoStateCommand reports whether sub should soft-exit 0 on

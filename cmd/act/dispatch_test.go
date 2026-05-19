@@ -46,6 +46,29 @@ func runAct(t *testing.T, args ...string) (string, string, int) {
 	return "", "", -1
 }
 
+// runActIn is like runAct but runs the binary in a specific working
+// directory. Used by tests that need to assert behavior against a host
+// repo without `.act/` state (the test package's own cwd may be inside
+// an initialised act repo).
+func runActIn(t *testing.T, dir string, args ...string) (string, string, int) {
+	t.Helper()
+	bin := actBinary(t)
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+	var outB, errB strings.Builder
+	cmd.Stdout = &outB
+	cmd.Stderr = &errB
+	err := cmd.Run()
+	if err == nil {
+		return outB.String(), errB.String(), 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return outB.String(), errB.String(), ee.ExitCode()
+	}
+	t.Fatalf("act %v in %s: failed to launch: %v", args, dir, err)
+	return "", "", -1
+}
+
 // TestUnknownSubcommandMsg locks in the canonical "unknown subcommand"
 // shape so a future change to the message format is a deliberate edit
 // to the test rather than a silent UX regression.
@@ -163,5 +186,31 @@ func TestDispatchDepFlagShapedToken(t *testing.T) {
 	}
 	if strings.Contains(stderr, "not implemented") {
 		t.Errorf("flag-shaped token should not yield 'not implemented': %q", stderr)
+	}
+}
+
+// TestDispatchDepAddNoState locks in the regression-prevention property
+// from act-993b93: argparse-only `dep` paths bypass the no-state guard,
+// but state-mutating `dep add` still hits it. Without this assertion a
+// future refactor could accidentally widen the bypass to all `dep` paths
+// and silently lose user intent in fresh clones / CI checkouts.
+func TestDispatchDepAddNoState(t *testing.T) {
+	bin := actBinary(t)
+	if _, err := exec.LookPath(bin); err != nil {
+		t.Skipf("act binary not built at %s: %v", bin, err)
+	}
+	// Stand up a throwaway git repo with no .act/ so findRepoRoot()
+	// resolves, then run dep add from inside it. The two id arguments
+	// never get resolved because the guard fires first.
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	_, stderr, code := runActIn(t, dir, "dep", "add", "act-aaaaaaaa", "--blocked-by", "act-bbbbbbbb")
+	if code != 3 {
+		t.Errorf("exit = %d, want 3; stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "no act state") {
+		t.Errorf("stderr should mention no-state guard; got %q", stderr)
 	}
 }
