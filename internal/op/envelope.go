@@ -41,6 +41,13 @@ type Envelope struct {
 // add_dep / remove_dep: the latter constrain Parent to a valid act id and
 // edge_type to a closed set, while external refs are unstructured strings
 // the orchestrator owns the lifecycle of.
+//
+// "redact" is retained as a parse-only legacy entry (act-8d1d removed the
+// command, payload, and apply path). Envelope.Validate continues to accept
+// historical redact op files so existing .act/ops/ trees fold cleanly; the
+// fold dispatch returns nil for "redact" and applyAll silently skips it.
+// Writers must not emit new redact ops; the only path for true secret
+// removal is git-filter-repo.
 var ValidOpTypes = map[string]bool{
 	"create":              true,
 	"update_field":        true,
@@ -53,7 +60,7 @@ var ValidOpTypes = map[string]bool{
 	"claim":               true,
 	"close":               true,
 	"reopen":              true,
-	"redact":              true,
+	"redact":              true, // legacy, parse-only; no writer or apply path
 	"import":              true,
 	"migrate":             true,
 	"tombstone":           true,

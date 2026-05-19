@@ -53,11 +53,6 @@ import (
 //     exact tuple, leaving entries with matching parent but different
 //     edge_type intact.
 //
-//   - redact
-//     Sticky. Once a path is added to __redacted_paths, RenderState replaces
-//     the visible value with "<redacted>". A future unredact op may clear the
-//     entry — this is deferred (act-296e Out of scope).
-//
 //   - tombstone
 //     Sticky terminal. Once Tombstoned is true, RenderState yields nil for
 //     the issue regardless of any subsequent op (no op can untombstone).

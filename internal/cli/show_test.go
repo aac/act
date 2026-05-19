@@ -96,14 +96,15 @@ func makeShowTombstoneEnv(t *testing.T, id string, wallMs int64, logical uint32)
 	}
 }
 
-// makeShowRedactEnv returns a redact op envelope targeting field_path.
+// makeShowRedactEnv returns a legacy redact op envelope (the op-type was
+// removed in act-8d1d; the envelope still parses but fold silently skips
+// the op). Used by TestRunShow_HistoricalRedactOpSkipped.
 func makeShowRedactEnv(t *testing.T, id string, wallMs int64, logical uint32, fieldPath string) op.Envelope {
 	t.Helper()
-	pl := op.RedactPayload{FieldPath: fieldPath}
-	body, err := json.Marshal(pl)
-	if err != nil {
-		t.Fatalf("marshal redact payload: %v", err)
-	}
+	// Hand-roll the legacy redact payload — op.RedactPayload was removed
+	// with the rest of the command, but the on-disk shape is documented
+	// here so the test fixture matches what historical ops looked like.
+	body := []byte(`{"field_path":"` + fieldPath + `"}`)
 	return op.Envelope{
 		OpVersion:     op.CurrentOpVersion,
 		SchemaVersion: op.CurrentSchemaVersion,
@@ -561,7 +562,12 @@ func TestRunShow_OpenIssueNoClosedByNode(t *testing.T) {
 	}
 }
 
-func TestRunShow_RedactedField(t *testing.T) {
+// TestRunShow_HistoricalRedactOpSkipped asserts that fold silently skips
+// historical "redact" ops left behind by the pre-act-8d1d command. The fold
+// must not error, and the previously-redacted field must render in its
+// original form (since the redact apply path was removed; the field is no
+// longer masked).
+func TestRunShow_HistoricalRedactOpSkipped(t *testing.T) {
 	root := makeRepoWithAct(t)
 	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "secret-title")
 	redactEnv := makeShowRedactEnv(t, "act-abcd", 1700000010000, 0, "title")
@@ -570,13 +576,13 @@ func TestRunShow_RedactedField(t *testing.T) {
 
 	out, code := RunShow(root, ShowOptions{ID: "act-abcd"})
 	if code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
+		t.Fatalf("exit code = %d, want 0 (fold must silently skip legacy redact ops)", code)
 	}
 	res, ok := out.(ShowResult)
 	if !ok {
 		t.Fatalf("output type = %T", out)
 	}
-	if got := res.Fields["title"]; got != "<redacted>" {
-		t.Errorf("title = %v, want <redacted>", got)
+	if got := res.Fields["title"]; got != "secret-title" {
+		t.Errorf("title = %v, want %q (original value; redact op no longer masks)", got, "secret-title")
 	}
 }

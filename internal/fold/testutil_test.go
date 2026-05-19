@@ -55,8 +55,9 @@ func makeOpFile(t *testing.T, dir, issueID, opType string, h hlc.HLC, payload an
 	return path
 }
 
-// allOpTypes is the spec's 12-op closure, listed in declaration order so the
-// generator's modulo selection is stable across runs.
+// allOpTypes is the generator's op-type closure, listed in declaration order
+// so the modulo selection is stable across runs. "redact" was removed in
+// act-8d1d (legacy parse-only entry in ValidOpTypes; no apply path).
 var allOpTypes = []string{
 	"create",
 	"update_field",
@@ -66,7 +67,6 @@ var allOpTypes = []string{
 	"remove_accept",
 	"claim",
 	"close",
-	"redact",
 	"import",
 	"migrate",
 	"tombstone",
@@ -207,8 +207,6 @@ func generatePayload(r *rand.Rand, opType, issue string) any {
 	case "close":
 		reasons := []string{"done", "wontfix", "duplicate", ""}
 		return op.ClosePayload{Reason: reasons[r.Intn(len(reasons))]}
-	case "redact":
-		return op.RedactPayload{FieldPath: fixedFields[r.Intn(len(fixedFields))]}
 	case "import":
 		return op.ImportPayload{SourceRef: fmt.Sprintf("src://%d", r.Intn(8))}
 	case "migrate":

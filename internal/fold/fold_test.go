@@ -340,7 +340,43 @@ func TestFold_NilDispatchErrors(t *testing.T) {
 	if _, err := Fold(root, nil); err == nil {
 		t.Fatalf("Fold: nil error, want nil-dispatch error")
 	}
-	if _, err := Fold(root, func(string) ApplyFunc { return nil }); err == nil {
-		t.Fatalf("Fold: nil error, want nil-applyfunc error")
+}
+
+// TestFold_IgnoresUnknownOpType asserts the documented contract that fold
+// silently skips ops whose op_type the dispatch returns nil for. Historical
+// "redact" ops (the command was removed in act-8d1d) live in this category:
+// the envelope is still in op.ValidOpTypes (so the file parses), but
+// ApplyDispatch returns nil and applyAll must keep going rather than fail
+// the whole fold.
+func TestFold_IgnoresUnknownOpType(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ops")
+	id := "act-abcdef"
+
+	// One real op + one legacy redact op. The redact payload shape mirrors
+	// what historical writers emitted (field_path string). The create
+	// payload uses StubDispatch's expected shape rather than CreatePayload
+	// because we want ApplyDispatch (the real dispatch) to drive the test
+	// — but ApplyDispatch's applyCreate validates the payload, so we use a
+	// minimally-valid CreatePayload.
+	createPayload := `{"title":"t","type":"task","nonce":"00000000000000000000000000000000"}`
+	writeOp(t, root, env(id, "create", 1, 0, "11111111", createPayload))
+	writeOp(t, root, env(id, "redact", 2, 0, "11111111", `{"field_path":"title"}`))
+
+	res, err := Fold(root, ApplyDispatch)
+	if err != nil {
+		t.Fatalf("Fold: %v (legacy redact op must not break fold)", err)
+	}
+	// Only the create op should have applied — the redact op is skipped
+	// and not counted toward OpsConsumed.
+	if res.OpsConsumed != 1 {
+		t.Errorf("OpsConsumed = %d, want 1 (redact skipped)", res.OpsConsumed)
+	}
+	state, ok := res.Issues[id]
+	if !ok {
+		t.Fatalf("issue %q missing from fold result", id)
+	}
+	if got := state.Fields["title"]; got != "t" {
+		t.Errorf("title = %v, want %q (redact op no longer masks the field)", got, "t")
 	}
 }

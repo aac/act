@@ -355,30 +355,6 @@ func TestClosedTerminal(t *testing.T) {
 	}
 }
 
-// TestRedactSticky: once a path is redacted, subsequent update_field writes
-// to that same path are masked at render time. The underlying field still
-// updates (LWW) — render is the enforcement boundary.
-func TestRedactSticky(t *testing.T) {
-	id := "act-aaaa"
-	st := freshState(id)
-	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
-		op.CreatePayload{Title: "t", Description: "secret", Type: "task", Nonce: "00000000000000000000000000000000"})
-	if err := applyRedact(st, mkEnv(id, "redact", 2, 0, "11111111"),
-		mustJSON(t, op.RedactPayload{FieldPath: "description"}), testHash(mkEnv(id, "redact", 2, 0, "11111111"))); err != nil {
-		t.Fatal(err)
-	}
-	// Later update_field("description", "new text") — apply mutates state,
-	// but render must still mask.
-	uf := op.UpdateFieldPayload{Field: "description", Value: json.RawMessage(`"new text"`)}
-	if err := applyUpdateField(st, mkEnv(id, "update_field", 10, 0, "11111111"), mustJSON(t, uf), testHash(mkEnv(id, "update_field", 10, 0, "11111111"))); err != nil {
-		t.Fatal(err)
-	}
-	rendered := RenderState(st)
-	if rendered["description"] != "<redacted>" {
-		t.Fatalf("description: %v want <redacted>", rendered["description"])
-	}
-}
-
 // TestIsClosedTerminalNil and TestResolveStatusDefaults guard the helper
 // behaviour on edge inputs.
 func TestIsClosedTerminalNil(t *testing.T) {

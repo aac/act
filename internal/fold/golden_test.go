@@ -113,11 +113,17 @@ func TestGoldenApply(t *testing.T) {
 	sort.Strings(names)
 
 	// Coverage: every op type defined in op.ValidOpTypes must have a golden.
+	// Exception: "redact" is a parse-only legacy entry (act-8d1d removed the
+	// command and apply path); there's no apply function to exercise and no
+	// golden to maintain.
 	wantCases := make(map[string]bool, len(op.ValidOpTypes))
 	for k := range op.ValidOpTypes {
+		if k == "redact" {
+			continue
+		}
 		wantCases[k] = false
 	}
-	// "update_field-stale" is an extra LWW-stale case beyond the 12 ops.
+	// "update_field-stale" is an extra LWW-stale case beyond the live ops.
 	knownExtras := map[string]bool{
 		"update_field-stale": true,
 	}

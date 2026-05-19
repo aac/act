@@ -227,16 +227,6 @@ func TestGenerateGoldens(t *testing.T) {
 		write(t, "close", before, env)
 	}
 
-	// 10) redact: title rendered as <redacted>
-	{
-		before := newIssueState(issueID)
-		apply(t, before, "create", h(1700000000000, 0, nodeA),
-			op.CreatePayload{Title: "secret", Description: "private", Type: "task", Nonce: nonce})
-		env := mkEnvFor("redact", h(1700000001000, 0, nodeA),
-			op.RedactPayload{FieldPath: "title"})
-		write(t, "redact", before, env)
-	}
-
 	// 11) import: bookkeeping only
 	{
 		before := newIssueState(issueID)

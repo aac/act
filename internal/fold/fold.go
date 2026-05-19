@@ -177,9 +177,13 @@ func sortOps(ops []sortedOp) {
 }
 
 // applyAll groups ops by issue id, lazy-inits IssueState, and dispatches each
-// op to the per-op-type apply function. A nil dispatch (or a dispatch that
-// returns nil) for a known op type is reported as an error rather than
-// silently ignored.
+// op to the per-op-type apply function. A nil applyDispatch is a programming
+// error. A dispatch that returns nil for a given op_type — meaning the type
+// is unknown or is a legacy parse-only entry (e.g. "redact" after act-8d1d) —
+// silently skips that op so historical .act/ops/ trees fold without error.
+// The skipped op still creates the IssueState entry (above) so an issue
+// composed entirely of skipped ops shows up with the empty state rather
+// than vanishing.
 func applyAll(ops []sortedOp, applyDispatch func(string) ApplyFunc) (*FoldResult, error) {
 	res := &FoldResult{Issues: map[string]*IssueState{}}
 	for _, so := range ops {
@@ -193,7 +197,10 @@ func applyAll(ops []sortedOp, applyDispatch func(string) ApplyFunc) (*FoldResult
 		}
 		fn := applyDispatch(so.env.OpType)
 		if fn == nil {
-			return nil, fmt.Errorf("fold: %s: no apply func for op_type %q", so.path, so.env.OpType)
+			// Legacy / unknown op type: skip silently. The state entry
+			// is preserved above; OpsConsumed is not incremented because
+			// no apply ran.
+			continue
 		}
 		if err := fn(state, so.env, so.env.Payload, so.fullHash); err != nil {
 			return nil, fmt.Errorf("fold: apply %s: %w", so.path, err)
