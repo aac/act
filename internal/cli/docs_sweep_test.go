@@ -232,6 +232,56 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Working in a worktree or sandbox",
 		testName:     "TestDocClaim_Skill_WorkerProtocolSection",
 	},
+	// remote-* and config-* (Phase 2 ticket 1a, act-72d20e): the
+	// `act remote enable` / `act remote disable` subcommands plus the
+	// `act.role` decision that closes v1 OQ #4. Help-text claims live in
+	// cmd/act/help.go (helpOverview); spec invariants live in
+	// docs/spec-v2.md. The drift shape: someone removes the `remote`
+	// listing from helpOverview, or the spec table claim "act.role=
+	// orchestrator" no longer matches what enable writes, and a cold-
+	// start agent reading either surface gets misled.
+	{
+		name:         "remote-help-listed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "remote",
+		testName:     "TestDocClaim_Remote_HelpListsSubcommand",
+	},
+	{
+		name:         "remote-help-enable-receive-policy",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "receive.denyCurrentBranch=updateInstead",
+		testName:     "TestDocClaim_Remote_EnableSetsReceiveDenyCurrentBranch",
+	},
+	{
+		name:         "remote-spec-disable-idempotent",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "MUST exit zero both times",
+		testName:     "TestDocClaim_Remote_DisableIsIdempotent",
+	},
+	{
+		name:         "remote-spec-disable-removes-hook-file",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "MUST remove the file (not merely",
+		testName:     "TestDocClaim_Remote_DisableRemovesHookFile",
+	},
+	{
+		name:         "remote-spec-post-receive-skeleton-ticket-6a",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "ticket 6a",
+		testName:     "TestDocClaim_Remote_PostReceiveSkeletonNamesTicket",
+	},
+	{
+		name:         "config-act-role-orchestrator",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "act.role=orchestrator",
+		testName:     "TestDocClaim_Config_ActRoleOrchestrator",
+	},
+	{
+		name:         "config-act-role-worker-default",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "default is `worker`",
+		testName:     "TestDocClaim_Config_ActRoleDefaultsToWorker",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

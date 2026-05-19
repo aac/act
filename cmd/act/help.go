@@ -145,7 +145,7 @@ DEEPER DIVES
     init version log list search ready mine show
     create close reopen delete update redact
     dep add doctor import mcp install-skill
-    bootstrap-worker harvest
+    bootstrap-worker harvest remote
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
@@ -208,6 +208,40 @@ HARVESTING A WORKER'S OPS BACK
     fold_diff_summary  {issues_indexed, ops_added} counts captured from
                        the index rebuild after the harvest commit. Zero
                        on --dry-run and on zero-op no-ops.
+
+ACT REMOTE (PHASE 2 COORDINATION PLANE)
+  The 'act remote' subcommand toggles the small set of git-config keys
+  that wire the nested .act/.git repo into the Phase 2 coordination
+  plane: receive behaviour, scalar timeouts/thresholds, and the
+  load-bearing 'act.role' key (orchestrator | worker) that closes v1
+  open-question #4.
+
+    act remote enable               # set canonical keys + install hook skeleton
+    act remote disable              # unset keys + remove post-receive hook
+    act remote enable --json        # machine-readable summary
+
+  Enable writes the following keys to .act/.git/config:
+
+    act.role=orchestrator                          # role marker
+    receive.denyCurrentBranch=updateInstead        # accept worker pushes
+    act.readCacheTTLSeconds=5
+    act.bootstrapTimeoutSeconds=30
+    act.fetchTimeoutSeconds=10
+    act.slowWriteThresholdMs=1000
+    act.upstreamDriftThresholdCommits=50
+    act.upstreamDriftThresholdSeconds=3600
+
+  Enable also installs .act/.git/hooks/post-receive (a documented no-op
+  skeleton; ticket 6a fills in the body) and runs 'act doctor' as a
+  verification pass. Disable unsets every key and removes the hook
+  file. Both verbs are idempotent: running disable twice exits zero
+  both times; running enable on an already-enabled repo re-writes the
+  keys to defaults.
+
+  If 'act.role' is unset (legacy or hand-crafted repo), the default
+  parsed value is 'worker' (safe — workers don't trigger upstream
+  sync). No filesystem-path heuristic; the config key is the only
+  mechanism for role decision.
 
 INSTALLING THE SKILL
   The canonical Claude Code skill for act (SKILL.md plus reference

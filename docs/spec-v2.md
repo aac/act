@@ -1162,3 +1162,61 @@ Under `--json`, `compaction_locked` MUST be emitted on stdout as `{"ok": true, "
 
 ### 5.D.5 MCP test 7.5 budget reconciled with jitter math; exactly 3 claim attempts via injected clock
 The base delay sum is `100ms + 400ms + 1.6s = 2.1s`; with per-attempt uniform jitter `[0.75x, 1.25x]` the achievable sleep range is `[1.575s, 2.625s]`. MCP E2E test 7.5 MUST inject a deterministic clock AND a deterministic jitter source so the test asserts exact, reproducible values: jitter sources MUST be seeded to produce `(1.0x, 1.0x, 1.0x)` (no jitter) and total elapsed sleep MUST equal `2.1s ± 50ms`. Per-attempt work time (fold + git ops) is excluded from the budget by using the injected clock to advance only on sleep; exactly 3 claim attempts MUST be observed.
+
+## Coordination plane: Phase 2 config schema
+
+Phase 2 (docs/coordination-plane-phase2-plan.md, ticket 1a) introduces a
+small set of `act.*` git-config keys that live in `.act/.git/config` —
+the nested .act repo's own git config file. These keys carry per-repo
+orchestration knobs (timeouts, cache TTLs, drift thresholds) plus the
+load-bearing `act.role` decision that closes v1 open-question #4.
+
+### Config keys
+
+`act remote enable` MUST write the following keys to `.act/.git/config`,
+and `act remote disable` MUST unset all of them:
+
+| Key | Value (default on enable) | Purpose |
+|-----|---------------------------|---------|
+| `act.role` | `orchestrator` | Role marker; see semantics below. |
+| `receive.denyCurrentBranch` | `updateInstead` | Accept worker pushes into the checked-out branch. |
+| `act.readCacheTTLSeconds` | `5` | Read-cache staleness budget for coordination-plane readers (ticket 2 series). |
+| `act.bootstrapTimeoutSeconds` | `30` | Wall-time cap for the bootstrap protocol (ticket 7). |
+| `act.fetchTimeoutSeconds` | `10` | Wall-time cap for an upstream `git fetch` (tickets 4 / 5). |
+| `act.slowWriteThresholdMs` | `1000` | Per-write latency budget above which a coordination warning fires (ticket 8). |
+| `act.upstreamDriftThresholdCommits` | `50` | Commit-count threshold for the orchestrator drift advisory. |
+| `act.upstreamDriftThresholdSeconds` | `3600` | Wall-time-since-last-sync threshold for the drift advisory. |
+
+### `act.role` semantics
+
+`act.role` is the single mechanism for orchestrator-vs-worker
+distinction. There is no filesystem-path heuristic.
+
+- `act remote enable` sets `act.role=orchestrator` on the canonical-history holder.
+- `act bootstrap-worker --from-remote` (Phase 2 ticket 7) sets `act.role=worker` on every dispatched worker.
+- If the key is unset (legacy or hand-crafted repo), the parsed default is `worker` (safe — workers don't trigger upstream sync).
+- The post-receive hook (ticket 6a) and the post-commit upstream-sync trigger (ticket 6b) read this key to decide whether to fire.
+
+### Post-receive hook
+
+`act remote enable` MUST install an executable file at
+`.act/.git/hooks/post-receive`. In Phase 2 ticket 1a the body is a
+documented no-op (`#!/bin/bash` + comment naming ticket 6a as the body
+owner + `exit 0`). Ticket 6a fills in the body in the same release
+window. `act remote disable` MUST remove the file (not merely
+truncate it).
+
+### Idempotency
+
+Both verbs MUST be idempotent. `act remote disable` run on a
+never-enabled repo MUST exit zero with no error; `act remote disable`
+run twice in succession MUST exit zero both times. `act remote enable`
+run twice in succession is also a no-op semantically (the second pass
+re-writes the keys to the same defaults; the post-receive file is
+re-installed from the same skeleton).
+
+### Verification
+
+`act remote enable` MUST run `act doctor` after the writes complete
+and return non-zero if doctor reports any error-severity finding. This
+catches enable runs that would leave a half-configured repo.
