@@ -145,11 +145,35 @@ DEEPER DIVES
     init version log list search ready mine show
     create close reopen delete update redact
     dep add doctor import mcp install-skill
+    bootstrap-worker
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
   to issues already assigned to you. Both default to identity from
   .act/config.json node_id; --as <id> overrides.
+
+BOOTSTRAPPING A WORKER WORKTREE
+  When an orchestrator dispatches a sub-agent into a separate git worktree
+  (or any other empty directory), that target has no .act/ state yet.
+  'act bootstrap-worker' copies the current host repo's .act/ tree into
+  the target so the dispatched worker can run act commands against state
+  that mirrors the orchestrator's view:
+
+    act bootstrap-worker <target-path>          # seed <target>/.act/
+    act bootstrap-worker <target-path> --force  # replace non-empty target
+    act bootstrap-worker <target-path> --json   # machine-readable summary
+
+  The copy stages into <target>/.act.bootstrap/ first and atomic-renames
+  to <target>/.act/ on success, so a mid-copy failure never leaves a
+  partial state at the target. After the rename, an 'act ready' fold
+  runs against the new target as a round-trip validation; if validation
+  fails, the target is torn down. A small .act/.bootstrap-meta.json
+  records the source root, copied_at timestamp, and a dispatch_hlc that
+  future Phase 2 'act harvest' may use as a fallback ordering signal.
+
+  Phase 1.5 (current): cwd resolves the source repo. Phase 2 will add
+  '--from-remote <url>' to clone from a remote instead; both modes will
+  coexist for sandboxed-no-network workers.
 
 INSTALLING THE SKILL
   The canonical Claude Code skill for act (SKILL.md plus reference
