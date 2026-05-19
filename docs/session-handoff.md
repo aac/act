@@ -1,50 +1,78 @@
-# Session handoff — 2026-05-18 (evening)
+# Session handoff — 2026-05-19 (morning)
 
-**Phase 2 of the coordination plane is designed, planned, and the first review gate is queued.** Two new sibling projects (`~/Workspace/arc/` and `~/Workspace/briefcraft/`) were bootstrapped to develop the workflow-skills this session crystallized. Three arcs are now running autonomously across three projects.
+**Overnight orchestration shipped a lot.** Two of four Phase 1.5 tickets landed as real code. Phase 2 plan went through TWO full review gates (v1 → v2 → re-reviewed → plan-ready). Phase 2 implementation tickets are filed and at the top of `act ready`. Arc shipped a real `SKILL.md` and queued six P2/P3 implementation tickets. Briefcraft is now unblockable — arc's feedback landed in its brainstorm-notes.
 
-## What shipped this session
+## What shipped overnight in act (since last handoff `8b5c360`)
 
-In rough order:
+In rough chronological order from `git log`:
 
-1. **Phase 2 coordination-plane design brief v1 → v4** (`docs/coordination-plane-phase2-design.md`). Four iterations through two full review gates (architect + cold-eye each) plus one narrow remediation pass. v4 is plan-ready per the reviewer. Commits: `00c4215` (v1), `4776643` (v2), `047eb4d` (v3), `a7f1bd1` (v4). The progression — option-menu → committed-shape → silent-failure-mode-closed → narrow-cleanup — is now the canonical worked example for the briefcraft project.
-2. **Phase 2 implementation plan v1** (`docs/coordination-plane-phase2-plan.md`, commit `d07b4f5`). Eleven tickets across four phases (foundation, write path, read path + sync, bootstrap + harvest + doctor + integration). Critical path: 1 → 2 → 3 (write side). Awaiting plan-review gate.
-3. **Plan-review gate filed in act** (tickets in `~/Workspace/act/.act/`): `act-533d87` (architect plan review), `act-61b5dc` (cold-eye plan review), `act-aaee9c` (synthesis, blocked on both — fans out into iteration or the 11 implementation tickets based on verdict).
-4. **arc project bootstrapped** (`~/Workspace/arc/`). Develops a global `arc` skill that encodes the design→review→synth→plan→review→synth→implement→dogfood→compound workflow as a task graph. Full design gate filed and wired (`act-ab83` design → `act-7409`/`act-a045` reviews → `act-c4f8` synth, plus `act-2128` for the cross-project feedback to briefcraft).
-5. **briefcraft project bootstrapped** (`~/Workspace/briefcraft/`). Develops a global `briefcraft` skill for the brainstorm-to-brief transition. Full design gate filed (`act-5946` design → `act-dc57`/`act-ca8a` reviews → `act-39af` synth). Externally blocked on `arc-act-2128` until arc's feedback lands; cross-project dep expressed via `act`'s `--ext-add`/`--ext-rm` mechanism.
+1. **`act bootstrap-worker`** — Phase 1.5 implementation (`f990c2f`). Subcommand seeds a worker `.act/` from main.
+2. **`act harvest`** — Phase 1.5 implementation (`978e21f`). Pulls new ops from worker `.act/` back to host.
+3. **Phase 2 plan v1 plan-review gate complete**:
+   - Cold-eye review (`1c822ad`)
+   - Architect review (`b20a8a8`)
+   - Synthesis (`9f220f2`) — verdict needs-iteration, filed plan v2 iteration ticket.
+4. **Phase 2 plan v2 written** (`ff364cc`) — incorporated synthesis findings: tickets 1/3/6 split into a/b halves for parallelism; ticket 4 dropped as redundant with the doc-discipline rule; `act.role` config key pinned; multiple AC tightenings.
+5. **Phase 2 plan v2 plan-review gate complete**:
+   - Architect review (`a74526a`)
+   - Cold-eye review (`94ccee0`)
+   - Synthesis (`8e2e469`) — verdict plan-ready; filed the Phase 2 implementation tickets.
+6. **Phase 2 implementation tickets queued.** Top of `act ready` is `act-9f3f` ("Phase 2 ticket 2: push-contention retry helper + fixture-remote owner + FetchAndRebase extraction"). The plan v2's 13-ticket fanout is now in the queue, sequenced per the plan's dep graph.
 
-## What's in flight
+## Current state of `act ready`
 
-Three parallel arcs:
+- Top: Phase 2 implementation work — `act-9f3f` (ticket 2: push-contention retry helper).
+- Mid: remaining Phase 1.5 tickets — `act-c802` (round-trip tests), `act-9e70` (worker protocol + orchestrate doc). The umbrella `act-b77a80` is still blocked on these two.
+- Plus pre-existing P1 tickets unrelated to Phase 2 (Windows op-filename portability, `--branch` cross-branch op writing, publication, distribution-readiness).
+- A new bug surfaced overnight: `act-993b` ("act dep dispatch tests fail under no-state guard"). P2, probably surfaced by orchestrate's own dogfood.
 
-- **act / Phase 2 plan-review** — `/orchestrate` kicked off in a separate session. Two reviews dispatch in parallel, then synth runs and fans out.
-- **arc / design** — `/orchestrate` kicked off in a separate session. Brief produced, then reviews, then synth pauses for Andrew's verdict (per the human-gate preference).
-- **briefcraft / design** — dormant. Unblocks when `act-2128` (arc → briefcraft feedback) closes. To unblock manually: `cd ~/Workspace/briefcraft && act update act-5946 --ext-rm arc-act-2128:contribute-observations`.
+## What shipped in `~/Workspace/arc/` overnight
 
-## Decisions captured this session (worth a compound pass)
+The arc session ran the design gate end-to-end. `/orchestrate` dispatched the design ticket, the brief landed, two reviews ran, synth fired, verdict was plan-ready (or close enough), implementation tickets were filed. The real `SKILL.md` now exists at `internal/skill/SKILL.md` (replacing the placeholder).
 
-These shaped the conversation enough that the arc skill's design depends on them. They are in `~/Workspace/arc/docs/brainstorm-notes.md` already, but also worth surfacing here for cross-session continuity:
+`act ready` in arc shows six P2/P3 tickets queued:
+- `act-87f3` — migrate right-sizing prose from `~/.claude/CLAUDE.md` to arc skill body
+- `act-bb49` — write `internal/skill/references/synth.md`
+- `act-5421` — write `internal/skill/references/subset-patterns.md`
+- `act-fe1c` — write `internal/skill/references/right-sizing.md`
+- `act-0d03` — write `internal/skill/references/examples.md`
+- `act-2095` — write `internal/skill/references/compound.md`
 
-1. **Encode the arc as a task graph.** Workflow shift: rather than running each gate manually, file the whole arc-shape upfront. Each gate's outcome dictates the next set of ready work; the orchestrator drains. Andrew named this explicitly mid-session.
-2. **No standardized prompt or verdict schema.** Per Andrew's pushback: agents author synth prompts per-arc. Forcing a schema constrains the kinds of arcs the skill can express. The synth worker IS the schema, embodied.
-3. **Synth is the human-in-the-loop point.** Andrew prefers his interactive intervention at synth gates, not at brief- or review-time. The arc skill should formalize: interactive synth pauses for human verdict; autonomous synth decides.
-4. **Skills ship after at least two real-material uses.** First on their own design (recursive dogfood); second on at least one unrelated arc. Two cases > one.
-5. **Compound, autonomously, is draft-mode.** Don't pester in the moment; commit a learnings draft, human OKs next interactive session.
+Arc's handoff doc is now stale — it was the cold-start bootstrap and doesn't reflect any of this. If you're going to launch another session in arc, refresh that handoff first or read it knowing it's pre-design-gate.
 
-## Loose ends / minor cleanup
+## What shipped in `~/Workspace/briefcraft/`
 
-- `~/Workspace/arc/` has untracked `.claude/` (transient harness state). Should probably be gitignored alongside `.act/` semantics. Minor.
-- Existing Phase 1.5 implementation work is still in flight at top of `act ready` (bootstrap-worker `act-12dc23`, harvest `act-9fadf0`, worker-protocol `act-9e7078`, round-trip tests `act-c8028f`, umbrella `act-b77a80`). These are independent of Phase 2 and predate this session — they should land before Phase 2 implementation starts.
-- Two cleanup tickets predate this session and are still open: `act-7410cb` (`bundle_strategy` residue) and the time-travel-warning noise (not yet filed).
+Arc's feedback ticket (`act-2128`) closed, committing observations into briefcraft's brainstorm-notes (commit `46bb2ce` in briefcraft). **Briefcraft is now unblockable** but the external dep on its design ticket is still set:
 
-## What the next session reads first
+```
+cd ~/Workspace/briefcraft && act update act-5946 --ext-rm arc-act-2128:contribute-observations
+```
 
-- `~/Workspace/act/` — this file, then `act ready`.
-- `~/Workspace/arc/` — `CLAUDE.md` → `docs/session-handoff.md` → `docs/brainstorm-notes.md`. Design ticket `act-ab83` is the first move.
-- `~/Workspace/briefcraft/` — same shape. Wait for the external dep to clear before launching anything.
+After that, `act ready` in briefcraft shows the design ticket. A new `/orchestrate` session in briefcraft would dispatch it.
+
+## Process learnings captured
+
+`/compound` captured five learnings to `~/Workspace/knowledge/_guides/process-learnings.md` at commit `4e93df6`:
+
+- Generated option sets aren't exhaustive (under *Designing solutions*).
+- Encode workflow decisions as graph nodes (under *Delegation and orchestration*).
+- Place the human-in-the-loop checkpoint at decision nodes.
+- Cross-stream feedback needs explicit blocking deps.
+- Hedging in an artifact is a stage signal: you're still in brainstorm.
+
+## Open threads for next session
+
+1. **Unblock briefcraft.** One-line tracker mutation. Then it can orchestrate.
+2. **Refresh arc's handoff doc.** It's stale post-overnight.
+3. **Phase 2 implementation is in flight.** Top of `act ready` is `act-9f3f` (ticket 2). The plan v2's 13-ticket sequence will run through `/orchestrate` over the next 2–3 weeks at dogfood pace.
+4. **`act-993b` is a real bug.** "act dep dispatch tests fail under no-state guard" — surfaced from orchestrate dogfood. Should be triaged before Phase 2 implementation digs too deep into the dispatcher.
+5. **Phase 1.5 umbrella `act-b77a80` is two tickets from closure.** Round-trip tests (`act-c802`) and worker-protocol-doc (`act-9e70`) remain. These should land before Phase 2 implementation starts touching dispatch paths.
 
 ## Cross-references
 
-- Previous handoff at `de8b497` (earlier today): Phase 1 done, 7 implementation tickets landed, the worktree regression flagged. That regression is what motivated the entire Phase 2 design covered in this session.
-- Phase 2 brief: `docs/coordination-plane-phase2-design.md` v4.
-- Phase 2 plan: `docs/coordination-plane-phase2-plan.md` v1.
-- Two new projects: `~/Workspace/arc/`, `~/Workspace/briefcraft/`.
+- Previous handoff: `8b5c360` (yesterday evening; pre-overnight).
+- Phase 2 plan v2: `docs/coordination-plane-phase2-plan.md` (current state, plan-ready).
+- Phase 2 brief v4: `docs/coordination-plane-phase2-design.md` (unchanged since `a7f1bd1`).
+- Plan v1 synthesis: `docs/reviews/plan-v1-synthesis-2026-05-18.md`.
+- Plan v2 synthesis: in `8e2e469` (look for `docs/reviews/plan-v2-synthesis*`).
+- Process learnings: `4e93df6` in `~/Workspace/knowledge/`.
