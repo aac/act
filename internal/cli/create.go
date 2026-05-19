@@ -39,10 +39,12 @@ type CreateOptions struct {
 	// AsJSON toggles JSON envelope output. The closed-parent warning is
 	// suppressed from stderr when AsJSON is true (per §5.C.4).
 	AsJSON bool
-	// NoCommit, Push, Isolated mirror the universal write flags.
+	// NoCommit, Push, Isolated, Offline mirror the universal write flags.
 	NoCommit bool
 	Push     bool
 	Isolated bool
+	// Offline (Phase 2 ticket 3b).
+	Offline bool
 	// BlockedBy, when non-empty, attaches one add_dep (type=blocks) op per
 	// id alongside the create op. Each id is resolved via the prefix
 	// pipeline; duplicates resolving to the same full id are folded to one
@@ -187,6 +189,12 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		return CreateErrorOutput{
 			Error:   "bad_flag",
 			Message: "act create: --isolated and --push are mutually exclusive",
+		}, 2
+	}
+	if opts.Offline && opts.Push {
+		return CreateErrorOutput{
+			Error:   "bad_flag",
+			Message: "act create: --offline and --push are mutually exclusive",
 		}, 2
 	}
 
@@ -505,6 +513,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			NoCommit: opts.NoCommit,
 			Push:     opts.Push,
 			Isolated: opts.Isolated,
+			Offline:  opts.Offline,
 		})
 	} else {
 		envs := append([]op.Envelope{env}, depEnvs...)
@@ -514,6 +523,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			NoCommit: opts.NoCommit,
 			Push:     opts.Push,
 			Isolated: opts.Isolated,
+			Offline:  opts.Offline,
 		}, commitMsg)
 	}
 	if werr != nil {

@@ -17,13 +17,17 @@ package gitops
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/aac/act/internal/claim"
 	"github.com/aac/act/internal/config"
@@ -230,6 +234,235 @@ func (g *GitOps) Commit(message string) error {
 		return err
 	}
 	return nil
+}
+
+// slowWriteThresholdMs is the wall-clock cutoff above which a successful
+// op commit is recorded as a slow write (warning to stderr + JSON-lines
+// append to .act/.slow-writes). Mirrors cli.DefaultSlowWriteThresholdMs;
+// duplicated here to avoid importing the cli package upward.
+const slowWriteThresholdMs = 1000
+
+// slowWriteLogCap mirrors cli.SlowWriteLogCap; same rationale as
+// slowWriteThresholdMs (avoid an upward import). The cli package owns
+// the read/append helpers, but the threshold/cap constants live close
+// to the commit path that consumes them.
+const slowWriteLogCap = 100
+
+// envSlowCommitMs is the fault-injection hook that drives ticket-3b's
+// integration tests deterministically. When set to a positive integer
+// N, every CommitOp invocation sleeps for N milliseconds AFTER the
+// stage timestamp is captured but BEFORE git commit runs, so the
+// measured duration is at least N ms. Tests use this to force the
+// commit duration past the 1000ms threshold without depending on
+// disk/git latency.
+//
+// Semantics: zero/empty/unparseable values disable the hook (no
+// sleep). The sleep happens on every CommitOp call while the env var
+// is set; tests that want one-shot semantics unset the env between
+// invocations.
+//
+// This is a TEST hook. Production code never sets it. The hook is
+// not build-tagged (the ticket allowed gating to `acttest`, but a
+// runtime env-var check costs ~50ns and keeps test/prod binaries
+// identical, which matches the existing ACT_TEST_FAIL_PUSH_AFTER
+// pattern in push_retry.go).
+const envSlowCommitMs = "ACT_TEST_SLOW_COMMIT_MS"
+
+// SlowWriteContext carries the op metadata that CommitOp embeds into a
+// `.act/.slow-writes` record when the commit duration exceeds the
+// threshold. The zero value disables slow-write logging entirely —
+// callers without op metadata (e.g. squash, harvest) keep using
+// Commit() and skip the measurement.
+type SlowWriteContext struct {
+	// OpType is one of `create|close|update|dep_add|reopen|delete`. The
+	// schema-pinned op_type field per the ticket-3b spec.
+	OpType string
+	// OpID is the full id of the op being committed (e.g.
+	// `act-abc123def456`). Read directly from env.Hash() at the call
+	// site.
+	OpID string
+	// StateRoot is the directory `.act/.slow-writes` lives under (the
+	// nested .act/ working tree root). When empty, slow-write logging
+	// is disabled (the warning still fires on stderr).
+	StateRoot string
+	// ThresholdMs overrides slowWriteThresholdMs when non-zero. Tests
+	// use this to drive the slow path with a smaller fault-injected
+	// sleep; production callers leave it zero to take the default.
+	ThresholdMs int64
+}
+
+// CommitOp is Commit() instrumented with the Phase 2 ticket-3b slow-write
+// observation: it measures monotonic time from immediately before the
+// `git commit` invocation to immediately after, and if the elapsed time
+// exceeds the threshold (default slowWriteThresholdMs, overridable via
+// ctx.ThresholdMs) it emits a stderr warning AND appends a JSON-line
+// record to `<ctx.StateRoot>/.slow-writes` (capped at slowWriteLogCap
+// entries via the cli appender).
+//
+// Stderr warning format (literal, asserted by TestDocClaim_SlowWrite_
+// WarningText):
+//
+//	act: slow write detected (<n>ms > <threshold>ms threshold); see .act/.slow-writes
+//
+// Append-log record schema (also asserted at the docclaim boundary):
+//
+//	{"timestamp":"<RFC3339-millis-UTC>","op_id":"<full-id>",
+//	 "duration_ms":<int>,"op_type":"<one-of-six>"}
+//
+// Test fault-injection: ACT_TEST_SLOW_COMMIT_MS=<n> introduces a sleep
+// of exactly N milliseconds between the stage timestamp and the git
+// commit invocation so tests can drive the threshold deterministically.
+// The sleep is consulted at the seam between the stage point and the
+// commit call so the measured duration includes it.
+//
+// Failure modes:
+//   - The commit itself is the source of truth: a commit error is
+//     returned unchanged, no slow-write log is appended.
+//   - A successful commit followed by a failed slow-write append is
+//     returned as nil (commit succeeded); the append-log error is
+//     swallowed because slow-write observability never blocks the
+//     write path.
+//
+// Callers without op metadata (composed/squash/harvest) keep using
+// Commit() directly; the slow-write measurement is opt-in via this
+// method.
+func (g *GitOps) CommitOp(message string, ctx SlowWriteContext) error {
+	if message == "" {
+		return fmt.Errorf("gitops: empty commit message")
+	}
+	// Stage→commit measurement starts NOW: by contract, the caller has
+	// already finished `git add` for the op file (and any pending op
+	// files in a batch); the duration we report is the wall-clock time
+	// spent inside the commit itself, including any hook delays the
+	// host installs on the act-state repo. Under Phase 1 the nested
+	// .act/ repo uses --no-verify so host pre-commit hooks don't fire
+	// here, but a slow `git commit` (e.g. due to a large index) is
+	// still observable.
+	start := time.Now()
+
+	// Fault-injection hook: ACT_TEST_SLOW_COMMIT_MS=<n> sleeps for N
+	// milliseconds before the git commit so the measured duration is
+	// at least N ms. Tests rely on this to drive the slow path without
+	// real disk/git latency. Documented adjacent to the measurement
+	// code per ticket-3b spec.
+	if v := os.Getenv(envSlowCommitMs); v != "" {
+		if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms > 0 {
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+	}
+
+	args := []string{"commit", "-m", message}
+	if !g.Verify {
+		args = append(args, "--no-verify")
+	}
+	if _, err := g.run(args...); err != nil {
+		return err
+	}
+
+	elapsedMs := time.Since(start).Milliseconds()
+	threshold := ctx.ThresholdMs
+	if threshold <= 0 {
+		threshold = slowWriteThresholdMs
+	}
+	if elapsedMs > threshold {
+		// Stderr warning — literal format pinned by ticket-3b
+		// (TestDocClaim_SlowWrite_WarningText asserts the prefix and
+		// suffix substrings).
+		fmt.Fprintf(os.Stderr, "act: slow write detected (%dms > %dms threshold); see .act/.slow-writes\n", elapsedMs, threshold)
+		// Append a JSON-line record. Failure here is non-fatal: the
+		// commit has already landed and the warning has surfaced
+		// to stderr — losing the structured record is worse than
+		// failing the write but not by much. We swallow rather
+		// than propagate.
+		if ctx.StateRoot != "" {
+			_ = appendSlowWriteRecord(ctx.StateRoot, elapsedMs, ctx.OpID, ctx.OpType)
+		}
+	}
+	return nil
+}
+
+// appendSlowWriteRecord writes one JSON-line entry to
+// <stateRoot>/.slow-writes and prunes to the newest slowWriteLogCap
+// records. Implementation deliberately duplicates the cli appender's
+// rewrite-temp-then-rename pattern to avoid an upward import; the cli
+// package owns the read/parse side, but the gitops package writes
+// directly so a slow-commit observation doesn't require routing back
+// up through cli.
+func appendSlowWriteRecord(stateRoot string, durationMs int64, opID, opType string) error {
+	rec := struct {
+		Timestamp  string `json:"timestamp"`
+		OpID       string `json:"op_id"`
+		DurationMs int64  `json:"duration_ms"`
+		OpType     string `json:"op_type"`
+	}{
+		Timestamp:  time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		OpID:       opID,
+		DurationMs: durationMs,
+		OpType:     opType,
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("gitops: marshal slow-write record: %w", err)
+	}
+	path := filepath.Join(stateRoot, ".slow-writes")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("gitops: mkdir for slow-writes: %w", err)
+	}
+	existing, err := readSlowWriteLines(path)
+	if err != nil {
+		return err
+	}
+	existing = append(existing, string(line))
+	if len(existing) > slowWriteLogCap {
+		existing = existing[len(existing)-slowWriteLogCap:]
+	}
+	var b strings.Builder
+	for _, l := range existing {
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	// Temp-then-rename atomic replace.
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("gitops: tmp for slow-writes: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, werr := tmp.Write([]byte(b.String())); werr != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("gitops: write tmp for slow-writes: %w", werr)
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("gitops: close tmp for slow-writes: %w", cerr)
+	}
+	if rerr := os.Rename(tmpPath, path); rerr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("gitops: rename tmp to slow-writes: %w", rerr)
+	}
+	return nil
+}
+
+// readSlowWriteLines reads the existing .slow-writes file and returns
+// its non-empty lines. Missing file returns (nil, nil). Used only by
+// appendSlowWriteRecord for the cap-prune cycle.
+func readSlowWriteLines(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("gitops: read slow-writes: %w", err)
+	}
+	var out []string
+	for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out, nil
 }
 
 // AutoPushAfterCommit is the Phase 2 ticket-3a synchronous publish step.

@@ -34,10 +34,12 @@ type DepAddOptions struct {
 	// AsJSON toggles the JSON envelope rendering (mirrors other write
 	// commands; the cli return shape is identical regardless).
 	AsJSON bool
-	// NoCommit, Push, Isolated mirror the universal write flags.
+	// NoCommit, Push, Isolated, Offline mirror the universal write flags.
 	NoCommit bool
 	Push     bool
 	Isolated bool
+	// Offline (Phase 2 ticket 3b).
+	Offline bool
 }
 
 // DepAddResult is the JSON-serialisable success envelope.
@@ -163,6 +165,12 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		return DepAddErrorOutput{
 			Error:   "bad_flag",
 			Message: "act dep add: --isolated and --push are mutually exclusive",
+		}, 2
+	}
+	if opts.Offline && opts.Push {
+		return DepAddErrorOutput{
+			Error:   "bad_flag",
+			Message: "act dep add: --offline and --push are mutually exclusive",
 		}, 2
 	}
 
@@ -332,6 +340,7 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		NoCommit: opts.NoCommit,
 		Push:     opts.Push,
 		Isolated: opts.Isolated,
+		Offline:  opts.Offline,
 	})
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {

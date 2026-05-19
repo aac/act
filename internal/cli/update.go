@@ -63,8 +63,11 @@ type UpdateOptions struct {
 	Push     bool
 	NoCommit bool
 	Isolated bool
-	AsJSON   bool
-	Verify   bool
+	// Offline (Phase 2 ticket 3b): commit locally, skip push, append
+	// pending-push record.
+	Offline bool
+	AsJSON  bool
+	Verify  bool
 }
 
 // UpdateResult is the JSON shape returned on successful non-claim runs:
@@ -148,6 +151,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
 			Message: "act update: --isolated and --push are mutually exclusive",
+		}, 2
+	}
+	if opts.Offline && opts.Push {
+		return UpdateErrorOutput{
+			Error:   "bad_flag",
+			Message: "act update: --offline and --push are mutually exclusive",
 		}, 2
 	}
 
@@ -497,6 +506,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			// a partial state mid-batch.
 			Push:     false,
 			Isolated: opts.Isolated,
+			Offline:  opts.Offline,
 		})
 		if werr != nil {
 			if errors.Is(werr, ErrInvalidFlags) {

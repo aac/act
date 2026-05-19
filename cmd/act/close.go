@@ -19,6 +19,7 @@ func runClose(args []string) int {
 	noCommit := fs.Bool("no-commit", false, "write op file but skip staging and the auto-commit")
 	push := fs.Bool("push", false, "push after the commit (errors if the close stays staged for the agent's next commit)")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
+	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
 	noCode := fs.Bool("no-code", false, "mark this close as producing no code change (tracking, wrong-claim, doc-only); doctor suppresses orphan-close warnings for these closes")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
@@ -49,6 +50,7 @@ func runClose(args []string) int {
 		NoCommit: *noCommit,
 		Push:     *push,
 		Isolated: *isolated,
+		Offline:  *offline,
 		NoCode:   *noCode,
 	})
 	if code != 0 {
