@@ -20,6 +20,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -135,6 +136,14 @@ type toolContent struct {
 func (s *Server) Run(ctx context.Context) error {
 	r := bufio.NewReader(s.in)
 	enc := json.NewEncoder(s.out)
+	// MCP transport is plain JSON-RPC over stdio; the response body is never
+	// embedded in HTML, so encoding/json's default escape (act-e26e) of '<',
+	// '>', and '&' to their six-byte backslash-u00xx forms is pure noise —
+	// it turns tracker text like `act create --blocks <id>` into a wire
+	// string littered with backslash-u sequences. Disable it so
+	// user-supplied bytes round-trip unchanged and FTS search hits on the
+	// literal characters.
+	enc.SetEscapeHTML(false)
 	for {
 		select {
 		case <-ctx.Done():
@@ -254,7 +263,7 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 		args = []byte("{}")
 	}
 	res, isErr := s.invoke(p.Name, args)
-	body, mErr := json.Marshal(res)
+	body, mErr := marshalNoHTMLEscape(res)
 	if mErr != nil {
 		s.writeError(enc, req.ID, errInternal, "result marshal", mErr.Error())
 		return
@@ -343,12 +352,33 @@ func (s *Server) writeError(enc *json.Encoder, id json.RawMessage, code int, msg
 // client surfaces it as a tool failure rather than a transport error. Used
 // for read-only enforcement and the like.
 func (s *Server) writeToolError(enc *json.Encoder, id json.RawMessage, kind, msg string) {
-	body, _ := json.Marshal(errEnvelope(kind, msg))
+	body, _ := marshalNoHTMLEscape(errEnvelope(kind, msg))
 	tr := toolResult{
 		Content: []toolContent{{Type: "text", Text: string(body)}},
 		IsError: true,
 	}
 	s.writeResult(enc, id, tr)
+}
+
+// marshalNoHTMLEscape is json.Marshal without the default HTML-safe escaping
+// of '<', '>', and '&' (act-e26e). MCP tool-result bodies are nested inside a
+// JSON-RPC envelope as a plain string; they are never spliced into HTML, so
+// the default escape turns user-supplied tracker text into the backslash-u
+// form for those three characters. The buffer's trailing newline
+// (json.Encoder always appends one) is trimmed so callers get the same byte
+// shape json.Marshal returned previously.
+func marshalNoHTMLEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	out := buf.Bytes()
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	return out, nil
 }
 
 // isWriteTool returns true for the tools that mutate repo state. Any of

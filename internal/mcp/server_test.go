@@ -763,6 +763,164 @@ func runNextScheduleForTest(recorder sleepFunc, jitter jitterFunc) time.Duration
 	return total
 }
 
+// TestActCreate_NoHTMLEscape regresses act-e26e: an MCP act_create whose
+// title/description/accept fields contain '<', '>', '&', '"', or '\”
+// must produce JSON whose strings carry those characters verbatim — not
+// the encoding/json default < / > / & forms. We assert at
+// three boundaries: the raw bytes on stdout (no < etc. literally
+// present), the parsed JSON-RPC body, and the on-disk op file.
+func TestActCreate_NoHTMLEscape(t *testing.T) {
+	root := makeRealRepo(t)
+
+	const (
+		title       = `t <id> & "q" 'a'`
+		description = `body <b>HTML</b> & friends`
+	)
+	accept := []any{"accept <a>", "accept &b"}
+
+	in := &bytes.Buffer{}
+	out := &bytes.Buffer{}
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "act_create",
+			"arguments": map[string]any{
+				"title":       title,
+				"description": description,
+				"accept":      accept,
+			},
+		},
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal req: %v", err)
+	}
+	in.Write(body)
+	in.WriteByte('\n')
+	srv := NewServer(root, false, in, out)
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	raw := out.String()
+
+	// Boundary 1: raw wire bytes must not contain HTML-escape unicode sequences.
+	for _, esc := range []string{`\` + `u003c`, `\` + `u003e`, `\` + `u0026`} {
+		if strings.Contains(raw, esc) {
+			t.Errorf("response wire bytes contain %s (encoding/json HTML escape) — should be literal char\nraw=%s", esc, raw)
+		}
+	}
+
+	// Boundary 2: parse the response and confirm the tool body carries the
+	// literal characters in the title/description/accept fields.
+	var resp jsonRPCResponse
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &resp); err != nil {
+		t.Fatalf("unmarshal resp: %v\nraw=%s", err, raw)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected jsonrpc error: %+v", resp.Error)
+	}
+	m, _ := resp.Result.(map[string]any)
+	if isErr, _ := m["isError"].(bool); isErr {
+		t.Fatalf("tool returned error envelope: %+v", m)
+	}
+	content, _ := m["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("no content in tool result")
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	var parsedBody map[string]any
+	if err := json.Unmarshal([]byte(text), &parsedBody); err != nil {
+		t.Fatalf("tool body is not JSON: %v\ntext=%s", err, text)
+	}
+	if got, _ := parsedBody["title"].(string); got != title {
+		t.Errorf("title round-trip: got %q want %q", got, title)
+	}
+
+	// Boundary 3: read the op file off disk and confirm the payload carries
+	// the literal characters there too. This is the FTS-tokenization
+	// boundary — what `act search` and `act show` see.
+	issueID, _ := parsedBody["id"].(string)
+	if issueID == "" {
+		t.Fatalf("no id in tool body: %+v", parsedBody)
+	}
+	opsDir := filepath.Join(root, ".act", "ops", issueID)
+	var opFile string
+	err = filepath.Walk(opsDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !info.IsDir() && strings.HasSuffix(path, "-create.json") {
+			opFile = path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", opsDir, err)
+	}
+	if opFile == "" {
+		t.Fatalf("no create op file under %s", opsDir)
+	}
+	opBytes, err := os.ReadFile(opFile)
+	if err != nil {
+		t.Fatalf("read op file: %v", err)
+	}
+	var opDoc struct {
+		Payload struct {
+			Title       string   `json:"title"`
+			Description string   `json:"description"`
+			Accept      []string `json:"accept"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(opBytes, &opDoc); err != nil {
+		t.Fatalf("unmarshal op file: %v\n%s", err, opBytes)
+	}
+	if opDoc.Payload.Title != title {
+		t.Errorf("op-file title: got %q want %q", opDoc.Payload.Title, title)
+	}
+	if opDoc.Payload.Description != description {
+		t.Errorf("op-file description: got %q want %q", opDoc.Payload.Description, description)
+	}
+	wantAccept := []string{"accept <a>", "accept &b"}
+	if len(opDoc.Payload.Accept) != len(wantAccept) {
+		t.Fatalf("op-file accept len: got %d want %d (%+v)", len(opDoc.Payload.Accept), len(wantAccept), opDoc.Payload.Accept)
+	}
+	for i, want := range wantAccept {
+		if opDoc.Payload.Accept[i] != want {
+			t.Errorf("op-file accept[%d]: got %q want %q", i, opDoc.Payload.Accept[i], want)
+		}
+	}
+
+	// And the raw on-disk bytes must contain the literal characters (no
+	// HTML entities like &lt; / &gt; / &amp; from the original report,
+	// and no JSON-unicode escapes either since canonicaljson emits
+	// printable ASCII verbatim).
+	rawOp := string(opBytes)
+	for _, lit := range []string{`<id>`, `<b>HTML</b>`, `accept <a>`, `accept &b`} {
+		if !strings.Contains(rawOp, lit) {
+			t.Errorf("op file missing literal %q\n%s", lit, rawOp)
+		}
+	}
+	// The HTML-entity forms (the original ticket's symptom).
+	for _, bad := range []string{"&lt;", "&gt;", "&amp;"} {
+		if strings.Contains(rawOp, bad) {
+			t.Errorf("op file contains HTML entity %q\n%s", bad, rawOp)
+		}
+	}
+	// The encoding/json HTML-escape unicode forms. Each `<` literal in
+	// the file must be a 6-byte sequence (`\`, `u`, `0`, `0`, `3`, `c`).
+	// Written via fmt.Sprintf to avoid the source-bytes rendering
+	// ambiguity that bit act-e26e during this fix.
+	for _, bad := range []string{`\` + `u003c`, `\` + `u003e`, `\` + `u0026`} {
+		if strings.Contains(rawOp, bad) {
+			t.Errorf("op file contains JSON unicode escape %q\n%s", bad, rawOp)
+		}
+	}
+}
+
 func TestUnknownMethod(t *testing.T) {
 	root := makeRepo(t)
 	resp := runOne(t, root, false, map[string]any{
