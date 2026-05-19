@@ -22,6 +22,7 @@ func runDoctor(args []string) int {
 	compact := fs.Bool("compact", false, "trigger manual compaction of eligible issues")
 	strict := fs.Bool("strict", false, "promote warn findings to error (exit 1 on any finding)")
 	noFetch := fs.Bool("no-fetch", false, "suppress the inline `git fetch --dry-run` probe used by case (g) reachability and case (h) upstream-drift detection; case (h) is suppressed entirely")
+	fixIndex := fs.Bool("fix-index", false, "rebuild .act/index.db from .act/ops/ when the index is malformed; backs up the broken copy to .act/index.db.malformed-<ts>")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -36,12 +37,13 @@ func runDoctor(args []string) int {
 	}
 
 	out, code := cli.RunDoctor(root, cli.DoctorOptions{
-		Check:   *check,
-		Fix:     *fix,
-		AsJSON:  *asJSON,
-		Compact: *compact,
-		Strict:  *strict,
-		NoFetch: *noFetch,
+		Check:    *check,
+		Fix:      *fix,
+		AsJSON:   *asJSON,
+		Compact:  *compact,
+		Strict:   *strict,
+		NoFetch:  *noFetch,
+		FixIndex: *fixIndex,
 	})
 	// Exit 4 is the Phase 2 case-(g) origin-unreachable code — same
 	// envelope shape as a Phase 1 error finding (DoctorResult on the
@@ -79,6 +81,12 @@ func runDoctor(args []string) int {
 	for _, f := range res.Findings {
 		switch f.Check {
 		case cli.CheckUnpushedCommits, cli.CheckRemoteReachable, cli.CheckUpstreamDrift:
+			fmt.Fprintln(os.Stderr, f.Message)
+		case "index-malformed":
+			// Per act-f2f93a: emit the bare message to stderr so an
+			// agent (or human) tailing stderr sees the load-bearing
+			// remediation literal `'act doctor --fix-index'` without
+			// parsing the bracketed human-text output.
 			fmt.Fprintln(os.Stderr, f.Message)
 		}
 	}

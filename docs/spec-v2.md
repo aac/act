@@ -828,17 +828,18 @@ Exit codes for `--claim`: `0` win, `1` loss or other logical error, `2` usage. O
 
 ### `act doctor`
 
-**Synopsis:** `act doctor [--check NAME] [--fix] [--json] [--compact]`
+**Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--json] [--compact]`
 
 **Flags:**
 - `--check NAME` (repeatable). Default: run all.
-- `--fix` (bool). Auto-remediate where safe (per check, below).
+- `--fix` (bool). Auto-remediate where safe (per check, below). Drives `index-divergence` and `index-schema` only.
+- `--fix-index` (bool). Auto-remediate the `index-malformed` check by rebuilding `.act/index.db` from `.act/ops/`. Separate flag from `--fix` so the malformed-image recovery (which moves the broken file aside) is opt-in independent of the routine divergence/schema fixes.
 - `--json` (bool).
 - `--compact` (bool). Manual escape hatch to compact eligible issues.
 
 **Checks and `--fix` behavior:**
 
-| Check | Algorithm | `--fix` effect |
+| Check | Algorithm | `--fix` / `--fix-index` effect |
 |---|---|---|
 | `orphan-close` | Find issues with `closed_at` set but no commit message containing `(act-<prefix>)` AND no diff in `.act/ops/<id>/` at close time. | Read-only; surfaces finding. |
 | `orphan-ops` | Op files referencing an `issue_id` that has no `create` op. | Read-only. |
@@ -846,8 +847,22 @@ Exit codes for `--claim`: `0` win, `1` loss or other logical error, `2` usage. O
 | `time-travel` | Adjacent ops with HLC going backward more than the 5-minute drift bound. | Read-only. |
 | `cycle` | Cycle in the `blocks` subgraph. | Read-only. |
 | `unknown-op-version` | Any op with `writer_version > self`. | Cannot fix; exits 4. |
-| `index-divergence` | Recompute index into a tmp SQLite from ops/snapshots; row-by-row diff against `.act/index.db` (recomputed = oracle). | Replaces `.act/index.db` with the recomputed db. |
-| `index-schema` | Compare index schema version to expected. | Drops and rebuilds `.act/index.db`. |
+| `index-malformed` | Try `index.Open` and `PRAGMA integrity_check` on `.act/index.db`. The malformed signal is the canonical SQLite phrasing — `database disk image is malformed` (SQLITE_CORRUPT) or `file is not a database` (SQLITE_NOTADB). | With `--fix-index`: renames the broken file to `.act/index.db.malformed-<unix-nano>`, opens a fresh SQLite at the canonical path, and runs `index.Rebuild(paths.Ops)` to repopulate from the op log. Without `--fix-index`: emits an error-severity finding whose message ends with the literal `rebuild with 'act doctor --fix-index'`. |
+| `index-divergence` | Recompute index into a tmp SQLite from ops/snapshots; row-by-row diff against `.act/index.db` (recomputed = oracle). | Replaces `.act/index.db` with the recomputed db. When `.act/index.db` is malformed, this check defers to `index-malformed` (returns no finding) to avoid stderr-noise duplication. |
+| `index-schema` | Compare index schema version to expected. | Drops and rebuilds `.act/index.db`. When `.act/index.db` is malformed, this check defers to `index-malformed` to avoid stderr-noise duplication. |
+
+#### `index-malformed` recovery semantics (act-f2f93a)
+
+`.act/index.db` is a derived cache only — the `.act/ops/` op log is the source of truth. When the SQLite file goes malformed (typical cause: an external crash mid-write or a filesystem-level corruption event), every write command that touches the index — `act create`, `act close`, `act update`, `act dep add`, `act ready` — fails with a wrapped `database disk image is malformed` error before reaching ops.
+
+`act doctor --fix-index` is the standalone recovery path:
+
+1. The check inspects `.act/index.db` via `index.Open` + `index.IntegrityCheck` (which runs `PRAGMA integrity_check`). The two known SQLite malformed signals — `database disk image is malformed` and `file is not a database` — are matched by the `index.IsMalformed(err)` helper.
+2. On a positive detection without `--fix-index`: a single error-severity finding is emitted; its message contains the literal `rebuild with 'act doctor --fix-index'` (and the cmd/act dispatcher mirrors this to stderr alongside the bracketed human-text output).
+3. On a positive detection with `--fix-index`: the broken `.act/index.db` is renamed to `.act/index.db.malformed-<unix-nano>` (preserved for post-mortem — no destructive delete), any stray `*-wal` / `*-shm` / `*-journal` siblings are removed, and a fresh `index.Open` + `index.Rebuild(paths.Ops)` repopulates the canonical path. The finding's severity is downgraded to warn and its message names the backup file and the count of issues folded.
+4. On a healthy index, `--fix-index` is a no-op: no backup, no rewrite, exit 0.
+
+The fix does NOT destroy the broken copy — operators (and the agent's later passes) keep the renamed file alongside the rebuilt one until they manually decide it's no longer needed.
 
 **JSON output:**
 ```json

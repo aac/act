@@ -80,12 +80,38 @@ type Index struct {
 	path string
 }
 
+// IsMalformed reports whether err looks like a SQLite "database is malformed"
+// or "file is not a database" failure surfaced by the modernc.org/sqlite
+// driver. Doctor's `--fix-index` path uses this to disambiguate "the index
+// file is unusable; rebuild from ops/" from "every other open/exec failure".
+//
+// The modernc driver returns errors whose string form embeds the SQLite
+// extended result code text — "database disk image is malformed (11)" for
+// SQLITE_CORRUPT, and "file is not a database (26)" for SQLITE_NOTADB
+// (truncated file, scrambled header). We match on the canonical substrings
+// rather than asserting the concrete error type so the helper survives a
+// driver version bump that re-wraps the underlying error.
+func IsMalformed(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "database disk image is malformed") ||
+		strings.Contains(s, "file is not a database")
+}
+
 // Open opens (or creates) a SQLite db at dbPath and returns an Index handle.
 // The database is opened with WAL journal_mode, NORMAL synchronous, and
 // foreign_keys=ON. The call is idempotent; repeated opens of the same path
 // produce equivalent handles.
 //
 // Schema is NOT applied automatically; callers should invoke ApplySchema.
+//
+// A truncated, header-corrupted, or otherwise unreadable file surfaces here
+// as an error matched by IsMalformed (the driver fails db.Ping with the
+// SQLITE_NOTADB result code text). A file whose header is intact but whose
+// page tree is corrupt passes Open; callers that care must invoke
+// IntegrityCheck on the returned handle.
 func Open(dbPath string) (*Index, error) {
 	// modernc.org/sqlite accepts query parameters via the DSN:
 	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
@@ -119,6 +145,50 @@ func (i *Index) ApplySchema() error {
 		return fmt.Errorf("index: apply schema: %w", err)
 	}
 	return nil
+}
+
+// IntegrityCheck runs `PRAGMA integrity_check` and returns nil when the
+// database reports `ok`. A genuine page-tree corruption (one that survives
+// Open + Ping but breaks subsequent reads or writes) surfaces here as a
+// non-nil error whose string form embeds `database disk image is malformed`
+// — matched by IsMalformed.
+//
+// The pragma returns one or more rows; a clean database returns a single
+// row of literal `ok`. Anything else is reported back to the caller verbatim
+// (truncated to the first reported defect) so doctor's finding message
+// names what SQLite saw.
+func (i *Index) IntegrityCheck() error {
+	if i == nil || i.db == nil {
+		return fmt.Errorf("index: integrity_check: nil handle")
+	}
+	rows, err := i.db.Query("PRAGMA integrity_check")
+	if err != nil {
+		// Query itself failing on a SQLite corruption code is the
+		// strongest signal — surface verbatim, wrap so IsMalformed
+		// matches on the substring.
+		return fmt.Errorf("index: integrity_check query: %w", err)
+	}
+	defer rows.Close()
+	var first string
+	for rows.Next() {
+		var s string
+		if scanErr := rows.Scan(&s); scanErr != nil {
+			return fmt.Errorf("index: integrity_check scan: %w", scanErr)
+		}
+		if first == "" {
+			first = s
+		}
+	}
+	if first == "" {
+		return fmt.Errorf("index: integrity_check: no rows returned")
+	}
+	if first == "ok" {
+		return nil
+	}
+	// Any non-"ok" row is a defect. Embed the canonical SQLite phrase
+	// so IsMalformed picks it up regardless of what integrity_check
+	// printed for the specific page.
+	return fmt.Errorf("index: database disk image is malformed: %s", first)
 }
 
 // Close closes the underlying database handle. Subsequent calls on the
