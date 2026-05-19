@@ -103,20 +103,21 @@ const (
 
 // PostReceiveHookSkeleton is the legacy/no-op body retained for callers
 // (tests, external imports) that referenced it before Phase 2 ticket 6a
-// landed. `act remote enable` itself now writes PostReceiveHookBody —
-// the real body filled in by 6a. The skeleton is kept exported so the
-// 1a-era TestDocClaim_Remote_PostReceiveSkeletonNamesTicket assertion
-// (which reads the installed body and checks for the "ticket 6a"
-// marker) continues to match — that comment now lives in
-// PostReceiveHookBody.
+// landed. `act remote enable` itself now writes the rendered
+// PostReceiveHookBodyTemplate — the real body filled in by 6a and
+// rendered with the installing binary's absolute path by act-528547.
+// The skeleton is kept exported so the 1a-era
+// TestDocClaim_Remote_PostReceiveSkeletonNamesTicket assertion (which
+// reads the installed body and checks for the "ticket 6a" marker)
+// continues to match — that comment now lives in the rendered template.
 const PostReceiveHookSkeleton = "#!/bin/bash\n" +
-	"# act post-receive hook (legacy skeleton — superseded by PostReceiveHookBody).\n" +
+	"# act post-receive hook (legacy skeleton — superseded by PostReceiveHookBodyTemplate).\n" +
 	"#\n" +
 	"# Installed by: act remote enable\n" +
 	"# Removed by:   act remote disable\n" +
 	"exit 0\n"
 
-// PostReceiveHookBody is the body installed at
+// PostReceiveHookBodyTemplate is the body template installed at
 // `.act/.git/hooks/post-receive` by `act remote enable` (Phase 2 ticket
 // 6a). When a worker pushes new ops to the orchestrator's `.act/.git`,
 // git invokes this hook on the orchestrator. The hook detaches a
@@ -136,12 +137,33 @@ const PostReceiveHookSkeleton = "#!/bin/bash\n" +
 //   - `nohup` plus `&` is the minimum-dependency detach: no systemd, no
 //     launchd, no per-platform spawn helper.
 //
+// Why a template (not a literal `nohup act remote sync`):
+//
+//   - A bare `act` in the hook depends on whichever binary PATH resolves
+//     to at hook-fire time. If the operator installed a fresh `act` into
+//     a new location but PATH still points at a stale earlier binary,
+//     the hook silently no-ops on `remote sync` (the verb doesn't exist
+//     in the pre-Phase 2 binary). Discovered in act-abbf4b dogfood; see
+//     act-528547.
+//   - At `act remote enable` time we know the absolute path of the
+//     binary running the enable (via os.Executable + EvalSymlinks). We
+//     substitute that path into the template via RenderPostReceiveHookBody
+//     so the installed hook calls the exact binary that installed it —
+//     immune to subsequent PATH changes. Re-running `act remote enable`
+//     after a binary move refreshes the hook.
+//
 // The body deliberately names ticket 6a in a comment so the
 // TestDocClaim_Remote_PostReceiveSkeletonNamesTicket assertion (the
 // 1a-era guarantee that the file documents who fills in the body) still
 // matches after 6a fills the skeleton.
-const PostReceiveHookBody = "#!/bin/bash\n" +
-	"# act post-receive hook (Phase 2 ticket 6a).\n" +
+//
+// ACT_BIN_PLACEHOLDER is the literal substring substituted at install
+// time. The rendered hook line is `nohup <ACT_BIN> remote sync ...` —
+// the rendered form replaces the historical `nohup act remote sync`
+// invocation with the resolved absolute path. Documenting both forms
+// in this comment block keeps the docs-sweep substring anchor stable.
+const PostReceiveHookBodyTemplate = "#!/bin/bash\n" +
+	"# act post-receive hook (Phase 2 ticket 6a; absolute-path form act-528547).\n" +
 	"#\n" +
 	"# When a worker pushes new ops into the orchestrator's .act/.git, fire\n" +
 	"# `act remote sync` in the background so the just-received ops are\n" +
@@ -150,10 +172,39 @@ const PostReceiveHookBody = "#!/bin/bash\n" +
 	"# exit code (we don't want a worker push to fail because the\n" +
 	"# orchestrator's upstream is down).\n" +
 	"#\n" +
+	"# The ACT_BIN marker on the invocation line below is replaced at\n" +
+	"# `act remote enable` time with the absolute path of the binary\n" +
+	"# running the enable so the hook is immune to later PATH staleness\n" +
+	"# (act-528547). The historical bare form was an `act remote sync`\n" +
+	"# invocation; the rendered form embeds the absolute path instead.\n" +
+	"#\n" +
 	"# Installed by: act remote enable\n" +
 	"# Removed by:   act remote disable\n" +
-	"nohup act remote sync >/dev/null 2>&1 &\n" +
+	"nohup {{ACT_BIN}} remote sync >/dev/null 2>&1 &\n" +
 	"exit 0\n"
+
+// ActBinPlaceholder is the literal marker in PostReceiveHookBodyTemplate
+// that RenderPostReceiveHookBody replaces with the absolute path of the
+// `act` binary at install time.
+const ActBinPlaceholder = "{{ACT_BIN}}"
+
+// RenderPostReceiveHookBody substitutes the {{ACT_BIN}} placeholder in
+// PostReceiveHookBodyTemplate with actBinPath and returns the resulting
+// hook body. actBinPath should be the canonical absolute path of the
+// `act` binary that ran `act remote enable` (typically obtained by
+// `os.Executable` plus `filepath.EvalSymlinks`).
+//
+// If actBinPath is empty, the placeholder is replaced with the bare
+// literal `act` — the pre-528547 behaviour — as a safe fallback. The
+// caller is expected to surface a non-empty path; this fallback only
+// guards against a programmer error.
+func RenderPostReceiveHookBody(actBinPath string) string {
+	bin := actBinPath
+	if bin == "" {
+		bin = "act"
+	}
+	return strings.ReplaceAll(PostReceiveHookBodyTemplate, ActBinPlaceholder, bin)
+}
 
 // EnableDefaults is the default values written by `act remote enable`
 // for each scalar key. The keys themselves are constants above; values

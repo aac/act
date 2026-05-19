@@ -315,6 +315,25 @@ func TestRemoteSync_PostReceiveHookFiresBackgroundSync(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Setenv("PATH", origPath) })
 
+	// act-528547: the post-receive hook now embeds the absolute path of
+	// the binary that ran `act remote enable`. Under `go test`, that
+	// path is the test binary itself — which doesn't implement
+	// `remote sync`. Point the hook at the prebuilt `act` binary via
+	// the ACT_BIN_OVERRIDE env seam so the end-to-end "hook fires →
+	// background sync writes .sync-log" path actually runs the real
+	// CLI.
+	origActBin := os.Getenv("ACT_BIN_OVERRIDE")
+	if err := os.Setenv("ACT_BIN_OVERRIDE", actBinaryPath); err != nil {
+		t.Fatalf("setenv ACT_BIN_OVERRIDE: %v", err)
+	}
+	t.Cleanup(func() {
+		if origActBin == "" {
+			os.Unsetenv("ACT_BIN_OVERRIDE")
+		} else {
+			os.Setenv("ACT_BIN_OVERRIDE", origActBin)
+		}
+	})
+
 	host := newRemoteFixture(t)
 	if _, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: host}); code != 0 {
 		t.Fatalf("remote enable: code=%d", code)
