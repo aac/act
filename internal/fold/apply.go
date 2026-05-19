@@ -18,6 +18,16 @@ const (
 	keyLastMigration = "__last_migration"
 
 	keyClaimHLC = "__claim_hlc"
+
+	// keyCloseHLC and keyReopenHLC track the highest HLC stamp seen for
+	// close and reopen ops respectively. Status terminality is decided by
+	// comparing these two stamps independently of the generic LWW gate on
+	// "status" — closed is terminal except via reopen, and reopen requires
+	// a dominating close (act-b7ad). Tracking them separately lets close
+	// always win over a prior in_progress claim regardless of apply order,
+	// while still letting a later reopen override a prior close.
+	keyCloseHLC  = "__close_hlc"
+	keyReopenHLC = "__reopen_hlc"
 )
 
 // formatRFC3339Millis renders unix-ms as the canonical RFC3339Millis form
@@ -395,13 +405,24 @@ func setRemovedAcceptSet(state *IssueState, m map[string]bool) {
 // §5.B.3: if state already records a claim with smaller HLC, this op is
 // ignored. Otherwise the HLC tuple is recorded under keyClaimHLC and used
 // for subsequent comparison.
+//
+// Closed-terminal enforcement (act-b7ad): claim NEVER writes to
+// LastHLC["status"]. Status LWW is governed solely by close/reopen via
+// keyCloseHLC and keyReopenHLC. Were claim to record LastHLC["status"], an
+// out-of-order applyClose with smaller HLC than the claim would be rejected
+// by gateLWW and resurrect in_progress as the final status — violating the
+// spec invariant "closed is terminal" (spec-v2.md §status). The isClosed
+// short-circuit below stays load-bearing: it blocks any later-HLC claim
+// from running once close has been applied at any prior point.
 func applyClaim(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.ClaimPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return fmt.Errorf("claim: unmarshal: %w", err)
 	}
-	// Once closed, a later claim should not change status. The close LWW
-	// gate keeps "status" pinned to "closed" via state.LastHLC["status"].
+	// Closed is terminal: a claim never resurrects a closed issue, no
+	// matter how the HLC compares. The Fields["status"] check is the
+	// authoritative read here because applyClose pins status="closed"
+	// unconditionally when its stamp dominates the prior reopen (if any).
 	if isClosed(state) {
 		return nil
 	}
@@ -417,7 +438,7 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte, fullHash str
 	state.Fields["assignee"] = p.Assignee
 	state.LastHLC["assignee"] = stamp
 	state.Fields["status"] = "in_progress"
-	state.LastHLC["status"] = stamp
+	// Intentionally NOT writing state.LastHLC["status"] — see func docstring.
 	// claimed_at: wall time of the winning claim, formatted RFC3339Millis,
 	// so the index (and `act ready`) can render relative timestamps without
 	// re-reading the op log. Symmetrical with created_at / closed_at.
@@ -427,9 +448,12 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte, fullHash str
 }
 
 // applyClose sets status=closed plus closed_at, closed_reason, and the
-// closer's node_id (closed_by_node) for audit. Once closed, the LWW gate
-// on "status" prevents subsequent claims from reverting it (because the
-// close stamp dominates).
+// closer's node_id (closed_by_node) for audit. Closed is terminal: the
+// only op that can move status away from "closed" is reopen. Close vs
+// reopen ordering is decided by their dedicated stamps (keyCloseHLC vs
+// keyReopenHLC), not by LWW on the "status" field — claim shares
+// Fields["status"] but never participates in the close/reopen LWW
+// (see applyClaim docstring; act-b7ad).
 //
 // closed_by_tree (the git tree hash at close time) is intentionally NOT
 // surfaced here: the envelope does not carry it, and the SQLite index's
@@ -443,10 +467,22 @@ func applyClose(state *IssueState, env op.Envelope, payload []byte, fullHash str
 		return fmt.Errorf("close: unmarshal: %w", err)
 	}
 	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
-	if !gateLWW(state, "status", stamp) {
+	// If a reopen with a later stamp has already been applied, this close
+	// is dominated by the reopen and must not flip status back to closed.
+	if reopen, ok := state.LastHLC[keyReopenHLC]; ok && !reopen.Less(stamp) {
 		return nil
 	}
+	// Idempotency among close ops: refresh metadata only when this close's
+	// stamp dominates any previously-seen close stamp.
+	if prior, ok := state.LastHLC[keyCloseHLC]; ok && !prior.Less(stamp) {
+		// Status is already (and remains) closed — earlier-close idempotent.
+		return nil
+	}
+	state.LastHLC[keyCloseHLC] = stamp
 	state.Fields["status"] = "closed"
+	// Maintain LastHLC["status"] for downstream readers (ResolveStatus) that
+	// surface the stamp at which status was last written by a close/reopen.
+	state.LastHLC["status"] = stamp
 	state.Fields["closed_at"] = formatRFC3339Millis(env.HLC.Wall)
 	state.LastHLC["closed_at"] = stamp
 	state.Fields["closed_reason"] = p.Reason
@@ -469,10 +505,14 @@ func applyClose(state *IssueState, env op.Envelope, payload []byte, fullHash str
 // high-water marks for these fields are reset to the reopen op's HLC so
 // subsequent updates aren't blocked by stale HLCs from before the close.
 //
-// The op is idempotent on an already-open issue: the status LWW gate
-// admits the reopen only when env.HLC dominates the current status
-// stamp. A reopen older than a subsequent close is dominated and
-// ignored, preserving close-LWW semantics.
+// Close/reopen ordering is decided by keyCloseHLC vs keyReopenHLC (act-b7ad)
+// rather than the shared "status" field: claim writes Fields["status"] but
+// must not interfere with the close-vs-reopen LWW decision. A reopen with
+// no prior close in scope still records its stamp under keyReopenHLC so a
+// subsequent out-of-order close with smaller HLC is correctly dominated.
+//
+// The op is idempotent on an already-open issue: an earlier reopen has no
+// effect once a later reopen has been recorded.
 func applyReopen(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.ReopenPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -480,9 +520,16 @@ func applyReopen(state *IssueState, env op.Envelope, payload []byte, fullHash st
 	}
 	_ = p // reason is recorded in the op log; not persisted to state today.
 	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
-	if cur, ok := state.LastHLC["status"]; ok && !cur.Less(stamp) {
+	// If a close with a later stamp has been recorded, this reopen is
+	// dominated by the close: don't flip status back to open.
+	if closeStamp, ok := state.LastHLC[keyCloseHLC]; ok && !closeStamp.Less(stamp) {
 		return nil
 	}
+	// Idempotency among reopens: a later-or-equal prior reopen wins.
+	if prior, ok := state.LastHLC[keyReopenHLC]; ok && !prior.Less(stamp) {
+		return nil
+	}
+	state.LastHLC[keyReopenHLC] = stamp
 	state.Fields["status"] = "open"
 	state.LastHLC["status"] = stamp
 	delete(state.Fields, "closed_at")

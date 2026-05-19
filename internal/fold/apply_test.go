@@ -429,3 +429,179 @@ func TestApply_RenderStripsInternalKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestApply_ClaimDoesNotResurrectClosed is the regression test for act-b7ad.
+// In HLC-sorted apply order, applyClose runs first and sets status=closed;
+// a later-HLC applyClaim must short-circuit on isClosed and leave neither
+// the assignee nor the claimed_at fields populated. The spec says closed is
+// terminal — no LWW resurrection allowed.
+func TestApply_ClaimDoesNotResurrectClosed(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	// Apply close at wall=10, then claim at wall=100 (claim HLC > close HLC).
+	if err := applyClose(st, mkEnv(id, "close", 10, 0, "11111111"),
+		mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 10, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyClaim(st, mkEnv(id, "claim", 100, 0, "22222222"),
+		mustJSON(t, op.ClaimPayload{Assignee: "alice"}), testHash(mkEnv(id, "claim", 100, 0, "22222222"))); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "closed" {
+		t.Fatalf("status: %v want closed (claim must not resurrect)", st.Fields["status"])
+	}
+	if _, ok := st.Fields["assignee"]; ok {
+		t.Fatalf("assignee leaked through closed gate: %v", st.Fields["assignee"])
+	}
+	if _, ok := st.Fields["claimed_at"]; ok {
+		t.Fatalf("claimed_at leaked through closed gate: %v", st.Fields["claimed_at"])
+	}
+}
+
+// TestApply_OutOfOrderClaimThenCloseStillCloses is the second regression
+// for act-b7ad. Previously, applyClaim wrote LastHLC["status"]=T_claim
+// unconditionally; a subsequent applyClose with smaller HLC then failed
+// the gateLWW("status", ...) check and left status=in_progress — a
+// fold-order-dependent divergence that the property test below catches in
+// the general case. This test pins down the minimal two-op sequence.
+func TestApply_OutOfOrderClaimThenCloseStillCloses(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	// Apply claim at wall=100 FIRST (out-of-order), then close at wall=10.
+	if err := applyClaim(st, mkEnv(id, "claim", 100, 0, "11111111"),
+		mustJSON(t, op.ClaimPayload{Assignee: "alice"}), testHash(mkEnv(id, "claim", 100, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyClose(st, mkEnv(id, "close", 10, 0, "22222222"),
+		mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 10, 0, "22222222"))); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "closed" {
+		t.Fatalf("status after out-of-order claim+close: %v want closed", st.Fields["status"])
+	}
+	if st.Fields["closed_reason"] != "done" {
+		t.Fatalf("closed_reason: %v want done", st.Fields["closed_reason"])
+	}
+}
+
+// TestApply_ReopenAfterCloseStillReopens guards the carve-out: reopen is
+// the only op allowed to mutate status away from closed. A reopen with a
+// stamp dominating the close must succeed and clear the close metadata.
+func TestApply_ReopenAfterCloseStillReopens(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	if err := applyClose(st, mkEnv(id, "close", 10, 0, "11111111"),
+		mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 10, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyReopen(st, mkEnv(id, "reopen", 50, 0, "11111111"),
+		mustJSON(t, op.ReopenPayload{Reason: "wrong"}), testHash(mkEnv(id, "reopen", 50, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "open" {
+		t.Fatalf("status after close+reopen: %v want open", st.Fields["status"])
+	}
+	if _, ok := st.Fields["closed_at"]; ok {
+		t.Fatalf("closed_at survived reopen: %v", st.Fields["closed_at"])
+	}
+	if _, ok := st.Fields["closed_reason"]; ok {
+		t.Fatalf("closed_reason survived reopen: %v", st.Fields["closed_reason"])
+	}
+}
+
+// TestApply_ReopenDominatedByLaterCloseDoesNotReopen guards the inverse of
+// the reopen carve-out: a reopen with smaller HLC than a subsequent close
+// must not flip status back to open, regardless of apply order.
+func TestApply_ReopenDominatedByLaterCloseDoesNotReopen(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	// Close at wall=100, then reopen at wall=10 (reopen HLC < close HLC).
+	if err := applyClose(st, mkEnv(id, "close", 100, 0, "11111111"),
+		mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 100, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyReopen(st, mkEnv(id, "reopen", 10, 0, "11111111"),
+		mustJSON(t, op.ReopenPayload{Reason: "stale"}), testHash(mkEnv(id, "reopen", 10, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "closed" {
+		t.Fatalf("status after close+stale reopen: %v want closed", st.Fields["status"])
+	}
+	// Reverse apply order: stale reopen first, then dominating close. Same
+	// final state (closed) — this is the commutativity property.
+	st2 := freshState(id)
+	runCreate(t, st2, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	if err := applyReopen(st2, mkEnv(id, "reopen", 10, 0, "11111111"),
+		mustJSON(t, op.ReopenPayload{Reason: "stale"}), testHash(mkEnv(id, "reopen", 10, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyClose(st2, mkEnv(id, "close", 100, 0, "11111111"),
+		mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(mkEnv(id, "close", 100, 0, "11111111"))); err != nil {
+		t.Fatal(err)
+	}
+	if st2.Fields["status"] != "closed" {
+		t.Fatalf("status under reversed apply: %v want closed", st2.Fields["status"])
+	}
+}
+
+// TestApply_PropertyCloseClaimAnyOrderClosesOnce asserts the act-b7ad
+// acceptance criterion #3: any sequence of close+claim ops in any HLC
+// ordering applied in any order produces a final state where status=closed
+// once any close has been applied. Drives small-but-exhaustive permutations
+// over a mixed claim/close batch.
+func TestApply_PropertyCloseClaimAnyOrderClosesOnce(t *testing.T) {
+	id := "act-aaaa"
+	// Mixed batch: two claims and two closes with overlapping wall stamps.
+	type opSpec struct {
+		opType   string
+		wall     int64
+		nodeID   string
+		payload  any
+		assignee string // only used for claim
+	}
+	ops := []opSpec{
+		{opType: "claim", wall: 100, nodeID: "11111111", payload: op.ClaimPayload{Assignee: "alice"}, assignee: "alice"},
+		{opType: "claim", wall: 200, nodeID: "22222222", payload: op.ClaimPayload{Assignee: "bob"}, assignee: "bob"},
+		{opType: "close", wall: 50, nodeID: "33333333", payload: op.ClosePayload{Reason: "first"}},
+		{opType: "close", wall: 150, nodeID: "44444444", payload: op.ClosePayload{Reason: "second"}},
+	}
+	// Walk every permutation of the 4 ops; assert final status=closed.
+	indices := []int{0, 1, 2, 3}
+	var permute func(prefix []int, rest []int)
+	permute = func(prefix []int, rest []int) {
+		if len(rest) == 0 {
+			st := freshState(id)
+			runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+				op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+			for _, k := range prefix {
+				o := ops[k]
+				env := mkEnv(id, o.opType, o.wall, 0, o.nodeID)
+				fn := ApplyDispatch(o.opType)
+				if err := fn(st, env, mustJSON(t, o.payload), testHash(env)); err != nil {
+					t.Fatalf("apply %s wall=%d: %v", o.opType, o.wall, err)
+				}
+			}
+			if st.Fields["status"] != "closed" {
+				t.Fatalf("perm=%v: status=%v want closed (any close must terminally close)", prefix, st.Fields["status"])
+			}
+			return
+		}
+		for i := range rest {
+			np := append([]int{}, prefix...)
+			np = append(np, rest[i])
+			nr := append([]int{}, rest[:i]...)
+			nr = append(nr, rest[i+1:]...)
+			permute(np, nr)
+		}
+	}
+	permute(nil, indices)
+}
