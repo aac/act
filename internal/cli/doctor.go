@@ -41,6 +41,12 @@ type DoctorOptions struct {
 	// (docs/coordination-plane-design.md "Doctor reconciliation",
 	// act-37f7).
 	Strict bool
+	// NoFetch suppresses the inline `git fetch --dry-run` probe used
+	// by Phase 2 doctor cases (g) and (h). Under --no-fetch, case (g)
+	// is downgraded to a warning (exit 0) and case (h) is suppressed
+	// entirely (drift detection requires a successful upstream fetch).
+	// Per Phase 2 ticket 9 (act-aa4f19) §5 addendum.
+	NoFetch bool
 }
 
 // Finding is a single doctor finding.
@@ -52,9 +58,17 @@ type Finding struct {
 }
 
 // DoctorResult is the JSON shape returned by RunDoctor on a successful walk.
+//
+// RemoteStatus carries the Phase 2 ticket 9 (act-aa4f19) remote-status
+// block: case-(f) unpushed count, case-(g) reachability, case-(h)
+// upstream drift, and the slow-writes-last-hour summary. The field is
+// always emitted (no `omitempty`) so JSON consumers can rely on the
+// key existing — its inner fields default to their zero values
+// (RemoteReachable=true on no-origin, others 0/"").
 type DoctorResult struct {
-	Findings []Finding `json:"findings"`
-	Count    int       `json:"count"`
+	Findings     []Finding    `json:"findings"`
+	Count        int          `json:"count"`
+	RemoteStatus RemoteStatus `json:"remote_status"`
 }
 
 // DoctorErrorOutput is the structured failure envelope (e.g. missing .act/).
@@ -75,6 +89,13 @@ var allChecks = []string{
 	"index-schema",
 	"gitignore-effective",
 	"nested-layout",
+	// Phase 2 ticket 9 (act-aa4f19): cases (a'), (c'), (f), (g), (h)
+	// share one walk (single git-config read + nested-repo stat) and
+	// surface under the umbrella name `phase2-reconciliation`. The
+	// per-case Finding.Check identifiers (CheckRemoteAttachedOrchestrator
+	// etc.) name the individual cases; `--check phase2-reconciliation`
+	// runs them all.
+	"phase2-reconciliation",
 }
 
 // validChecks indexes allChecks for O(1) name validation.
@@ -141,6 +162,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 	}
 
 	var findings []Finding
+	var remoteStatus RemoteStatus
+	var phase2Exit int
 	for _, name := range run {
 		switch name {
 		case "orphan-close":
@@ -163,6 +186,13 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			findings = append(findings, checkGitignoreEffective(repoRoot)...)
 		case "nested-layout":
 			findings = append(findings, checkNestedLayout(repoRoot, paths)...)
+		case "phase2-reconciliation":
+			p2Findings, p2Status, p2Exit := checkPhase2Reconciliation(repoRoot, opts.NoFetch)
+			findings = append(findings, p2Findings...)
+			remoteStatus = p2Status
+			if p2Exit > phase2Exit {
+				phase2Exit = p2Exit
+			}
 		}
 	}
 
@@ -185,7 +215,19 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			break
 		}
 	}
-	return DoctorResult{Findings: findings, Count: len(findings)}, exit
+	// Phase 2 case (g): origin-unreachable promotes exit to 4
+	// (precedence over the generic error→1 rule above). The exit
+	// code is computed by checkPhase2Reconciliation and propagated
+	// here so future Phase 2 cases that need their own non-1 exit
+	// can share the same precedence pattern.
+	if phase2Exit > exit {
+		exit = phase2Exit
+	}
+	return DoctorResult{
+		Findings:     findings,
+		Count:        len(findings),
+		RemoteStatus: remoteStatus,
+	}, exit
 }
 
 // foldNeeded reports whether any of the requested checks consumes a fold.

@@ -520,6 +520,45 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "fork-exec",
 		testName:     "TestDocClaim_OrchestratorSync_BackgroundDetach",
 	},
+	// doctor-case-* (Phase 2 ticket 9, act-aa4f19): five new
+	// reconciliation cases plus the remote-status JSON block. The five
+	// entries below pin the user-visible literals — case (a')'s
+	// post-receive hook check on orchestrators, case (c')'s
+	// worker-without-origin error, case (f)'s unpushed-commits stderr
+	// line, case (g)'s origin-unreachable literal (exit 4), and case
+	// (h)'s upstream-drift literal. The literal phrasings live in
+	// docs/spec-v2.md "Doctor reconciliation (Phase 2)" so a drift in
+	// either the spec or the implementation surfaces here.
+	{
+		name:         "doctor-case-a-prime",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "post-receive hook installed",
+		testName:     "TestDocClaim_DoctorCase_APrime_HookCheckOnOrchestrator",
+	},
+	{
+		name:         "doctor-case-c-prime",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`worker-without-origin`",
+		testName:     "TestDocClaim_DoctorCase_CPrime_WorkerWithoutOrigin",
+	},
+	{
+		name:         "doctor-case-f",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "local: <N> unpushed commits ahead of origin",
+		testName:     "TestDocClaim_DoctorCase_F_UnpushedCommitsStderr",
+	},
+	{
+		name:         "doctor-case-g",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "remote: origin unreachable; run 'act remote sync' from the orchestrator or check connectivity",
+		testName:     "TestDocClaim_DoctorCase_G_OriginUnreachableStderr",
+	},
+	{
+		name:         "doctor-case-h",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "upstream: origin-upstream is <N> commits behind origin; run 'act remote sync'",
+		testName:     "TestDocClaim_DoctorCase_H_UpstreamDriftStderr",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
