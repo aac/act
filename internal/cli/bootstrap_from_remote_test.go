@@ -108,6 +108,60 @@ func TestDocClaim_BootstrapFromRemote_SetsWorkerRole(t *testing.T) {
 	}
 }
 
+// TestBootstrapFromRemote_SkipsHooks asserts that the from-remote path
+// also strips the host's `.act/hooks/` from the cloned worker tree
+// (act-43cf99). A `git clone` of the host's nested `.act/.git` brings
+// committed hook files (e.g. `.act/hooks/close`) into the worker, which
+// would then run that host-specific hook on `act close`. The fix
+// removes `hooks/` from the clone before the rename.
+func TestBootstrapFromRemote_SkipsHooks(t *testing.T) {
+	// Seed a source with a tracked .act/hooks/close, commit it to the
+	// nested .act/.git, then clone the nested .git into a bare for the
+	// from-remote URL.
+	srcRoot, _ := makeBootstrapSource(t)
+	srcActHooks := filepath.Join(srcRoot, ".act", "hooks")
+	if err := os.MkdirAll(srcActHooks, 0o755); err != nil {
+		t.Fatalf("mkdir src hooks: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcActHooks, "close"),
+		[]byte("#!/bin/sh\necho 'host close hook'\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write close hook: %v", err)
+	}
+	// Commit the new hook file inside the nested .act/.git so a bare
+	// clone carries it.
+	srcAct := filepath.Join(srcRoot, ".act")
+	runGit(t, srcAct, "add", "hooks/close")
+	runGit(t, srcAct, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-m", "seed close hook")
+
+	bareDir := t.TempDir()
+	barePath := filepath.Join(bareDir, "act-state.git")
+	srcGit := filepath.Join(srcRoot, ".act", ".git")
+	runGit(t, "", "clone", "--bare", srcGit, barePath)
+
+	targetRoot := makeBootstrapTarget(t)
+	_, code := RunBootstrapWorker(BootstrapWorkerOptions{
+		FromRemoteURL: barePath,
+		Target:        targetRoot,
+	})
+	if code != 0 {
+		t.Fatalf("from-remote exit=%d", code)
+	}
+
+	// The worker's `.act/hooks/` must be absent — stripped from the
+	// clone before rename. The hook file specifically must not exist.
+	targetHooks := filepath.Join(targetRoot, ".act", "hooks")
+	if _, err := os.Stat(targetHooks); !os.IsNotExist(err) {
+		t.Errorf("from-remote: target .act/hooks/ unexpectedly present: err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetHooks, "close")); !os.IsNotExist(err) {
+		t.Errorf("from-remote: host close hook leaked into worker")
+	}
+	// Sanity: the worker still has the load-bearing nested .git.
+	if _, err := os.Stat(filepath.Join(targetRoot, ".act", ".git")); err != nil {
+		t.Errorf("nested .git missing after from-remote skip-hooks: %v", err)
+	}
+}
+
 // TestBootstrapFromRemote_TargetNotEmpty asserts the non-empty target
 // rejection in the from-remote path. Same shape as the cwd-source
 // case in bootstrap_worker_test.go but it has to live here because

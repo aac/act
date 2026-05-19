@@ -15,10 +15,17 @@
 //
 //   - Resolve the source `.act/` from cwd via the host-repo resolver in
 //     internal/gitops.
-//   - Copy the entire `.act/` tree (ops/, snapshots/, hooks/, imports/,
+//   - Copy the entire `.act/` tree (ops/, snapshots/, imports/,
 //     index.db if present, config.json, .git) into `<target>/.act.bootstrap/`,
 //     then atomic-rename to `<target>/.act/`. On any failure mid-copy, the
 //     `.act.bootstrap/` tree is torn down so we never leave a partial `.act/`.
+//   - The host's `.act/hooks/` directory is deliberately NOT copied (act-43cf99).
+//     Host hooks (e.g. the act repo's close hook that runs `go vet ./...`)
+//     assume the host project's working-tree context and break on a worker
+//     dispatched into a non-host repo. Per-worker hook installation is a
+//     separate concern; the worker still gets the close-op trailer + push
+//     semantics from its nested .act/.git, only the optional gating hook is
+//     omitted.
 //   - Refuse to overwrite a non-empty existing `<target>/.act/` unless
 //     --force is passed (empty or missing target .act/ is the normal case).
 //   - Stamp a `.act/.bootstrap-meta.json` file in the new target containing
@@ -367,6 +374,17 @@ func copyTreeWithStats(src, dst string) (copyStats, error) {
 		if rel == "." {
 			return nil
 		}
+		// Skip the host's hooks/ directory entirely (act-43cf99).
+		// Host-specific close hooks (e.g. one that runs `go vet`) assume
+		// the host project's working tree and break workers dispatched
+		// into unrelated repos. The whole subtree is omitted, both the
+		// directory entry and its contents.
+		if rel == "hooks" || strings.HasPrefix(rel, "hooks"+string(filepath.Separator)) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		target := filepath.Join(dst, rel)
 		mode := info.Mode()
 		switch {
@@ -579,6 +597,25 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf("act bootstrap-worker: cloned tree at %s missing .git: %v", stagingAct, err),
+		}, 3
+	}
+
+	// Strip the host's `hooks/` directory from the cloned working tree
+	// (act-43cf99). A `git clone` of `.act/.git` brings the host's
+	// committed `.act/hooks/close` (and any other tracked hooks) into the
+	// worker, which then runs that hook on `act close`. Host hooks
+	// typically assume the host project's working-tree context (e.g. the
+	// act repo's close hook runs `go vet ./...`) and fail on a worker
+	// dispatched into a non-host repo. Same rationale as the cwd-source
+	// path; per-worker hook installation is a separate concern. We do
+	// not bother committing the deletion to the nested repo — the
+	// missing files on disk are enough to no-op the close-hook firing,
+	// and a worker's nested .git tree is short-lived.
+	if err := os.RemoveAll(filepath.Join(stagingAct, "hooks")); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: strip hooks/ from clone: %v", err),
 		}, 3
 	}
 
