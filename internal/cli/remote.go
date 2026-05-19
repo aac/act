@@ -28,10 +28,64 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/gitops"
 )
+
+// actBinEnvOverride is the env-var name that, when set non-empty,
+// short-circuits resolveActBinPath and is used verbatim as the absolute
+// act binary path embedded into the post-receive hook. This is the test
+// seam used by TestRemoteSync_PostReceiveHookFiresBackgroundSync and
+// friends: under `go test`, os.Executable returns the test binary, not
+// a real `act` binary, so the end-to-end "hook fires → sync runs" path
+// has to point the hook at a real prebuilt act via this env var.
+//
+// Production callers do not need to set this; bare `act remote enable`
+// uses os.Executable as usual. The name is namespaced under `ACT_` to
+// avoid collision with anything in the operator's shell.
+const actBinEnvOverride = "ACT_BIN_OVERRIDE"
+
+// resolveActBinPath returns the canonical absolute path of the running
+// `act` binary, used to embed an absolute invocation in the post-receive
+// hook body so the hook is immune to later PATH staleness (act-528547).
+//
+// We call os.Executable to get the path of the running process and then
+// filepath.EvalSymlinks to canonicalize any symlinks (a common shape
+// when the binary lives under e.g. $GOBIN/act-vX symlinked from
+// $GOBIN/act, or when the operator manages multiple versions via a
+// wrapper). If EvalSymlinks fails we fall back to the raw executable
+// path — better an unresolved-but-absolute path than no path at all.
+//
+// The ACT_BIN_OVERRIDE env var, when set, short-circuits both lookups
+// and is used verbatim. This is the test-seam (see actBinEnvOverride)
+// used by hook-fires-end-to-end tests; production callers do not set
+// it.
+//
+// Under `go test` without the override, os.Executable returns the test
+// binary's absolute path (e.g. /tmp/go-build.../cli.test). Unit tests
+// that only assert on hook-body content (not end-to-end hook execution)
+// run fine in that mode; they compare against whatever
+// resolveActBinPath returns at call time rather than hardcoding any
+// specific path shape.
+func resolveActBinPath() (string, error) {
+	if override := os.Getenv(actBinEnvOverride); override != "" {
+		return override, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve act binary path: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		// Fall back to the unresolved path. The hook still gets an
+		// absolute path; canonicalisation through symlinks is a nice-
+		// to-have, not a correctness requirement.
+		return exe, nil
+	}
+	return resolved, nil
+}
 
 // RemoteOptions controls `act remote <verb>`.
 type RemoteOptions struct {
@@ -194,7 +248,21 @@ func runRemoteEnable(actRoot, hostRoot, configPath, hookPath string) (any, int) 
 			"message": fmt.Sprintf("act remote enable: mkdir hooks dir: %v", err),
 		}, 3
 	}
-	if err := os.WriteFile(hookPath, []byte(config.PostReceiveHookBody), 0o755); err != nil {
+	// Resolve the absolute path of the running `act` binary so the
+	// hook body embeds it directly. Without this, the hook calls bare
+	// `act` and silently no-ops on `remote sync` if PATH later points
+	// at a stale or pre-Phase 2 binary (the original act-528547 dogfood
+	// discovery from act-abbf4b). Re-running `act remote enable` after
+	// a binary move refreshes the hook.
+	actBinPath, err := resolveActBinPath()
+	if err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act remote enable: %v", err),
+		}, 3
+	}
+	hookBody := config.RenderPostReceiveHookBody(actBinPath)
+	if err := os.WriteFile(hookPath, []byte(hookBody), 0o755); err != nil {
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf("act remote enable: write %s: %v", hookPath, err),

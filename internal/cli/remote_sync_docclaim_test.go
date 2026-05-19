@@ -62,6 +62,11 @@ func TestDocClaim_RemoteSync_NoUpstreamStderr(t *testing.T) {
 // that the installed post-receive hook body invokes `act remote sync`
 // in the background. Drives at the filesystem boundary the spec
 // names: `.act/.git/hooks/post-receive` after `act remote enable`.
+//
+// Since act-528547 the hook embeds the absolute path of the installing
+// `act` binary in place of bare `act`, so the assertion is on the
+// invariant shape: `nohup <something> remote sync ... &`, not on the
+// literal bare-act form.
 func TestDocClaim_Hook_PostReceiveInvokesSync(t *testing.T) {
 	host := newRemoteFixture(t)
 	mustRunAct(t, host, 0, "remote", "enable")
@@ -70,8 +75,19 @@ func TestDocClaim_Hook_PostReceiveInvokesSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read hook: %v", err)
 	}
-	if !strings.Contains(string(body), "nohup act remote sync") {
-		t.Errorf("post-receive hook body does not invoke `nohup act remote sync`:\n%s", body)
+	// Must invoke `remote sync` in the background via nohup. The
+	// invariant is the verb invocation, not the bare-`act` shape.
+	if !strings.Contains(string(body), "remote sync") {
+		t.Errorf("post-receive hook body does not invoke `remote sync`:\n%s", body)
+	}
+	if !strings.Contains(string(body), "nohup ") {
+		t.Errorf("post-receive hook body does not use `nohup` to detach:\n%s", body)
+	}
+	// The {{ACT_BIN}} placeholder must have been substituted at install
+	// time — a literal placeholder slipping through would mean the
+	// renderer was bypassed.
+	if strings.Contains(string(body), "{{ACT_BIN}}") {
+		t.Errorf("post-receive hook body still contains unrendered {{ACT_BIN}} placeholder:\n%s", body)
 	}
 	// Hook must still execute exit 0 so git receive doesn't error.
 	if !strings.Contains(string(body), "exit 0") {
@@ -134,8 +150,8 @@ func TestDocClaim_RemoteSync_SyncLogSchemaFields(t *testing.T) {
 	}
 }
 
-// configRefForDocClaim pins config.PostReceiveHookBody so a refactor
-// that renames the constant fails this file's compile, rather than
-// silently un-anchoring the docclaim that the hook body invokes
-// `nohup act remote sync`.
-var _ = config.PostReceiveHookBody
+// configRefForDocClaim pins config.PostReceiveHookBodyTemplate so a
+// refactor that renames the constant fails this file's compile, rather
+// than silently un-anchoring the docclaim that the hook body invokes
+// `remote sync` in the background.
+var _ = config.PostReceiveHookBodyTemplate

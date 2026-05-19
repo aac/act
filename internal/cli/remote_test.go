@@ -122,6 +122,95 @@ func TestRunRemote_Enable_InstallsPostReceiveHook(t *testing.T) {
 	}
 }
 
+// TestRemoteEnable_HookContainsAbsoluteActPath asserts that
+// `act remote enable` embeds the absolute path of the running `act`
+// binary into the post-receive hook (act-528547). Without this, the
+// hook calls bare `act` on PATH and silently no-ops when PATH points
+// at a stale or pre-Phase 2 binary — exactly the dogfood failure
+// observed in act-abbf4b.
+//
+// The boundary is the installed hook file content: the hook line
+// `nohup <ACT_BIN> remote sync ... &` must contain whatever
+// resolveActPath / os.Executable returns at install time, NOT the bare
+// literal `act`. Under `go test`, os.Executable returns the test binary
+// path so the assertion compares against that.
+func TestRemoteEnable_HookContainsAbsoluteActPath(t *testing.T) {
+	host := newRemoteFixture(t)
+	if _, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: host}); code != 0 {
+		t.Fatalf("enable: code=%d", code)
+	}
+
+	// Determine what resolveActBinPath would have returned for this
+	// process. We replicate the same os.Executable + EvalSymlinks
+	// shape rather than calling resolveActBinPath directly so the test
+	// would catch a refactor that bypassed the canonicalisation.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	resolvedExe, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		// Match the fallback in resolveActBinPath.
+		resolvedExe = exe
+	}
+	if !filepath.IsAbs(resolvedExe) {
+		t.Fatalf("expected absolute path from os.Executable, got %q", resolvedExe)
+	}
+
+	hookPath := filepath.Join(host, ".act", ".git", "hooks", "post-receive")
+	body, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read hook: %v", err)
+	}
+
+	if !strings.Contains(string(body), resolvedExe) {
+		t.Errorf("hook body does not embed running binary path %q\nbody:\n%s", resolvedExe, body)
+	}
+	// Anti-test: the bare-act invocation must NOT appear as an actual
+	// command line in the hook. Match against a line-start "nohup act "
+	// (newline + literal) so comment references to the historical
+	// bare-act form (e.g. backtick-quoted in the template's doc block)
+	// don't cause a false positive.
+	if strings.Contains(string(body), "\nnohup act ") {
+		t.Errorf("hook body still uses bare `act` after nohup; absolute-path embedding bypassed:\n%s", body)
+	}
+	// The {{ACT_BIN}} placeholder must have been substituted.
+	if strings.Contains(string(body), "{{ACT_BIN}}") {
+		t.Errorf("hook body still contains unrendered {{ACT_BIN}} placeholder:\n%s", body)
+	}
+	// The expected rendered invocation line.
+	wantLine := "nohup " + resolvedExe + " remote sync"
+	if !strings.Contains(string(body), wantLine) {
+		t.Errorf("hook body missing rendered invocation %q\nbody:\n%s", wantLine, body)
+	}
+}
+
+// TestRemoteEnable_IdempotentHookContent asserts that running
+// `act remote enable` twice produces identical hook content (assuming
+// the binary path is unchanged). This is the act-528547 acceptance
+// criterion that re-enable is the supported refresh path.
+func TestRemoteEnable_IdempotentHookContent(t *testing.T) {
+	host := newRemoteFixture(t)
+	if _, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: host}); code != 0 {
+		t.Fatalf("first enable: code=%d", code)
+	}
+	hookPath := filepath.Join(host, ".act", ".git", "hooks", "post-receive")
+	body1, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read hook (first): %v", err)
+	}
+	if _, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: host}); code != 0 {
+		t.Fatalf("second enable: code=%d", code)
+	}
+	body2, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read hook (second): %v", err)
+	}
+	if string(body1) != string(body2) {
+		t.Errorf("hook body changed across two enables (non-idempotent):\nfirst:\n%s\nsecond:\n%s", body1, body2)
+	}
+}
+
 // TestRunRemote_Enable_WritesAllScalarKeys covers the full set of
 // scalar keys, not just role+receive. These are all listed in the
 // acceptance criteria as "set config keys: ...". A single test
