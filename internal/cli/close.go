@@ -445,13 +445,20 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}
 			committed = true
 
-			if opts.Push {
-				if err := gops.Push(); err != nil {
-					return CloseErrorOutput{
-						Error:   "push_failed",
-						Message: err.Error(),
-					}, 1
-				}
+			// Phase 2 ticket 3a: synchronous publish on every close that
+			// commits. If origin is configured, AutoPushAfterCommit invokes
+			// PushWithRetry. On *PushExhaustedError we surface envelope
+			// `push_exhausted` (exit 4 per spec §error-envelope) with
+			// details.retry_count / shallow_unshallow_attempted populated
+			// from the structured error. On ErrFetchFailed (and only that
+			// sentinel) we surface envelope `remote_unreachable` (also exit
+			// 4). Other push errors surface as the legacy `push_failed`
+			// (exit 1) so the test suite for pre-3a behavior keeps passing.
+			// The commit has already landed; on push failure we do NOT roll
+			// it back — the close op is on disk locally and recoverable
+			// via the harvest path.
+			if err := gops.AutoPushAfterCommit(); err != nil {
+				return closeErrorForPushFailure(err)
 			}
 		} else {
 			// Close op is staged; the agent's next `git commit -am` will
@@ -529,4 +536,43 @@ func FormatCloseHuman(res CloseResult) string {
 // FormatCloseAlreadyClosedHuman renders a CloseAlreadyClosed envelope.
 func FormatCloseAlreadyClosedHuman(res CloseAlreadyClosed) string {
 	return fmt.Sprintf("Already closed: %s\n", res.ID)
+}
+
+// closeErrorForPushFailure classifies a push failure returned by
+// AutoPushAfterCommit and produces the right CloseErrorOutput shape +
+// exit code. *PushExhaustedError → envelope `push_exhausted` with
+// details.retry_count and details.shallow_unshallow_attempted (exit 4
+// per spec §error-envelope). gitops.ErrFetchFailed → `remote_unreachable`
+// (also exit 4). Everything else → legacy `push_failed` (exit 1) so the
+// pre-Phase-2 behavior of "any other push class is a generic failure"
+// stays compatible.
+func closeErrorForPushFailure(err error) (any, int) {
+	var pe *gitops.PushExhaustedError
+	if errors.As(err, &pe) {
+		details := map[string]any{
+			"retry_count":                 pe.RetryCount,
+			"shallow_unshallow_attempted": pe.ShallowUnshallowAttempted,
+		}
+		if pe.LastError != nil {
+			details["last_error"] = pe.LastError.Error()
+		}
+		return CloseErrorOutput{
+			Error:   ErrPushExhausted,
+			Message: fmt.Sprintf("push retries exhausted after %d attempts; last error: %v", pe.RetryCount, pe.LastError),
+			Details: details,
+		}, 4
+	}
+	if errors.Is(err, gitops.ErrFetchFailed) {
+		return CloseErrorOutput{
+			Error:   ErrRemoteUnreachable,
+			Message: fmt.Sprintf("git fetch failed: %v", err),
+			Details: map[string]any{
+				"stderr_tail": CaptureStderrTail(err.Error()),
+			},
+		}, 4
+	}
+	return CloseErrorOutput{
+		Error:   "push_failed",
+		Message: err.Error(),
+	}, 1
 }

@@ -207,11 +207,18 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		return fmt.Errorf("cli: commit: %w", err)
 	}
 
-	// Step 4: optional push.
-	if opts.Push {
-		if err := gops.Push(); err != nil {
-			return fmt.Errorf("cli: push: %w", err)
-		}
+	// Phase 2 ticket 3a: synchronous publish. If origin is configured we
+	// invoke PushWithRetry; ErrPushExhausted and ErrFetchFailed bubble up
+	// for the caller to translate into envelopes `push_exhausted` /
+	// `remote_unreachable` (exit 4 per spec §error-envelope). The local
+	// op file is intentionally left on disk on push failure — the commit
+	// succeeded, so the op is recoverable via the harvest path even if
+	// the publish step didn't. The legacy `--push` flag is now redundant
+	// when origin is set (auto-publish covers it); we keep the field on
+	// WriteOpts for callers that haven't migrated, but the publish
+	// happens regardless of opts.Push.
+	if err := gops.AutoPushAfterCommit(); err != nil {
+		return fmt.Errorf("cli: push: %w", err)
 	}
 	return nil
 }
@@ -306,11 +313,12 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 		return fmt.Errorf("cli: commit: %w", err)
 	}
 
-	// Step 5: optional push (after successful commit).
-	if opts.Push {
-		if err := gops.Push(); err != nil {
-			return fmt.Errorf("cli: push: %w", err)
-		}
+	// Step 5: Phase 2 ticket 3a synchronous publish. See WriteOpAndAutoCommit
+	// above for the rationale; the rollback path is intentionally NOT
+	// triggered on push failure because the commit landed locally and the
+	// op is recoverable via harvest.
+	if err := gops.AutoPushAfterCommit(); err != nil {
+		return fmt.Errorf("cli: push: %w", err)
 	}
 	return nil
 }

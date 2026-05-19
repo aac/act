@@ -510,6 +510,8 @@ Precedence rules:
 3. `--verify` + `--no-commit` is silently a no-op (no commit happens, hooks irrelevant).
 4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set.
 
+Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony. On retry exhaustion the command exits 4 with envelope `push_exhausted`; on a non-recoverable fetch failure during the retry loop, the command exits 4 with envelope `remote_unreachable`. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path.
+
 ### Universal exit codes
 
 - `0` — success.
