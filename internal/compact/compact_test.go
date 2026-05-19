@@ -384,6 +384,49 @@ func TestCompact_CompactOpRecordsTreeHash(t *testing.T) {
 	}
 }
 
+// TestCompactFilename_NoColon asserts that compact tombstone filenames use
+// the NTFS-safe dash-form ISO layout (per act-d5d1ff). Colons in path
+// components break `git checkout` on Windows hosts before any Go code runs,
+// so the time component of compact filenames must use '-' separators in
+// the HH-MM-SS portion. The filename must still parse with op.IsoLayout so
+// the canonical contract stays shared with op writers (act-2f3d).
+func TestCompactFilename_NoColon(t *testing.T) {
+	tmp := t.TempDir()
+	rootOps := filepath.Join(tmp, ".act", "ops")
+	issue := "act-d5d1ff"
+	seedIssue(t, rootOps, issue, 60, 1700000000000, "d5d1ffd5")
+
+	fc := &fakeCommitter{}
+	if _, err := Run(tmp, Options{}, fc); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var compactName string
+	_ = filepath.Walk(filepath.Join(rootOps, issue), func(path string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(info.Name(), "-compact.json") {
+			compactName = info.Name()
+		}
+		return nil
+	})
+	if compactName == "" {
+		t.Fatal("no compact tombstone file found")
+	}
+	if strings.Contains(compactName, ":") {
+		t.Fatalf("compact tombstone filename contains ':' (NTFS-unsafe): %q", compactName)
+	}
+
+	// The time component must parse with op.IsoLayout (the canonical
+	// dash-form layout). The filename shape is `<iso>-<hash>-compact.json`;
+	// the leading 24-char prefix is the time component.
+	if len(compactName) < len(op.IsoLayout) {
+		t.Fatalf("compact filename %q shorter than expected layout", compactName)
+	}
+	isoPart := compactName[:len(op.IsoLayout)]
+	if _, err := time.ParseInLocation(op.IsoLayout, isoPart, time.UTC); err != nil {
+		t.Errorf("compact filename time component %q does not parse with op.IsoLayout: %v", isoPart, err)
+	}
+}
+
 // TestCompact_NoActDir: a tempdir without .act/ should be a no-op.
 func TestCompact_NoActDir(t *testing.T) {
 	tmp := t.TempDir()
