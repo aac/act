@@ -147,6 +147,8 @@ func main() {
 		os.Exit(runBootstrapWorker(args))
 	case "harvest":
 		os.Exit(runHarvest(args))
+	case "remote":
+		os.Exit(runRemote(args))
 	case "-h", "--help":
 		usage()
 		os.Exit(0)
@@ -160,7 +162,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest, remote")
 }
 
 // unknownSubcommandMsg returns the canonical "you typed a subcommand
