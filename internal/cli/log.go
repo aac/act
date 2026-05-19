@@ -16,9 +16,34 @@ import (
 
 // LogResult is the success-shape returned by RunLog. It is JSON-serialisable
 // and is the same shape that the human renderer consumes.
+//
+// When the caller scopes the log to a single issue (positional id or
+// --by-issue), ID is the resolved full id. When the caller asked for the
+// full op stream across all issues (no id, no --by-issue), ID is the
+// empty string.
 type LogResult struct {
 	ID  string        `json:"id"`
 	Ops []op.Envelope `json:"ops"`
+}
+
+// LogOptions carries the filter knobs for RunLog. All fields are optional;
+// the zero value reproduces the historical "scope by id only" behaviour
+// when ByIssue is also empty (the caller must still supply at least one
+// of: positional id via ByIssue, or one of the cross-issue filters).
+//
+// Filter semantics:
+//   - Since: only ops with HLC.Wall >= now-Since are returned. Zero means
+//     no time filter.
+//   - ByIssue: full id or unique prefix; resolved against the on-disk
+//     issue universe. Empty means "all issues".
+//   - Types: op types to include. Empty means "all types". The strings
+//     here are the user-facing names — friendly aliases (update, dep_add,
+//     delete) are translated to spec names (update_field, add_dep,
+//     tombstone) by normalizeOpTypeFilter before matching.
+type LogOptions struct {
+	Since   time.Duration
+	ByIssue string
+	Types   []string
 }
 
 // LogErrorOutput is the structured shape returned to the caller when log
@@ -32,16 +57,44 @@ type LogErrorOutput struct {
 	Candidates []string       `json:"-"`
 }
 
-// RunLog implements `act log <id>`. It walks `.act/ops/<id>/<yyyy-mm>/*.json`
-// for the resolved id, parses each op envelope, sorts globally by HLC then op
-// hash, and returns the chronological op stream.
+// RunLog implements `act log [<id>] [--since D] [--by-issue ID] [--type T,T]`.
+// It walks the on-disk op tree, parses envelopes, sorts globally by HLC
+// then op hash, and returns the chronological op stream after applying
+// any active filters.
+//
+// Scoping precedence:
+//   - If idOrPrefix is non-empty, it is treated as the issue scope
+//     (equivalent to --by-issue). Passing both a positional id and a
+//     non-empty opts.ByIssue is a usage error.
+//   - If only opts.ByIssue is set, the log is scoped to that issue.
+//   - Otherwise the log spans every issue under .act/ops/ and the
+//     LogResult.ID field is left empty.
 //
 // Returns:
 //   - output: LogResult on success, LogErrorOutput on failure.
-//   - exitCode: 0 success; 2 ambiguous prefix (usage); 3 missing .act/ or
-//     unknown id.
+//   - exitCode: 0 success; 2 ambiguous prefix or conflicting scope
+//     (usage); 3 missing .act/ or unknown id.
 func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int) {
+	return RunLogOpts(repoRoot, idOrPrefix, asJSON, LogOptions{})
+}
+
+// RunLogOpts is the options-bearing form of RunLog. Existing callers
+// that don't need filters keep the historical RunLog signature; the new
+// flag plumbing in cmd/act/main.go reaches RunLogOpts directly.
+func RunLogOpts(repoRoot, idOrPrefix string, asJSON bool, opts LogOptions) (output any, exitCode int) {
 	_ = asJSON // reserved: asJSON shapes the human renderer in main.go, not here.
+
+	// Conflicting scope: positional id + --by-issue. Pick one.
+	if idOrPrefix != "" && opts.ByIssue != "" && idOrPrefix != opts.ByIssue {
+		return LogErrorOutput{
+			Error:   "bad_flag",
+			Message: "act log: pass either a positional <id> or --by-issue, not both",
+		}, 2
+	}
+	scope := idOrPrefix
+	if scope == "" {
+		scope = opts.ByIssue
+	}
 
 	actDir := filepath.Join(repoRoot, ".act")
 	if _, err := os.Stat(actDir); err != nil {
@@ -71,55 +124,167 @@ func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int)
 		}, 3
 	}
 
-	full, ambiguous, found := ids.ResolvePrefix(allIDs, idOrPrefix)
-	if ambiguous {
-		candidates := ambiguousCandidates(allIDs, idOrPrefix)
-		// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
+	// Normalise the op-type filter once. Empty list means "all types".
+	typeFilter, badType := normalizeOpTypeFilter(opts.Types)
+	if badType != "" {
 		return LogErrorOutput{
-			Error:   "id_ambiguous",
-			Message: fmt.Sprintf("act log: prefix %q matches %d issues", idOrPrefix, len(candidates)),
-			Details: map[string]any{
-				"prefix":     idOrPrefix,
-				"candidates": candidates,
-			},
-			Candidates: candidates,
+			Error:   "bad_flag",
+			Message: fmt.Sprintf("act log: --type: unknown op type %q", badType),
+			Details: map[string]any{"value": badType},
 		}, 2
 	}
-	if !found {
-		return LogErrorOutput{
-			Error:   "issue_not_found",
-			Message: fmt.Sprintf("act log: no issue matches %q", idOrPrefix),
-			Details: map[string]any{"query": idOrPrefix},
-		}, 3
+
+	// Time-window cutoff in HLC wall (ms since epoch). Zero means
+	// "no time filter".
+	var sinceMs int64
+	if opts.Since > 0 {
+		sinceMs = time.Now().Add(-opts.Since).UnixMilli()
 	}
 
-	envs, err := readIssueOps(opsDir, full)
-	if err != nil {
-		return LogErrorOutput{
-			Error:   "ops_read_failed",
-			Message: err.Error(),
-		}, 3
+	// Issue scope: either one resolved id (when scope is non-empty) or
+	// every id on disk.
+	var scopeIDs []string
+	resolvedID := ""
+	if scope != "" {
+		full, ambiguous, found := ids.ResolvePrefix(allIDs, scope)
+		if ambiguous {
+			candidates := ambiguousCandidates(allIDs, scope)
+			// Exit 2 (usage): see resolve_helpers.go for the spec rationale.
+			return LogErrorOutput{
+				Error:   "id_ambiguous",
+				Message: fmt.Sprintf("act log: prefix %q matches %d issues", scope, len(candidates)),
+				Details: map[string]any{
+					"prefix":     scope,
+					"candidates": candidates,
+				},
+				Candidates: candidates,
+			}, 2
+		}
+		if !found {
+			return LogErrorOutput{
+				Error:   "issue_not_found",
+				Message: fmt.Sprintf("act log: no issue matches %q", scope),
+				Details: map[string]any{"query": scope},
+			}, 3
+		}
+		scopeIDs = []string{full}
+		resolvedID = full
+	} else {
+		scopeIDs = allIDs
 	}
 
+	var envs []loggedOp
+	for _, id := range scopeIDs {
+		got, rerr := readIssueOps(opsDir, id)
+		if rerr != nil {
+			return LogErrorOutput{
+				Error:   "ops_read_failed",
+				Message: rerr.Error(),
+			}, 3
+		}
+		envs = append(envs, got...)
+	}
+
+	envs = applyLogFilters(envs, sinceMs, typeFilter)
 	sortLogOps(envs)
-	return LogResult{ID: full, Ops: envelopesOnly(envs)}, 0
+	return LogResult{ID: resolvedID, Ops: envelopesOnly(envs)}, 0
+}
+
+// applyLogFilters returns the subset of envs that pass the active
+// filters. sinceMs == 0 disables the time filter; an empty typeFilter
+// disables the op-type filter. Both filters AND together when both are
+// set.
+func applyLogFilters(envs []loggedOp, sinceMs int64, typeFilter map[string]bool) []loggedOp {
+	if sinceMs == 0 && len(typeFilter) == 0 {
+		return envs
+	}
+	out := envs[:0]
+	for _, e := range envs {
+		if sinceMs != 0 && e.env.HLC.Wall < sinceMs {
+			continue
+		}
+		if len(typeFilter) != 0 && !typeFilter[e.env.OpType] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// opTypeAliases maps user-friendly names to the spec op_type strings.
+// The ticket (act-f800) names update / dep_add / delete in --help; the
+// spec uses update_field / add_dep / tombstone. We accept either form.
+var opTypeAliases = map[string]string{
+	"update":     "update_field",
+	"dep_add":    "add_dep",
+	"dep_remove": "remove_dep",
+	"delete":     "tombstone",
+}
+
+// normalizeOpTypeFilter turns the raw --type list (after comma-splitting
+// at the flag layer) into a set keyed by spec op_type. Aliases are
+// resolved; an unknown name is returned as the second value so the
+// caller can shape a bad_flag error envelope. Empty input returns an
+// empty (nil) set, meaning "no filter".
+func normalizeOpTypeFilter(raw []string) (map[string]bool, string) {
+	if len(raw) == 0 {
+		return nil, ""
+	}
+	out := make(map[string]bool, len(raw))
+	for _, r := range raw {
+		t := strings.ToLower(strings.TrimSpace(r))
+		if t == "" {
+			continue
+		}
+		if alias, ok := opTypeAliases[t]; ok {
+			t = alias
+		}
+		if !op.ValidOpTypes[t] {
+			return nil, r
+		}
+		out[t] = true
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
 }
 
 // FormatLogHuman renders a LogResult as the human-friendly text form: one line
 // per op with `<RFC3339Millis wall> <op-type> <8hex-hash> [issue=<short>]`,
 // followed by a count line. Returns the multi-line string with a trailing
 // newline. Callers print directly to stdout.
+//
+// When the LogResult spans multiple issues (res.ID == ""), the per-line
+// `issue=<short>` field is computed per envelope from the union of all
+// issue ids in the result so prefixes stay unambiguous.
 func FormatLogHuman(res LogResult) string {
-	shortByID := ids.ShortestUniquePrefixes([]string{res.ID})
-	short := shortByID[res.ID]
-	if short == "" {
-		short = res.ID
+	shortByID := map[string]string{}
+	if res.ID != "" {
+		shortByID = ids.ShortestUniquePrefixes([]string{res.ID})
+	} else {
+		seen := map[string]bool{}
+		var all []string
+		for _, env := range res.Ops {
+			if seen[env.IssueID] {
+				continue
+			}
+			seen[env.IssueID] = true
+			all = append(all, env.IssueID)
+		}
+		if len(all) > 0 {
+			shortByID = ids.ShortestUniquePrefixes(all)
+		}
 	}
 	var b strings.Builder
 	for _, env := range res.Ops {
 		hash, err := env.Hash()
 		if err != nil {
 			hash = "????????"
+		}
+		short := shortByID[env.IssueID]
+		if short == "" {
+			short = env.IssueID
 		}
 		wall := time.UnixMilli(env.HLC.Wall).UTC().Format(rfc3339Millis)
 		fmt.Fprintf(&b, "%s %s %s [issue=%s]\n", wall, env.OpType, hash, short)

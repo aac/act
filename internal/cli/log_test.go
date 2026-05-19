@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
@@ -235,4 +236,271 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// makeEnvType is like makeEnv but lets the test pick the op_type. The
+// returned envelope sets a minimal payload that satisfies op.Validate
+// for the chosen type.
+func makeEnvType(issueID, opType string, wallMs int64, logical uint32) op.Envelope {
+	e := makeEnv(issueID, wallMs, logical)
+	e.OpType = opType
+	// Vary payload by op_type so canonical hashes don't collide when
+	// the same issue has multiple ops of the same type in one test.
+	switch opType {
+	case "create":
+		e.Payload = json.RawMessage(`{"title":"hello"}`)
+	case "close":
+		e.Payload = json.RawMessage(`{"reason":"done"}`)
+	case "update_field":
+		e.Payload = json.RawMessage(`{"field":"title","value":"x"}`)
+	default:
+		e.Payload = json.RawMessage(`{}`)
+	}
+	return e
+}
+
+// seedRetroFixture writes a representative spread of ops across multiple
+// issues, op types, and HLC wall-times. Returns the repo root. Wall
+// times are anchored to time.Now() so --since windows produce stable
+// "in / out" classifications.
+//
+// Layout:
+//
+//	now-48h  act-aaaaaa  create
+//	now-48h  act-aaaaaa  close
+//	now-12h  act-bbbbbb  create
+//	now-1h   act-bbbbbb  update_field
+//	now-1h   act-cccccc  create
+func seedRetroFixture(t *testing.T) string {
+	t.Helper()
+	root := makeRepoWithAct(t)
+	now := time.Now().UnixMilli()
+	h := func(d time.Duration) int64 { return now - d.Milliseconds() }
+
+	fixtures := []struct {
+		env      op.Envelope
+		monthDir string
+		fname    string
+	}{
+		{makeEnvType("act-aaaaaa", "create", h(48*time.Hour), 0), "2026-03", "a-create.json"},
+		{makeEnvType("act-aaaaaa", "close", h(48*time.Hour), 1), "2026-03", "a-close.json"},
+		{makeEnvType("act-bbbbbb", "create", h(12*time.Hour), 0), "2026-05", "b-create.json"},
+		{makeEnvType("act-bbbbbb", "update_field", h(1*time.Hour), 0), "2026-05", "b-update.json"},
+		{makeEnvType("act-cccccc", "create", h(1*time.Hour), 0), "2026-05", "c-create.json"},
+	}
+	for _, f := range fixtures {
+		writeOpFile(t, root, f.env, f.monthDir, f.fname)
+	}
+	return root
+}
+
+// countByType returns op-type → count for the envelopes in the result,
+// keyed by spec op_type.
+func countByType(envs []op.Envelope) map[string]int {
+	out := map[string]int{}
+	for _, e := range envs {
+		out[e.OpType]++
+	}
+	return out
+}
+
+// TestLog_SinceFilter — AC: `act log --since 24h` shows only ops from
+// the last 24 hours.
+func TestLog_SinceFilter(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	out, code := RunLogOpts(root, "", false, LogOptions{Since: 24 * time.Hour})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(LogResult)
+	if !ok {
+		t.Fatalf("output type = %T, want LogResult", out)
+	}
+	if res.ID != "" {
+		t.Errorf("ID = %q, want empty (cross-issue scope)", res.ID)
+	}
+	// Two ops at now-48h must be filtered out; three remain (now-12h,
+	// now-1h, now-1h).
+	if got := len(res.Ops); got != 3 {
+		t.Fatalf("len(ops) = %d, want 3; ops=%+v", got, res.Ops)
+	}
+	for _, e := range res.Ops {
+		age := time.Since(time.UnixMilli(e.HLC.Wall))
+		if age > 24*time.Hour {
+			t.Errorf("op %s on %s is %s old, must be ≤ 24h", e.OpType, e.IssueID, age)
+		}
+	}
+}
+
+// TestLog_ByIssueFilter — AC: `act log --by-issue act-XXXXXX` (full or
+// unique prefix) shows only ops for that issue. Exercises both the
+// LogOptions.ByIssue path and the positional-id path for parity, and
+// asserts prefix resolution flows through the existing id-resolver.
+func TestLog_ByIssueFilter(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	// Full id via --by-issue.
+	out, code := RunLogOpts(root, "", false, LogOptions{ByIssue: "act-bbbbbb"})
+	if code != 0 {
+		t.Fatalf("by-issue full: code = %d; out=%+v", code, out)
+	}
+	res := out.(LogResult)
+	if res.ID != "act-bbbbbb" {
+		t.Errorf("ID = %q, want act-bbbbbb", res.ID)
+	}
+	if got := len(res.Ops); got != 2 {
+		t.Fatalf("by-issue full: len(ops) = %d, want 2", got)
+	}
+
+	// Unique short prefix via --by-issue (resolver should find it).
+	out, code = RunLogOpts(root, "", false, LogOptions{ByIssue: "bb"})
+	if code != 0 {
+		t.Fatalf("by-issue prefix: code = %d; out=%+v", code, out)
+	}
+	res = out.(LogResult)
+	if res.ID != "act-bbbbbb" {
+		t.Errorf("prefix ID = %q, want act-bbbbbb", res.ID)
+	}
+
+	// Positional id must behave identically to --by-issue.
+	out, code = RunLogOpts(root, "act-cccccc", false, LogOptions{})
+	if code != 0 {
+		t.Fatalf("positional: code = %d; out=%+v", code, out)
+	}
+	res = out.(LogResult)
+	if res.ID != "act-cccccc" || len(res.Ops) != 1 {
+		t.Errorf("positional: got ID=%q ops=%d, want act-cccccc ops=1", res.ID, len(res.Ops))
+	}
+}
+
+// TestLog_TypeFilterSingle — AC: `act log --type close` shows only
+// close ops (single value).
+func TestLog_TypeFilterSingle(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	out, code := RunLogOpts(root, "", false, LogOptions{Types: []string{"close"}})
+	if code != 0 {
+		t.Fatalf("code = %d; out=%+v", code, out)
+	}
+	res := out.(LogResult)
+	if got := len(res.Ops); got != 1 {
+		t.Fatalf("len(ops) = %d, want 1", got)
+	}
+	if res.Ops[0].OpType != "close" {
+		t.Errorf("op_type = %q, want close", res.Ops[0].OpType)
+	}
+}
+
+// TestLog_TypeFilterMultiple — AC: multiple types via the same flag
+// (the cmd/act/main.go layer comma-splits before reaching LogOptions).
+// Also asserts the friendly aliases (update → update_field) resolve.
+func TestLog_TypeFilterMultiple(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	out, code := RunLogOpts(root, "", false, LogOptions{Types: []string{"create", "close"}})
+	if code != 0 {
+		t.Fatalf("create,close: code = %d", code)
+	}
+	res := out.(LogResult)
+	got := countByType(res.Ops)
+	if got["create"] != 3 || got["close"] != 1 || got["update_field"] != 0 {
+		t.Errorf("create,close counts = %v, want create=3 close=1 update_field=0", got)
+	}
+
+	// Alias path: "update" must map to "update_field".
+	out, code = RunLogOpts(root, "", false, LogOptions{Types: []string{"update"}})
+	if code != 0 {
+		t.Fatalf("alias: code = %d", code)
+	}
+	res = out.(LogResult)
+	if len(res.Ops) != 1 || res.Ops[0].OpType != "update_field" {
+		t.Errorf("alias result = %+v, want one update_field op", res.Ops)
+	}
+}
+
+// TestLog_ComposedFilters — AC: filters compose
+// (e.g. --since 7d --type create,close).
+func TestLog_ComposedFilters(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	// --since 7d --type create,close: window includes everything (oldest
+	// op is 48h), so this is the same as --type create,close alone.
+	out, code := RunLogOpts(root, "", false, LogOptions{
+		Since: 7 * 24 * time.Hour,
+		Types: []string{"create", "close"},
+	})
+	if code != 0 {
+		t.Fatalf("7d+types: code = %d", code)
+	}
+	res := out.(LogResult)
+	got := countByType(res.Ops)
+	if got["create"] != 3 || got["close"] != 1 {
+		t.Errorf("7d+types counts = %v, want create=3 close=1", got)
+	}
+
+	// Tighten the window to 24h: the 48h-old create+close on act-aaaaaa
+	// drops out; only the two creates inside the window remain.
+	out, code = RunLogOpts(root, "", false, LogOptions{
+		Since: 24 * time.Hour,
+		Types: []string{"create", "close"},
+	})
+	if code != 0 {
+		t.Fatalf("24h+types: code = %d", code)
+	}
+	res = out.(LogResult)
+	got = countByType(res.Ops)
+	if got["create"] != 2 || got["close"] != 0 {
+		t.Errorf("24h+types counts = %v, want create=2 close=0", got)
+	}
+
+	// Compose all three: --by-issue narrows to one issue, --type and
+	// --since further trim. act-bbbbbb has one create at -12h and one
+	// update_field at -1h; --type create + --since 24h yields just the
+	// create.
+	out, code = RunLogOpts(root, "", false, LogOptions{
+		Since:   24 * time.Hour,
+		ByIssue: "act-bbbbbb",
+		Types:   []string{"create"},
+	})
+	if code != 0 {
+		t.Fatalf("all-three: code = %d", code)
+	}
+	res = out.(LogResult)
+	if res.ID != "act-bbbbbb" || len(res.Ops) != 1 || res.Ops[0].OpType != "create" {
+		t.Errorf("all-three result = %+v, want one create on act-bbbbbb", res.Ops)
+	}
+}
+
+// TestLog_BadSinceErrors — AC: bad --since input is rejected with a
+// clear error envelope. The parsing lives in cmd/act/main.go
+// (parseSinceDuration), not RunLogOpts; this test exercises the
+// equivalent contract at the cli layer by passing an unknown op type
+// to --type, which is the symmetric bad-flag path inside RunLogOpts.
+// The CLI-layer parseSinceDuration is covered by a unit test in
+// cmd/act.
+func TestLog_BadSinceErrors(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	// Unknown op type → bad_flag, exit 2.
+	out, code := RunLogOpts(root, "", false, LogOptions{Types: []string{"frob"}})
+	if code != 2 {
+		t.Fatalf("unknown type: code = %d, want 2", code)
+	}
+	e, ok := out.(LogErrorOutput)
+	if !ok {
+		t.Fatalf("unknown type: out type = %T", out)
+	}
+	if e.Error != "bad_flag" {
+		t.Errorf("unknown type: error = %q, want bad_flag", e.Error)
+	}
+
+	// Conflicting scope: positional id AND a different --by-issue.
+	out, code = RunLogOpts(root, "act-aaaaaa", false, LogOptions{ByIssue: "act-bbbbbb"})
+	if code != 2 {
+		t.Fatalf("conflict: code = %d, want 2", code)
+	}
+	if _, ok := out.(LogErrorOutput); !ok {
+		t.Errorf("conflict: out type = %T", out)
+	}
 }

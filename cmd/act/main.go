@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aac/act/internal/cli"
 	_ "github.com/aac/act/internal/fold" // registers op_version=1 in the op-package dispatch registry
@@ -447,11 +448,17 @@ func getGitEmail() string {
 	return strings.TrimSpace(string(out))
 }
 
-// runLog dispatches `act log <id>`. It resolves the repo root from cwd, then
-// delegates to RunLog. Output rendering branches on --json.
+// runLog dispatches `act log [<id>] [--since D] [--by-issue ID] [--type T,T]`.
+// It resolves the repo root from cwd, then delegates to RunLogOpts. Output
+// rendering branches on --json. The positional <id> is now optional: omit
+// it (and --by-issue) to walk every issue's op stream, e.g. paired with
+// --since for a time-window retrospective across the whole backlog.
 func runLog(args []string) int {
 	fs := flag.NewFlagSet("log", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	since := fs.String("since", "", "only include ops newer than this duration (e.g. 24h, 7d, 30m); prefix ok")
+	byIssue := fs.String("by-issue", "", "only include ops for this issue id (full or unique prefix)")
+	typeFlag := fs.String("type", "", "only include ops of these types (comma-separated, e.g. create,close)")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -459,11 +466,28 @@ func runLog(args []string) int {
 	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
-	if fs.NArg() < 1 {
-		emitBadFlag(*asJSON, "act log: usage: act log <id> [--json]")
+
+	idArg := ""
+	if fs.NArg() >= 1 {
+		idArg = fs.Arg(0)
+	}
+	if idArg == "" && *byIssue == "" && *since == "" && *typeFlag == "" {
+		emitBadFlag(*asJSON, "act log: usage: act log [<id>] [--since D] [--by-issue ID] [--type T[,T...]] [--json]")
 		return 2
 	}
-	idArg := fs.Arg(0)
+
+	opts := cli.LogOptions{ByIssue: *byIssue}
+	if *since != "" {
+		d, perr := parseSinceDuration(*since)
+		if perr != nil {
+			emitBadFlag(*asJSON, fmt.Sprintf("act log: --since %q: %v", *since, perr))
+			return 2
+		}
+		opts.Since = d
+	}
+	if *typeFlag != "" {
+		opts.Types = splitCSVArg(*typeFlag)
+	}
 
 	root, err := findRepoRoot()
 	if err != nil {
@@ -474,7 +498,7 @@ func runLog(args []string) int {
 		return 3
 	}
 
-	out, code := cli.RunLog(root, idArg, *asJSON)
+	out, code := cli.RunLogOpts(root, idArg, *asJSON, opts)
 	if code != 0 {
 		m, _ := toMap(out)
 		emitLogError(*asJSON, m)
@@ -505,6 +529,61 @@ func runLog(args []string) int {
 // shared emitEnvelope so every CLI surface produces the same shape.
 func emitLogError(asJSON bool, payload map[string]any) {
 	emitEnvelope(asJSON, payload)
+}
+
+// parseSinceDuration parses a --since value into a time.Duration. It
+// accepts everything time.ParseDuration accepts (ns, us/µs, ms, s, m,
+// h) plus the bare "d" suffix for days (e.g. "7d") which is common in
+// agent prompts and retrospective windows. A "d" form is translated to
+// the equivalent hours; mixed units like "1d12h" are NOT supported (the
+// expected use is single-token coarse windows — go's stdlib doesn't
+// know "d" and we don't expand to a full parser for it).
+func parseSinceDuration(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if strings.HasSuffix(s, "d") {
+		nStr := strings.TrimSuffix(s, "d")
+		// Disallow further unit chars; "1d2h" is rejected.
+		if nStr == "" {
+			return 0, fmt.Errorf("missing number before 'd'")
+		}
+		hours := nStr + "h"
+		// time.ParseDuration accepts integers and floats in "h".
+		d, err := time.ParseDuration(hours)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration: %v", err)
+		}
+		return d * 24, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration: %v", err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	return d, nil
+}
+
+// splitCSVArg splits a comma-separated flag value, trimming whitespace
+// and dropping empty fields. Mirrors internal/cli.splitCSV but lives in
+// main so the CLI shell doesn't reach into a private helper.
+func splitCSVArg(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // runSearch dispatches `act search <query>`. The repo root is resolved
