@@ -31,6 +31,11 @@ type ShowOptions struct {
 	// IncludeOps, when true, includes the HLC-sorted op stream alongside
 	// the rendered snapshot under the `ops` key.
 	IncludeOps bool
+	// Fresh, when true, forces the read-path cache layer to fetch+rebase
+	// before reading state, regardless of FETCH_HEAD freshness (Phase 2
+	// ticket 5). Not surfaced as a CLI flag on `act show` in this phase;
+	// callers wire it programmatically or rely on ACT_DISPATCH_MODE.
+	Fresh bool
 }
 
 // ShowResult is the success-shape returned by RunShow on a live (non-
@@ -102,6 +107,10 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 			Message: fmt.Sprintf("act show: stat %s: %v", paths.Root, err),
 		}, 3
 	}
+
+	// Phase 2 ticket 5: read-path cache check (no flag wiring on show
+	// yet; bypass via ACT_DISPATCH_MODE=1 or the option is supported).
+	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
 
 	// Step 2: resolve id against known full ids on disk.
 	allIDs, err := listIssueIDs(paths.Ops)

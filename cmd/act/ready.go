@@ -22,6 +22,14 @@ func runReady(args []string) int {
 	mine := fs.Bool("mine", false, "filter to issues already assigned to the calling node")
 	as := fs.String("as", "", "override identity for --mine; defaults to .act/config.json node_id")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	// Phase 2 ticket 5: --fresh forces a fetch+rebase of .act/.git
+	// before reading state. --no-cache is a flag-for-flag alias with
+	// dispatch-identical behavior; the dual surface exists so agents
+	// reaching for the "no cache" idiom find a working flag without
+	// having to learn act's preferred spelling. The cache check is also
+	// bypassed by ACT_DISPATCH_MODE=1 in the environment.
+	fresh := fs.Bool("fresh", false, "bypass the read-path TTL cache and fetch+rebase before reading")
+	noCache := fs.Bool("no-cache", false, "alias for --fresh: bypass the read-path TTL cache and fetch+rebase")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -64,6 +72,7 @@ func runReady(args []string) int {
 		Limit:          *limit,
 		AssigneeFilter: assigneeFilter,
 		AsJSON:         *asJSON,
+		Fresh:          *fresh || *noCache,
 	})
 	if code != 0 {
 		m, _ := toMap(out)
