@@ -187,3 +187,84 @@ act doctor --check nested-layout   # verify
 
 If `act doctor --strict` is enabled in the repo's CI, that will pick up
 any partial-migration anomaly automatically going forward.
+
+## Phase 1.5 → Phase 2 cutover
+
+Phase 1.5 runs the dispatcher on copy-based bootstrap: the orchestrator
+seeds each worker's `.act/` with `act bootstrap-worker <path>` and runs
+`act harvest <path>` at teardown. Phase 2 keeps that path as a fallback
+but adds a push-attached delivery channel — workers push ops directly
+to the orchestrator's `.act/.git` during execution and the orchestrator
+replicates to a configured upstream.
+
+### One-time per-project setup
+
+Run on the orchestrator's checkout, once per project:
+
+```
+act remote enable
+```
+
+Writes `act.role=orchestrator` into `.act/.git/config`, sets
+`receive.denyCurrentBranch=updateInstead` so push-into-checked-out-branch
+works, and installs the post-receive hook that invokes `act remote sync`
+on every push.
+
+Optional, for upstream replication:
+
+```
+act remote add-upstream <url>
+```
+
+Wires the upstream remote that the orchestrator's post-receive hook
+syncs to after each re-fold. Refuses public URLs unless `--force-public`
+is passed (see `docs/spec-v2.md` for the `upstream_public` error code).
+
+### Cutover order
+
+1. **Enable on the orchestrator first.** Run `act remote enable` (and
+   optionally `act remote add-upstream`) on the orchestrator's checkout.
+   Existing Phase 1.5 workers continue to operate unchanged — the
+   copy-source bootstrap is still wired and their commits still land
+   via harvest at teardown.
+2. **New dispatches use `--from-remote`.** Future passes seed workers
+   with `act bootstrap-worker --from-remote <url> <path>`. The
+   `<url>` is the orchestrator's `.act/.git` path (or a network URL if
+   you've wired one). Workers push to the orchestrator during
+   execution; no per-cycle harvest is needed.
+3. **Mixed waves are safe.** Phase 1.5 workers (copy-source) and
+   Phase 2 workers (push-attached) can coexist in the same pass. The
+   orchestrator's view converges on the same fold either way.
+
+### Rollback
+
+```
+act remote disable
+```
+
+Removes the post-receive hook file and unsets `act.role`. New workers
+fall back to Phase 1.5 copy-source bootstrap automatically; in-flight
+Phase 2 workers will fail their next push and surface a clean error,
+recoverable by harvesting them via the fallback path. `act remote
+disable` is idempotent — running it twice exits zero both times.
+
+### Common failures and recovery
+
+- `bootstrap_timeout` — the worker's initial clone from `<url>` exceeded
+  the timeout. Extend `act.bootstrapTimeoutSeconds` in
+  `.act/.git/config` (default is conservative for local-disk URLs;
+  remote network URLs may need 30s+).
+- `remote_unreachable` — the worker can't reach the orchestrator's
+  `<url>`. Verify the URL is correct (filesystem path or network), that
+  the orchestrator is up, and that no firewall is dropping the
+  connection. For filesystem URLs, confirm the path exists and the
+  worker process has read access.
+- `target_not_empty` — the worker's `<path>` already has a `.act/`. Use
+  `--force` to overwrite (acceptable when the prior bootstrap failed
+  mid-stream and left a partial tree) or dispatch to a fresh path.
+- `push_exhausted` — surfaced when the worker's commit-time push to
+  the orchestrator retried past the configured budget. Rare; usually
+  means another worker held the receive lock for an unusual length of
+  time. Inspect `.act/.sync-log` on the orchestrator for the
+  contention timeline. The worker's commit is local-only at this point;
+  a subsequent `act harvest <path>` will pick it up.
