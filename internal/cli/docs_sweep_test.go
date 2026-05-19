@@ -461,6 +461,28 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Phase 1.5 → Phase 2 cutover",
 		testName:     "TestDocClaim_MigrationRunbook_Phase2Cutover",
 	},
+	// orchestrator-sync-* (Phase 2 ticket 6b, act-a9a59e): the
+	// orchestrator-write upstream-sync trigger in
+	// internal/gitops/gitops.go fires `act remote sync` in the
+	// background after every successful commit when act.role=
+	// orchestrator. Spec claims: the role-key gate is "act.role=
+	// orchestrator" (no path heuristic), and the detach mechanism
+	// is fork-exec. Drift shape: someone refactors the trigger to
+	// use a filesystem-path heuristic or switches to a blocking
+	// invocation, and a cold-start agent reading the spec gets
+	// misled.
+	{
+		name:         "orchestrator-sync-role-check",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "act.role=orchestrator",
+		testName:     "TestDocClaim_OrchestratorSync_RoleCheck",
+	},
+	{
+		name:         "orchestrator-sync-background-detach",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "fork-exec",
+		testName:     "TestDocClaim_OrchestratorSync_BackgroundDetach",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
