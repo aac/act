@@ -40,10 +40,15 @@ type LogResult struct {
 //     here are the user-facing names — friendly aliases (update, dep_add,
 //     delete) are translated to spec names (update_field, add_dep,
 //     tombstone) by normalizeOpTypeFilter before matching.
+//   - Summary is a presentation knob, not a filter: when true the human
+//     renderer emits one line per op (timestamp, op_type, 8-char hash,
+//     summary) instead of the full envelope. The JSON shape is
+//     unaffected — JSON callers see the same LogResult either way.
 type LogOptions struct {
 	Since   time.Duration
 	ByIssue string
 	Types   []string
+	Summary bool
 }
 
 // LogErrorOutput is the structured shape returned to the caller when log
@@ -248,6 +253,70 @@ func normalizeOpTypeFilter(raw []string) (map[string]bool, string) {
 		return nil, ""
 	}
 	return out, ""
+}
+
+// FormatLogHumanSummary renders a LogResult as a one-line-per-op timeline:
+// `<RFC3339Millis wall> <op-type> <8hex-hash> <summary>` plus a trailing
+// count line. The summary fragment is op-type-specific (title for create,
+// field name for update_field, etc.) via opSummary so the line carries one
+// extra hint about what changed without dropping to --json. When the result
+// spans multiple issues an `[issue=<short>]` token is appended so the
+// reader can tell ops apart. Mirrors the shape used by `act show
+// --include-ops` (act-b891) so the two surfaces stay visually consistent.
+// act-56a0.
+func FormatLogHumanSummary(res LogResult) string {
+	shortByID := shortIssueIndex(res)
+	includeIssue := res.ID == ""
+	var b strings.Builder
+	for _, env := range res.Ops {
+		hash, err := env.Hash()
+		if err != nil {
+			hash = "????????"
+		}
+		wall := time.UnixMilli(env.HLC.Wall).UTC().Format(rfc3339Millis)
+		summary := opSummary(env)
+		// Build the line with optional summary and optional issue tag.
+		// We emit a trailing `[issue=<short>]` when the result is
+		// cross-issue so the timeline stays readable; for a single-issue
+		// scope it's redundant.
+		fmt.Fprintf(&b, "%s %s %s", wall, env.OpType, hash)
+		if summary != "" {
+			fmt.Fprintf(&b, "  %s", summary)
+		}
+		if includeIssue {
+			short := shortByID[env.IssueID]
+			if short == "" {
+				short = env.IssueID
+			}
+			fmt.Fprintf(&b, "  [issue=%s]", short)
+		}
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "%d ops\n", len(res.Ops))
+	return b.String()
+}
+
+// shortIssueIndex returns a map from full issue id to its shortest unique
+// prefix for the issue universe represented by res. For single-issue
+// results the map contains just the one entry; for cross-issue results it
+// covers the union of all issue ids in res.Ops.
+func shortIssueIndex(res LogResult) map[string]string {
+	if res.ID != "" {
+		return ids.ShortestUniquePrefixes([]string{res.ID})
+	}
+	seen := map[string]bool{}
+	var all []string
+	for _, env := range res.Ops {
+		if seen[env.IssueID] {
+			continue
+		}
+		seen[env.IssueID] = true
+		all = append(all, env.IssueID)
+	}
+	if len(all) == 0 {
+		return map[string]string{}
+	}
+	return ids.ShortestUniquePrefixes(all)
 }
 
 // FormatLogHuman renders a LogResult as the human-friendly text form: one line

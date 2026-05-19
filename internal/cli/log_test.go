@@ -238,6 +238,102 @@ func contains(s, substr string) bool {
 	return false
 }
 
+// TestFormatLogHumanSummary_Smoke — AC: `act log --summary` renders one
+// line per op with timestamp, op_type, 8-char hash, summary fragment,
+// plus a trailing count line. Default FormatLogHuman is unaffected.
+func TestFormatLogHumanSummary_Smoke(t *testing.T) {
+	env := makeEnv("act-abcd", 1700000000000, 0) // title:"hello"
+	res := LogResult{ID: "act-abcd", Ops: []op.Envelope{env}}
+	got := FormatLogHumanSummary(res)
+	if got == "" {
+		t.Fatalf("FormatLogHumanSummary returned empty string")
+	}
+	// Line must include op_type, the 8-char hash (computed from env), and
+	// the create-op summary (title). Count footer follows.
+	hash, err := env.Hash()
+	if err != nil {
+		t.Fatalf("Hash: %v", err)
+	}
+	for _, want := range []string{"create", hash, "hello", "1 ops"} {
+		if !contains(got, want) {
+			t.Errorf("output missing %q in %q", want, got)
+		}
+	}
+	// Single-issue scope: no [issue=...] tag (would be redundant).
+	if contains(got, "[issue=") {
+		t.Errorf("single-issue summary should not emit [issue=] tag; got %q", got)
+	}
+	// Must be one line per op + one count line = 2 lines.
+	if lines := splitLines(got); len(lines) != 2 {
+		t.Errorf("lines = %d, want 2; got=%q", len(lines), got)
+	}
+}
+
+// TestFormatLogHumanSummary_CrossIssueTag — when the result spans
+// multiple issues, the summary line must carry an [issue=<short>] tag so
+// the reader can tell which op belongs to which issue.
+func TestFormatLogHumanSummary_CrossIssueTag(t *testing.T) {
+	a := makeEnv("act-aaaaaa", 1700000000000, 0)
+	b := makeEnv("act-bbbbbb", 1700000000001, 0)
+	res := LogResult{ID: "", Ops: []op.Envelope{a, b}}
+	got := FormatLogHumanSummary(res)
+	if !contains(got, "[issue=") {
+		t.Errorf("cross-issue summary missing [issue=] tag; got %q", got)
+	}
+}
+
+// TestLog_SummaryComposesWithFilters — AC: --summary composes with the
+// existing filters. The presentation knob does not affect filtering,
+// so the result set is the same as the filter-only path; this test
+// ensures the LogOptions plumbing accepts Summary alongside Since /
+// ByIssue / Types without disturbing the existing behaviour.
+func TestLog_SummaryComposesWithFilters(t *testing.T) {
+	root := seedRetroFixture(t)
+
+	out, code := RunLogOpts(root, "", false, LogOptions{
+		Since:   24 * time.Hour,
+		Types:   []string{"create"},
+		Summary: true,
+	})
+	if code != 0 {
+		t.Fatalf("composed: code = %d; out=%+v", code, out)
+	}
+	res := out.(LogResult)
+	// 24h window + type=create: drops the now-48h create on act-aaaaaa;
+	// keeps the now-12h create on act-bbbbbb and the now-1h create on
+	// act-cccccc.
+	if got := len(res.Ops); got != 2 {
+		t.Fatalf("len(ops) = %d, want 2; ops=%+v", got, res.Ops)
+	}
+	for _, e := range res.Ops {
+		if e.OpType != "create" {
+			t.Errorf("op_type = %q, want create", e.OpType)
+		}
+	}
+	// And the summary renderer must produce N op-lines + 1 count line.
+	text := FormatLogHumanSummary(res)
+	if lines := splitLines(text); len(lines) != len(res.Ops)+1 {
+		t.Errorf("summary lines = %d, want %d; text=%q", len(lines), len(res.Ops)+1, text)
+	}
+}
+
+// splitLines splits s on '\n' and drops a trailing empty entry caused by
+// the trailing newline emitted by the formatter.
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
 // makeEnvType is like makeEnv but lets the test pick the op_type. The
 // returned envelope sets a minimal payload that satisfies op.Validate
 // for the chosen type.
