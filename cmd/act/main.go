@@ -24,7 +24,14 @@ func main() {
 		// Bare `act` invocation. Honour --json only if it was somehow passed
 		// (it cannot be at this point, by definition, but guard anyway for
 		// future flag parsing changes).
-		emitBadFlag(false, "usage: act <subcommand> [flags]")
+		//
+		// Per the UX-polish pass (act-f2c7 finding #1), a single-line
+		// "usage: act <subcommand> [flags]" leaves a fresh agent no
+		// concrete next step — they don't yet know what subcommands
+		// exist. Print the same multi-line block `act --help` shows so
+		// the subcommand list and the pointer to `act help` are visible
+		// immediately.
+		emitBadFlag(false, bareUsageMsg())
 		os.Exit(2)
 	}
 	sub := os.Args[1]
@@ -160,8 +167,18 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest, remote")
+	fmt.Fprintln(os.Stderr, bareUsageMsg())
+}
+
+// bareUsageMsg is the canonical usage block for a bare `act` invocation
+// or `act --help` / `act -h`. It lists every implemented subcommand with
+// comma separators (so the multi-word `dep add` does not look like three
+// separate items — act-f2c7 finding #2) and points to `act help` for
+// the full tutorial.
+func bareUsageMsg() string {
+	return "usage: act <subcommand> [flags]\n" +
+		"subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest, remote\n" +
+		"(run 'act help' for the full subcommand tutorial)"
 }
 
 // unknownSubcommandMsg returns the canonical "you typed a subcommand
@@ -262,7 +279,14 @@ func emitInit(asJSON bool, payload any, success bool) {
 			}
 			fmt.Fprintln(os.Stderr, "  nested .act/ is in place; re-run act init or remediate the listed steps manually.")
 		}
-		fmt.Println(`Run "act create" to file your first issue.`)
+		// Next-step hint (act-f2c7 finding #5). The previous one-liner
+		// ("Run \"act create\" to file your first issue.") was a half-
+		// step — it told the agent what to do next, but didn't name
+		// the full canonical-loop tutorial. CLAUDE.md filled the gap
+		// when act ran inside its own repo; an agent doing `act init`
+		// in a fresh project saw nothing about the loop. The "Next:"
+		// hint surfaces both anchors in one line.
+		fmt.Println(`Next: run 'act create "<title>"' to file your first issue, or 'act help workflow' for the canonical loop.`)
 		return
 	}
 	emitEnvelope(asJSON, payload)

@@ -29,8 +29,11 @@ func TestDocClaim_Remote_HelpListsSubcommand(t *testing.T) {
 	site := t.TempDir()
 	out, _ := mustRunAct(t, site, 0, "help")
 	// Pull the Subcommands section and check `remote` appears in it,
-	// not just somewhere later in the page.
-	const start = "Subcommands:"
+	// not just somewhere later in the page. The "Subcommands" header
+	// is followed by an open-paren disambiguation note (post act-f2c7);
+	// match the bare token "Subcommands" so the slice survives that
+	// header-text refactor.
+	const start = "Subcommands"
 	const end = "'act mine'"
 	startIdx := strings.Index(out, start)
 	endIdx := strings.Index(out, end)

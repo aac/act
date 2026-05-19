@@ -79,7 +79,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "act-help-subcommands-listing",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "init version log list search ready mine show",
+		claimPattern: "init, version, log, list, search, ready, mine, show,",
 		testName:     "TestDocClaim_ActHelpListsSubcommands",
 	},
 	{
@@ -676,6 +676,44 @@ var docClaimRegistry = []docClaim{
 		docFile:      "cmd/act/create.go",
 		claimPattern: "branch in the nested .act/ repo",
 		testName:     "TestDocClaim_BranchFlag_AutoCommitTargetsNamedBranch",
+	},
+	// ux-polish-* (act-f2c7): bundled UX polish pass — bare-`act` help
+	// hint, comma-separated subcommand listing (so `dep add` isn't read
+	// as three items), `act init` Next-step hint, and the
+	// create/update `--description` consistency note. Each entry pins
+	// the literal in the surface a cold-start agent would actually
+	// hit; the drift shape is that a future cleanup pass strips one of
+	// the literals (e.g. drops "act help" from the bare-act usage
+	// block) and we silently regress to the pre-polish UX.
+	{
+		name:         "ux-bare-act-help-hint",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "run 'act help' for the full subcommand tutorial",
+		testName:     "TestDocClaim_BareAct_ListsSubcommandsAndHelpHint",
+	},
+	{
+		name:         "ux-help-subcommand-list-comma-separated",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "dep add, doctor, import, mcp, install-skill,",
+		testName:     "TestDocClaim_BareAct_DepAddNotThreeItems",
+	},
+	{
+		name:         "ux-init-next-step-hint",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "Next: run 'act create",
+		testName:     "TestDocClaim_Init_NextStepHint",
+	},
+	{
+		name:         "ux-description-consistency-note-create",
+		docFile:      "cmd/act/create.go",
+		claimPattern: "silently accepted as no-op-equivalent",
+		testName:     "TestDocClaim_Description_CreateUpdateConsistencyNote",
+	},
+	{
+		name:         "ux-description-consistency-note-update",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "empty string explicitly clears the existing description",
+		testName:     "TestDocClaim_Description_CreateUpdateConsistencyNote",
 	},
 }
 
