@@ -246,7 +246,7 @@ Indices: `idx_issues_status_priority`, `idx_issues_parent`, `idx_deps_parent`, `
 <iso8601>-<hash8>-<op_type>.json
 ```
 
-- `<iso8601>` is the HLC wall component, formatted as `YYYY-MM-DDTHH:MM:SS.sssZ` (millisecond precision, always UTC `Z`, fixed width 24 chars). Not local wall clock; the HLC wall is what matters for fold ordering.
+- `<iso8601>` is the HLC wall component, formatted as `YYYY-MM-DDTHH-MM-SS.sssZ` (millisecond precision, always UTC `Z`, fixed width 24 chars). Note the time-component separators are `-`, not `:`, because `:` is reserved in NTFS paths and breaks `git checkout` on Windows hosts before any Go code runs (act-2f3d). The shape is otherwise byte-identical to the canonical ISO-8601 form and sorts lexically the same way. The envelope JSON body still uses the canonical colon form for the HLC wall; only the filename varies. Not local wall clock; the HLC wall is what matters for fold ordering. Forward-only: parsers accept either form so pre-act-2f3d ops on disk keep folding.
 - `<hash8>` is the first 8 hex chars of `sha256(canonical_envelope_bytes)` where `canonical_envelope_bytes` is the file's exact byte content per the serialization rules above. Because the hash is over the full envelope (which contains `node_id` and `hlc`), two writers cannot collide on the same payload.
 - `<op_type>` is the op_type enum value, lowercase, underscores preserved.
 - Collision behavior: if a file with the same `<iso8601>-<hash8>` prefix already exists in the target shard, extend the hash to 12 hex chars and retry; if 12 still collides, extend to 16; document an error past 16 (statistically impossible barring a sha256 break).

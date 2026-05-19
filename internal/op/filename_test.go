@@ -48,7 +48,8 @@ func TestFilename_Pattern(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "2026-04-15T12:34:56.789Z-" + full[:8] + "-create.json"
+	// Time component uses '-' (not ':') per act-2f3d (NTFS-safe).
+	want := "2026-04-15T12-34-56.789Z-" + full[:8] + "-create.json"
 	if got != want {
 		t.Fatalf("Filename = %q, want %q", got, want)
 	}
@@ -108,11 +109,12 @@ func TestParse_RejectsMalformed(t *testing.T) {
 	cases := []string{
 		"",
 		"not-an-op.json",
-		"2026-04-15T12:34:56Z-deadbeef-create.json",                 // missing millis
-		"2026-04-15T12:34:56.789Z-XYZ-create.json",                  // non-hex
-		"2026-04-15T12:34:56.789Z-deadbeef-bogus.json",              // unknown op_type
-		"2026-04-15T12:34:56.789Z-dead-create.json",                 // hash too short
-		"2026-04-15T12:34:56.789Z-deadbeefcafebabedead-create.json", // hash 20 chars
+		"2026-04-15T12-34-56Z-deadbeef-create.json",                 // missing millis (new form)
+		"2026-04-15T12:34:56Z-deadbeef-create.json",                 // missing millis (legacy form)
+		"2026-04-15T12-34-56.789Z-XYZ-create.json",                  // non-hex
+		"2026-04-15T12-34-56.789Z-deadbeef-bogus.json",              // unknown op_type
+		"2026-04-15T12-34-56.789Z-dead-create.json",                 // hash too short
+		"2026-04-15T12-34-56.789Z-deadbeefcafebabedead-create.json", // hash 20 chars
 	}
 	for _, c := range cases {
 		if _, _, _, err := Parse(c); err == nil {

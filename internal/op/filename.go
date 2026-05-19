@@ -10,9 +10,25 @@ import (
 	"time"
 )
 
-// isoLayout is the fixed-width 24-char ISO-8601 millisecond UTC layout used
-// for op filenames per spec §Op file naming (`YYYY-MM-DDTHH:MM:SS.sssZ`).
-const isoLayout = "2006-01-02T15:04:05.000Z"
+// isoLayout is the fixed-width 24-char NTFS-safe variant of the ISO-8601
+// millisecond UTC layout used for op filenames per spec §Op file naming
+// (`YYYY-MM-DDTHH-MM-SS.sssZ`).
+//
+// The time component uses '-' (not ':') because ':' is reserved in NTFS
+// paths, breaking `git checkout` on Windows hosts before any Go code runs
+// (act-2f3d). The substitution preserves total width (24), lexical sort
+// order, and the surrounding fields; only the three separators between
+// hours/minutes/seconds change. The HLC envelope JSON body still uses the
+// canonical colon form — only the filename varies.
+//
+// Old-form names (with ':') remain readable: Parse accepts both layouts
+// (forward-only fix; existing ops are append-only and stay valid).
+const isoLayout = "2006-01-02T15-04-05.000Z"
+
+// isoLayoutLegacy is the pre-act-2f3d form. Retained for Parse so that
+// existing op files (committed before this change) keep folding cleanly.
+// Writers no longer emit this layout.
+const isoLayoutLegacy = "2006-01-02T15:04:05.000Z"
 
 // shardLayout is the year-month directory format derived from the HLC wall.
 const shardLayout = "2006-01"
@@ -157,7 +173,13 @@ func atomicWrite(dir, target string, body []byte) error {
 // the writer probes). The op_type must be one of the 12 known op types,
 // matched as a longest-prefix alternation; we capture it as a generic
 // underscore-separated lowercase token and validate against ValidOpTypes.
-var filenameRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)-([0-9a-f]+)-([a-z_]+)\.json$`)
+//
+// The time-component separators may be '-' (current NTFS-safe form per
+// act-2f3d) or ':' (legacy pre-2f3d form). Both layouts are accepted so
+// existing op files on disk keep parsing; new ops are written in the
+// NTFS-safe form only. The date and the seconds/millis separator stay
+// fixed (date always uses '-', millis always uses '.').
+var filenameRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}[:\-]\d{2}[:\-]\d{2}\.\d{3}Z)-([0-9a-f]+)-([a-z_]+)\.json$`)
 
 // Parse is the inverse of Filename. It validates the filename layout and
 // returns the parsed wall timestamp, the hash component (8/12/16 hex
@@ -182,6 +204,12 @@ func Parse(filename string) (timestamp time.Time, opHash string, opType string, 
 		return time.Time{}, "", "", fmt.Errorf("op: parse %q: unknown op_type %q", base, op)
 	}
 	t, perr := time.ParseInLocation(isoLayout, iso, time.UTC)
+	if perr != nil {
+		// Fall back to the legacy colon form. Existing op files on disk
+		// (pre-act-2f3d) use ':' in the time component; the layouts are
+		// otherwise byte-identical so a single retry covers it.
+		t, perr = time.ParseInLocation(isoLayoutLegacy, iso, time.UTC)
+	}
 	if perr != nil {
 		return time.Time{}, "", "", fmt.Errorf("op: parse %q: timestamp: %w", base, perr)
 	}
