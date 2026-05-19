@@ -331,14 +331,14 @@ func formatShowFields(res ShowResult) string {
 		switch d := deps.(type) {
 		case []map[string]string:
 			for _, e := range d {
-				fmt.Fprintf(&b, "dep: %s %s\n", e["edge_type"], e["parent"])
+				fmt.Fprintf(&b, "dep: %s %s\n", depShowLabel(e["edge_type"]), e["parent"])
 			}
 		case []any:
 			for _, e := range d {
 				if m, ok := e.(map[string]any); ok {
 					et, _ := m["edge_type"].(string)
 					pa, _ := m["parent"].(string)
-					fmt.Fprintf(&b, "dep: %s %s\n", et, pa)
+					fmt.Fprintf(&b, "dep: %s %s\n", depShowLabel(et), pa)
 				}
 			}
 		}
@@ -527,4 +527,21 @@ func commitMarkerHex(fullID string) string {
 		return ""
 	}
 	return short[len(prefix):]
+}
+
+// depShowLabel translates an edge_type into the label used in the
+// human-mode `dep:` line on `act show`. The semantic direction is
+// (child, parent) — i.e. the issue being shown holds the dep entry,
+// and `parent` is the target on the other side of the edge.
+//
+// For edge_type=blocks, the child is BLOCKED BY the parent, so the
+// natural-English label is `blocked-by`. The pre-act-982a label
+// (the raw edge_type) read as "A blocks <parent>" and caused agents
+// to misread the direction. For other edge types ("relates",
+// "supersedes") the type name itself is the right label.
+func depShowLabel(edgeType string) string {
+	if edgeType == "blocks" {
+		return "blocked-by"
+	}
+	return edgeType
 }

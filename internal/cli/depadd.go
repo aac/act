@@ -450,9 +450,36 @@ func dfsBlocksPath(adj map[string][]string, src, dst string) ([]string, bool) {
 // FormatDepAddHuman renders a DepAddResult as a single human-friendly
 // line; the trailing newline is included so callers can pipe directly
 // to stdout.
+//
+// Direction note (act-982a): for edge_type=blocks the child is blocked
+// by the parent, so the natural-English rendering is "A is blocked by
+// B" — NOT "A blocks B". The pre-act-982a "Edge A --[blocks]--> B" form
+// read as the latter and caused agents to file deps backwards. For the
+// other edge types ("relates", "supersedes") the directional name reads
+// correctly as "A relates to B" / "A supersedes B", so the natural
+// rendering is "A <edge_type> B".
 func FormatDepAddHuman(res DepAddResult) string {
+	verb := depDirectionPhrase(res.EdgeType)
 	if !res.Committed {
-		return fmt.Sprintf("Edge %s --[%s]--> %s already present (no op)\n", res.Child, res.EdgeType, res.Parent)
+		return fmt.Sprintf("Dep already present: %s %s %s\n", res.Child, verb, res.Parent)
 	}
-	return fmt.Sprintf("Added %s --[%s]--> %s\n", res.Child, res.EdgeType, res.Parent)
+	return fmt.Sprintf("Added: %s %s %s\n", res.Child, verb, res.Parent)
+}
+
+// depDirectionPhrase maps an edge_type to the verb phrase that reads
+// correctly when placed between (child, parent) in the natural-English
+// direction. See FormatDepAddHuman for the direction-vs-display
+// background and act-982a for the bug.
+func depDirectionPhrase(edgeType string) string {
+	switch edgeType {
+	case "blocks":
+		return "is blocked by"
+	default:
+		// relates, supersedes — the edge_type name itself reads as the
+		// verb when child is the subject ("A relates to B" /
+		// "A supersedes B"). Unknown types fall through to the same
+		// shape; the type validator upstream rejects anything not in
+		// the allow-list.
+		return edgeType
+	}
 }
