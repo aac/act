@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/fold"
@@ -384,7 +386,93 @@ func formatShowFields(res ShowResult) string {
 			fmt.Fprintf(&b, "  %s %s  %s\n", shortSHA(c.SHA), c.AuthorDate, c.Subject)
 		}
 	}
+	// ops: rendered when --include-ops is set (text mirror of the JSON
+	// `ops` key). Format matches `act log`'s one-line-per-op shape so the
+	// two surfaces are visually consistent: timestamp, op_type, short hash,
+	// summary. The section header is emitted whenever the flag was set,
+	// even on zero ops, so behavior matches the JSON path (which always
+	// emits an `ops` key when IncludeOps is true). For a live issue Ops is
+	// never empty — at minimum a `create` op exists — but the contract
+	// stays honest. act-b891.
+	if res.IncludeOps {
+		fmt.Fprintf(&b, "ops:\n")
+		for _, env := range res.Ops {
+			hash, err := env.Hash()
+			if err != nil {
+				hash = "????????"
+			}
+			wall := time.UnixMilli(env.HLC.Wall).UTC().Format(rfc3339Millis)
+			summary := opSummary(env)
+			if summary == "" {
+				fmt.Fprintf(&b, "  %s %s %s\n", wall, env.OpType, hash)
+			} else {
+				fmt.Fprintf(&b, "  %s %s %s  %s\n", wall, env.OpType, hash, summary)
+			}
+		}
+	}
 	return b.String()
+}
+
+// opSummary returns a short, human-readable summary fragment for an op
+// envelope — e.g. the field name on an update_field op, the assignee on a
+// claim op. Empty string when there's nothing useful beyond op_type. The
+// payload is best-effort decoded; malformed payloads collapse to "" rather
+// than failing the render. Used by formatShowFields when --include-ops is
+// set so each op line carries one extra hint about what changed without
+// requiring the reader to drop to --json.
+func opSummary(env op.Envelope) string {
+	if len(env.Payload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(env.Payload, &m); err != nil {
+		return ""
+	}
+	switch env.OpType {
+	case "create":
+		if t, ok := m["title"].(string); ok && t != "" {
+			return t
+		}
+	case "update_field":
+		if f, ok := m["field"].(string); ok && f != "" {
+			return f
+		}
+	case "claim":
+		if a, ok := m["assignee"].(string); ok && a != "" {
+			return a
+		}
+	case "close":
+		if r, ok := m["reason"].(string); ok && r != "" {
+			return firstLine(r)
+		}
+	case "add_dep", "remove_dep":
+		et, _ := m["edge_type"].(string)
+		pa, _ := m["parent"].(string)
+		switch {
+		case et != "" && pa != "":
+			return et + " " + pa
+		case pa != "":
+			return pa
+		}
+	case "add_external_dep", "remove_external_dep":
+		if r, ok := m["ref"].(string); ok && r != "" {
+			return r
+		}
+	case "add_accept", "remove_accept":
+		if c, ok := m["criterion"].(string); ok && c != "" {
+			return firstLine(c)
+		}
+	}
+	return ""
+}
+
+// firstLine returns the first line of s, trimmed; useful for collapsing
+// multi-line reasons or accept criteria into a single op-list line.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 // shortSHA renders the first 7 hex chars of a 40-hex commit sha — the

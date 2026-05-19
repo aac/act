@@ -478,6 +478,56 @@ func TestRunShow_IncludeOps(t *testing.T) {
 	}
 }
 
+// TestRunShow_IncludeOpsHumanFormat asserts that the human-format renderer
+// emits an "ops:" section when --include-ops is set and omits it when the
+// flag isn't set. Regression for act-b891: pre-fix the text-mode output was
+// identical with and without --include-ops; ops only appeared in --json.
+func TestRunShow_IncludeOpsHumanFormat(t *testing.T) {
+	root := makeRepoWithAct(t)
+	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "first")
+	updateEnv := makeShowUpdateEnv(t, "act-abcd", 1700000010000, 0, "title", "second")
+	writeOpFile(t, root, createEnv, "2026-04", "create.json")
+	writeOpFile(t, root, updateEnv, "2026-04", "update.json")
+
+	// With --include-ops: "ops:" section + one line per op (HLC-sorted).
+	out, code := RunShow(root, ShowOptions{ID: "act-abcd", IncludeOps: true})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	human := FormatShowHuman(out)
+	if !strings.Contains(human, "ops:\n") {
+		t.Errorf("human output missing 'ops:' section header: %q", human)
+	}
+	// Each op_type should appear on its own indented line. HLC-sorted, so
+	// create comes before update_field.
+	createIdx := strings.Index(human, "create")
+	updateIdx := strings.Index(human, "update_field")
+	if createIdx < 0 {
+		t.Errorf("human output missing create op: %q", human)
+	}
+	if updateIdx < 0 {
+		t.Errorf("human output missing update_field op: %q", human)
+	}
+	if createIdx >= 0 && updateIdx >= 0 && createIdx >= updateIdx {
+		t.Errorf("ops not HLC-sorted: create at %d, update_field at %d", createIdx, updateIdx)
+	}
+	// Lines under "ops:" are indented (two spaces) — confirms the renderer
+	// placed them inside the section rather than as sibling fields.
+	if !strings.Contains(human, "  ") {
+		t.Errorf("human output missing indented op lines: %q", human)
+	}
+
+	// Without --include-ops: no "ops:" section.
+	out2, code2 := RunShow(root, ShowOptions{ID: "act-abcd"})
+	if code2 != 0 {
+		t.Fatalf("exit code = %d, want 0", code2)
+	}
+	human2 := FormatShowHuman(out2)
+	if strings.Contains(human2, "ops:") {
+		t.Errorf("human output without --include-ops should not contain 'ops:' section: %q", human2)
+	}
+}
+
 func TestRunShow_TombstonedJSON(t *testing.T) {
 	root := makeRepoWithAct(t)
 	createEnv := makeShowCreateEnv(t, "act-abcd", 1700000000000, 0, "doomed")
