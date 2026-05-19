@@ -45,6 +45,10 @@ type CreateOptions struct {
 	Isolated bool
 	// Offline (Phase 2 ticket 3b).
 	Offline bool
+	// Branch, when non-empty, names the branch in the nested .act/ repo
+	// that the auto-commit lands on and the push targets on origin.
+	// See cli.WriteOpts.Branch (util.go) and act-5d6a.
+	Branch string
 	// BlockedBy, when non-empty, attaches one add_dep (type=blocks) op per
 	// id alongside the create op. Each id is resolved via the prefix
 	// pipeline; duplicates resolving to the same full id are folded to one
@@ -514,6 +518,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Push:     opts.Push,
 			Isolated: opts.Isolated,
 			Offline:  opts.Offline,
+			Branch:   opts.Branch,
 		})
 	} else {
 		envs := append([]op.Envelope{env}, depEnvs...)
@@ -524,6 +529,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Push:     opts.Push,
 			Isolated: opts.Isolated,
 			Offline:  opts.Offline,
+			Branch:   opts.Branch,
 		}, commitMsg)
 	}
 	if werr != nil {

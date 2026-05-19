@@ -583,6 +583,65 @@ func readSlowWriteLines(path string) ([]string, error) {
 // retries, every attempt fails and the helper returns
 // *PushExhaustedError{RetryCount=5}. See push_retry.go for the precise
 // counter semantics and ResetPushAttemptCounter for test setup.
+// EnsureBranch switches the nested act-state repo to the named branch,
+// creating it from the current HEAD if it does not yet exist. Returns an
+// error if the working tree is not a git repository or if the checkout
+// itself fails for any reason other than "branch already current".
+//
+// Used by the --branch <ref> flag on write subcommands (act-5d6a). The
+// caller passes the worktree's branch name so the op auto-commit lands
+// on a branch independent of whatever the nested repo's HEAD pointed at
+// previously. Calling with an empty branch is a no-op (returns nil)
+// so callers can unconditionally invoke this before committing without
+// branching on the option being set.
+//
+// Implementation: `git checkout -B <branch>` is idempotent — it creates
+// the branch if missing and forces the checkout to point at HEAD if the
+// branch already exists. This matches the agent's mental model: "commit
+// goes on branch X regardless of where HEAD was."
+func (g *GitOps) EnsureBranch(branch string) error {
+	if branch == "" {
+		return nil
+	}
+	if _, err := g.run("checkout", "-B", branch); err != nil {
+		return fmt.Errorf("gitops: ensure branch %q: %w", branch, err)
+	}
+	return nil
+}
+
+// AutoPushAfterCommitToBranch is AutoPushAfterCommit with an explicit
+// target branch override (act-5d6a). When branch is non-empty, the push
+// targets `origin <branch>` using the local HEAD's commit, bypassing the
+// current-branch resolution and any tracking-config defaults. When branch
+// is empty, behavior is identical to AutoPushAfterCommit (current branch
+// resolution + push). All other semantics — orchestrator-sync trigger,
+// no-origin early return, retry loop, fault-injection counter — are
+// preserved exactly.
+//
+// The explicit branch is needed because worktree subagents may run the
+// nested .act/ commit on a branch named after their worktree (so multiple
+// agents don't collide on a shared HEAD) while still publishing to a
+// dedicated remote branch. Without the override, a stale tracking-config
+// `branch.<x>.merge=refs/heads/main` would silently fan their op commits
+// onto origin/main, ahead of their pending work commit.
+func (g *GitOps) AutoPushAfterCommitToBranch(branch string) error {
+	g.maybeFireOrchestratorSync()
+
+	if !g.hasOriginRemote() {
+		return nil
+	}
+	target := branch
+	if target == "" {
+		var err error
+		target, err = g.CurrentBranch()
+		if err != nil {
+			return fmt.Errorf("gitops: AutoPushAfterCommitToBranch: branch resolution: %w", err)
+		}
+	}
+	TestPushInvocationCount.Add(1)
+	return g.PushWithRetry(target, PushOpts{})
+}
+
 func (g *GitOps) AutoPushAfterCommit() error {
 	// Phase 2 ticket 6b: orchestrator-write upstream-sync trigger. The
 	// trigger is gated on `act.role=orchestrator` only — NOT on the
@@ -730,14 +789,31 @@ func isDirtyTreeRebaseRefusal(s string) bool {
 // the repo has no `origin` remote at all; an unconfigured upstream on the
 // branch is still pushable because we pass `-u origin <branch>` explicitly.
 func (g *GitOps) Push() error {
+	return g.PushToBranch("")
+}
+
+// PushToBranch is Push with an explicit target branch override (act-5d6a).
+// When branch is non-empty, it is used verbatim as the push destination
+// (`git push -u origin <branch>`), bypassing CurrentBranch resolution. When
+// empty, falls back to the historical current-branch behavior.
+//
+// The explicit branch is needed by worktree subagents where the worktree's
+// branch differs from whatever the nested .act/ repo's HEAD pointed at;
+// without the override, a stale tracking-config could route the op commit
+// onto an unintended remote ref.
+func (g *GitOps) PushToBranch(branch string) error {
 	if !g.hasOriginRemote() {
 		return ErrNoRemote
 	}
-	branch, err := g.CurrentBranch()
-	if err != nil {
-		return err
+	target := branch
+	if target == "" {
+		var err error
+		target, err = g.CurrentBranch()
+		if err != nil {
+			return err
+		}
 	}
-	if _, err := g.run("push", "-u", "origin", branch); err != nil {
+	if _, err := g.run("push", "-u", "origin", target); err != nil {
 		return err
 	}
 	return nil

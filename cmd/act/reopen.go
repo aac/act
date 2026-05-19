@@ -20,6 +20,7 @@ func runReopen(args []string) int {
 	push := fs.Bool("push", false, "push after the commit")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
 	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
+	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Worktree subagents pass --branch <worktree-branch> so op commits don't fan onto origin/main.")
 	verify := fs.Bool("verify", false, "run git commit hooks rather than --no-verify")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
@@ -51,6 +52,7 @@ func runReopen(args []string) int {
 		Push:     *push,
 		Isolated: *isolated,
 		Offline:  *offline,
+		Branch:   *branch,
 		Verify:   *verify,
 	})
 	if code != 0 {

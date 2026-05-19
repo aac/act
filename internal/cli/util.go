@@ -125,6 +125,18 @@ type WriteOpts struct {
 	// --push (ErrInvalidFlags). Combination with --no-commit is silently
 	// reduced to --no-commit semantics (no commit → nothing to defer).
 	Offline bool
+	// Branch, when non-empty, names the branch in the nested .act/ repo
+	// that the auto-commit lands on AND the branch the subsequent push
+	// targets on origin (act-5d6a). The nested repo is switched (and the
+	// branch created if missing) via `git checkout -B <branch>` before
+	// the commit fires. The same value is passed to
+	// gitops.AutoPushAfterCommitToBranch so the push uses
+	// `git push origin <branch>` instead of the tracking-config default.
+	// When empty, both legs preserve the historical HEAD-resolution
+	// behavior. Worktree subagents pass the worktree's branch name so
+	// multiple concurrent agents don't fan their op commits onto a
+	// shared `main`.
+	Branch string
 }
 
 // ErrInvalidFlags is returned when WriteOpts contains an illegal flag
@@ -172,7 +184,12 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		return nil
 	}
 
-	// Step 3: stage + commit.
+	// Step 3: stage + commit. If --branch was supplied, switch the
+	// nested .act/ repo to that branch first (creating it if needed)
+	// so both stage and commit land on the intended ref. See act-5d6a.
+	if err := gops.EnsureBranch(opts.Branch); err != nil {
+		return fmt.Errorf("cli: ensure branch: %w", err)
+	}
 	if err := gops.StageOpFile(opPath); err != nil {
 		return fmt.Errorf("cli: stage: %w", err)
 	}
@@ -263,7 +280,7 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	// when origin is set (auto-publish covers it); we keep the field on
 	// WriteOpts for callers that haven't migrated, but the publish
 	// happens regardless of opts.Push.
-	if err := gops.AutoPushAfterCommit(); err != nil {
+	if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
 		return fmt.Errorf("cli: push: %w", err)
 	}
 	return nil
@@ -348,6 +365,12 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// Step 3: stage every op file. Append to `staged` only after a
 	// successful StageOpFile so a partial-stage failure rolls back exactly
 	// the entries that were actually staged (no spurious unstage calls).
+	// If --branch was supplied, switch the nested .act/ repo first so the
+	// stages happen against the intended ref (act-5d6a).
+	if err := gops.EnsureBranch(opts.Branch); err != nil {
+		rollback()
+		return fmt.Errorf("cli: ensure branch: %w", err)
+	}
 	for _, p := range written {
 		if err := gops.StageOpFile(p); err != nil {
 			rollback()
@@ -391,7 +414,7 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// above for the rationale; the rollback path is intentionally NOT
 	// triggered on push failure because the commit landed locally and the
 	// op is recoverable via harvest.
-	if err := gops.AutoPushAfterCommit(); err != nil {
+	if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
 		return fmt.Errorf("cli: push: %w", err)
 	}
 	return nil

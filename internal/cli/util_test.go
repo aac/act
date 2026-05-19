@@ -202,6 +202,96 @@ func TestWriteOpAndAutoCommitHookFailure(t *testing.T) {
 	}
 }
 
+// TestDocClaim_BranchFlag_AutoCommitTargetsNamedBranch verifies the
+// --branch <ref> flag (act-5d6a) at the user-visible boundary. The
+// auto-commit must land on the named branch regardless of where HEAD
+// pointed when the call started; the matching push (when origin is
+// configured) targets that branch instead of whatever tracking config
+// the previous HEAD had recorded.
+//
+// User-visible claims this anchors (registered in docs_sweep_test.go):
+//   - cmd/act/help.go AUTO-COMMIT section names "--branch <ref>" as
+//     pinning auto-commit + push to a named branch in the nested
+//     .act/ repo.
+//   - cmd/act/create.go (and the five other write commands)
+//     `--branch` flag-help string describes the same contract.
+//
+// Test setup: a worktree-like repo where HEAD is on `main`, but the
+// caller invokes WriteOpAndAutoCommit with Branch="agent-x". Post-call,
+// `git rev-parse agent-x` must resolve to HEAD and `git rev-parse main`
+// must still point at the original commit (the op did NOT land on main).
+func TestDocClaim_BranchFlag_AutoCommitTargetsNamedBranch(t *testing.T) {
+	dir, paths := makeWriteRepo(t)
+	g := gitops.NewActGitOps(dir)
+	env, body := fixedEnvelope(t)
+
+	// Snapshot main's commit before the op write.
+	mainBefore := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "main"))
+
+	if err := WriteOpAndAutoCommit(env, body, paths, g, WriteOpts{Branch: "agent-x"}); err != nil {
+		t.Fatalf("WriteOpAndAutoCommit with Branch: %v", err)
+	}
+
+	// agent-x must now exist and point at HEAD.
+	agentX := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "agent-x"))
+	head := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "HEAD"))
+	if agentX != head {
+		t.Fatalf("agent-x = %s, HEAD = %s; want equal (commit must land on the named branch)", agentX, head)
+	}
+	// main must NOT have advanced: the op commit was redirected to agent-x.
+	mainAfter := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "main"))
+	if mainAfter != mainBefore {
+		t.Fatalf("main advanced from %s to %s; want unchanged (op commit must NOT land on main when --branch is set)", mainBefore, mainAfter)
+	}
+}
+
+// TestWriteOpAndAutoCommitNoBranchPreservesHEADBehavior verifies the
+// default (no --branch) path: the commit lands on whatever branch was
+// already checked out, and no new branches are created. Anchors the
+// "Branch is opt-in" contract.
+func TestWriteOpAndAutoCommitNoBranchPreservesHEADBehavior(t *testing.T) {
+	dir, paths := makeWriteRepo(t)
+	g := gitops.NewActGitOps(dir)
+	env, body := fixedEnvelope(t)
+
+	if err := WriteOpAndAutoCommit(env, body, paths, g, WriteOpts{}); err != nil {
+		t.Fatalf("WriteOpAndAutoCommit: %v", err)
+	}
+	// Current branch must still be main (no implicit switch).
+	branch := strings.TrimSpace(runOut(t, dir, "git", "rev-parse", "--abbrev-ref", "HEAD"))
+	if branch != "main" {
+		t.Fatalf("current branch = %q; want main (no --branch supplied)", branch)
+	}
+	// Main must have advanced.
+	subj := strings.TrimSpace(runOut(t, dir, "git", "log", "-1", "main", "--format=%s"))
+	if !strings.HasPrefix(subj, "act-op: ") {
+		t.Fatalf("main HEAD subject = %q; want op commit on main", subj)
+	}
+}
+
+// TestWriteOpAndAutoCommitBranchCreatesIfMissing verifies the
+// `checkout -B` semantic: the named branch is created from current HEAD
+// when it does not yet exist. Worktree subagents rely on this to commit
+// onto a worktree-specific branch without pre-creating it.
+func TestWriteOpAndAutoCommitBranchCreatesIfMissing(t *testing.T) {
+	dir, paths := makeWriteRepo(t)
+	g := gitops.NewActGitOps(dir)
+	env, body := fixedEnvelope(t)
+
+	// Pre-condition: branch must not exist.
+	if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "fresh-branch").CombinedOutput(); err == nil {
+		t.Fatal("pre-condition: fresh-branch already exists")
+	}
+
+	if err := WriteOpAndAutoCommit(env, body, paths, g, WriteOpts{Branch: "fresh-branch"}); err != nil {
+		t.Fatalf("WriteOpAndAutoCommit: %v", err)
+	}
+	// Branch now exists and points at HEAD.
+	if _, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "fresh-branch").CombinedOutput(); err != nil {
+		t.Fatalf("fresh-branch was not created: %v", err)
+	}
+}
+
 func runOut(t *testing.T, dir, name string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(name, args...)

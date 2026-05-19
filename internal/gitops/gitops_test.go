@@ -321,3 +321,97 @@ func TestCurrentBranch(t *testing.T) {
 		t.Fatalf("branch: want main, got %q", br)
 	}
 }
+
+// TestEnsureBranchCreatesIfMissing verifies the act-5d6a contract:
+// EnsureBranch with a non-existent name creates the branch from HEAD
+// and switches to it. Repeated calls are idempotent (re-pin to HEAD).
+// An empty branch argument is a no-op.
+func TestEnsureBranch(t *testing.T) {
+	dir := initRepo(t)
+	g := NewGitOps(dir)
+	headBefore := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+
+	// Empty branch: no-op.
+	if err := g.EnsureBranch(""); err != nil {
+		t.Fatalf("EnsureBranch(\"\"): %v", err)
+	}
+	branch, _ := g.CurrentBranch()
+	if branch != "main" {
+		t.Fatalf("empty-branch call should not switch; current=%q", branch)
+	}
+
+	// Create a new branch from HEAD.
+	if err := g.EnsureBranch("agent-x"); err != nil {
+		t.Fatalf("EnsureBranch(agent-x): %v", err)
+	}
+	branch, _ = g.CurrentBranch()
+	if branch != "agent-x" {
+		t.Fatalf("after EnsureBranch(agent-x): current=%q want agent-x", branch)
+	}
+	commit := strings.TrimSpace(runGit(t, dir, "rev-parse", "agent-x"))
+	if commit != headBefore {
+		t.Fatalf("agent-x points at %s, want %s (HEAD before)", commit, headBefore)
+	}
+
+	// Idempotent: calling again with the same branch is a no-op effectively.
+	if err := g.EnsureBranch("agent-x"); err != nil {
+		t.Fatalf("EnsureBranch(agent-x) repeat: %v", err)
+	}
+}
+
+// TestAutoPushAfterCommitToBranchTargetsNamedRef verifies the act-5d6a
+// push override: with an explicit branch argument, the push lands on
+// `origin/<branch>` instead of whatever the current branch / tracking
+// config would have resolved. Anchors the doc-claim that `--branch`
+// decouples the push from tracking-config defaults.
+func TestAutoPushAfterCommitToBranchTargetsNamedRef(t *testing.T) {
+	ResetPushAttemptCounter()
+	remote := testfixtures.NewBareRemote(t)
+	work := cloneAndConfigure(t, remote.URL)
+
+	// Start on main; switch to agent-x so HEAD is on agent-x. Commit
+	// something on agent-x.
+	runGit(t, work, "checkout", "-q", "-B", "agent-x")
+	writeFile(t, filepath.Join(work, "op.txt"), "x\n")
+	runGit(t, work, "add", "op.txt")
+	runGit(t, work, "commit", "-q", "--no-verify", "-m", "agent-x op")
+
+	g := NewGitOps(work)
+	// Push to the agent-x branch explicitly.
+	if err := g.AutoPushAfterCommitToBranch("agent-x"); err != nil {
+		t.Fatalf("AutoPushAfterCommitToBranch(agent-x): %v", err)
+	}
+	// The remote must now have agent-x with our op commit.
+	out := runGit(t, remote.Path, "log", "-1", "--format=%s", "agent-x")
+	if !strings.Contains(out, "agent-x op") {
+		t.Fatalf("agent-x on remote: want %q, got %q", "agent-x op", out)
+	}
+	// Main must NOT have been advanced — the op must not have leaked
+	// onto origin/main.
+	mainOut, mainErr := exec.Command("git", "-C", remote.Path, "log", "-1", "--format=%s", "main").CombinedOutput()
+	if mainErr == nil && strings.Contains(string(mainOut), "agent-x op") {
+		t.Fatalf("agent-x op leaked onto origin/main: %q", string(mainOut))
+	}
+}
+
+// TestAutoPushAfterCommitToBranchEmptyFallsBackToCurrentBranch verifies
+// the empty-string fallback: AutoPushAfterCommitToBranch("") matches
+// AutoPushAfterCommit() exactly — push targets the current branch.
+func TestAutoPushAfterCommitToBranchEmptyFallsBackToCurrentBranch(t *testing.T) {
+	ResetPushAttemptCounter()
+	remote := testfixtures.NewBareRemote(t)
+	work := cloneAndConfigure(t, remote.URL)
+
+	writeFile(t, filepath.Join(work, "op.txt"), "x\n")
+	runGit(t, work, "add", "op.txt")
+	runGit(t, work, "commit", "-q", "--no-verify", "-m", "fallback op")
+
+	g := NewGitOps(work)
+	if err := g.AutoPushAfterCommitToBranch(""); err != nil {
+		t.Fatalf("AutoPushAfterCommitToBranch(\"\"): %v", err)
+	}
+	out := runGit(t, remote.Path, "log", "-1", "--format=%s", "main")
+	if !strings.Contains(out, "fallback op") {
+		t.Fatalf("main on remote: want fallback op, got %q", out)
+	}
+}
