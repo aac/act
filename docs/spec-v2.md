@@ -1545,3 +1545,148 @@ Field semantics:
 - `fetch_failure_reason` — trimmed stderr of the failing case-(g)
   fetch probe. Empty unless the probe ran and failed. Bounded to 256
   bytes so a noisy upstream cannot blow up the JSON envelope.
+
+## Stale-claim recovery (Mode B)
+
+This section documents the **as-built** behavior. Surfaced by act-b5f8
+following the act-334e abstractions review (85% confidence finding):
+the orchestration-design doc claims Mode A is the degenerate case of
+Mode B, but Mode A's "human notices a stuck claim and reclaims by
+hand" mechanism collapses into "orchestrator must algorithmically
+decide" in Mode B — and neither the spec nor the implementation
+currently defines that algorithm.
+
+**Current status: NOT IMPLEMENTED.** There is no stale-claim recovery
+mechanism in `internal/claim/`, in the Phase 2 coordination-plane
+plumbing (`internal/cli/cache.go`, `internal/cli/bootstrap_worker.go`,
+`internal/cli/remote.go`), in doctor (`internal/cli/doctor_phase2.go`),
+or in the fold layer (`internal/fold/apply.go`). The claim op has no
+TTL field, no heartbeat schema, no lease, and no expiry. The
+post-receive hook (Phase 2 ticket 6a) does not inspect claim age. The
+`act.role=orchestrator` write path does not scan for stuck claims.
+`act doctor` has no `stale-claim` check.
+
+The four sub-questions the ticket calls out, and their concrete
+answers under the as-built code:
+
+### Detection
+
+How is a stale claim identified? **Currently undefined.** The fold's
+claim-apply rule (§5.B.3) is earliest-tuple-wins within the active
+claim window, where the window is bounded on the right only by a
+matching `close` op. An open claim has no timing predicate beyond
+"there is no later close." A worker that wrote a `claim` op and then
+disappeared leaves an `in_progress` issue indistinguishable from a
+worker that is actively working. The op log carries no liveness
+signal.
+
+If a future implementation chose to add detection, the natural
+candidates are: (a) wall-clock age of the winning claim op's HLC
+exceeding a threshold (e.g. `act.claimStalenessSeconds`); (b) a
+periodic `claim_heartbeat` op stamped by the live worker, with
+absence of fresh heartbeats past `2 * heartbeat_interval` flagged as
+stale; (c) orchestrator-side liveness inferred from the dispatcher's
+own state (the orchestrator knows which workers it dispatched and can
+treat a worker exit as implicit claim release). None of these exist
+today.
+
+### Grace period
+
+How long before a claim is considered stale? **Currently undefined.**
+No threshold lives in `internal/config/remote.go`'s key registry
+(§"Coordination plane: Phase 2 config schema"). No default is encoded
+anywhere in the codebase. Workers that die mid-claim leave the issue
+in `in_progress` indefinitely until a human runs `act update
+--assignee ""` to clear it or `act close` to terminate.
+
+### Recovery action
+
+What does the orchestrator do when it decides a claim is stale?
+**Currently undefined; no orchestrator code path exists.** The Phase
+2 orchestrator role (`act.role=orchestrator`) is wired only for
+upstream-sync triggers (Phase 2 tickets 6a/6b — post-receive hook and
+post-commit `act remote sync`). There is no orchestrator-side reaper
+loop, no scheduled scan, no `act reclaim <id>` subcommand, and no
+fold-time grace-period override.
+
+If a future implementation chose to add recovery, the natural shape
+under the existing op model is a **`release` op** (new op_type) that
+clears the active claim window — symmetrically to how a `close` op
+ends it. A second worker would then write a fresh `claim` op and win
+under the standard earliest-tuple rule because the prior winning
+claim is no longer in the active window. This stays within the
+append-only, deterministic-fold contract (§6). Alternatives — mutating
+the prior claim, deleting the op file, or special-casing assignee
+swaps — all violate determinism. None of these implementations
+exist today.
+
+### Conflict resolution
+
+What if the original claimant returns? **Currently undefined; the
+question doesn't arise because nothing reclaims.** If a future
+implementation added a `release` + re-`claim` sequence, the contract
+follows from the existing fold semantics:
+
+- A `release` op landed at HLC `R`. A new `claim` from worker B
+  landed at HLC `R+1`. The original worker A's still-in-flight
+  `claim` from before `R` is now suppressed (it predates the
+  release, so it falls outside the active window opened by the new
+  claim).
+- If worker A's machine wakes up after a network partition and
+  pushes a *new* claim op at HLC `R+2`, it loses by earliest-tuple
+  to worker B's `R+1` claim. Worker A reads `claimed=false,
+  winner=<B>` per the standard claim-loss envelope (§4), the same
+  shape as a fresh-race loss.
+- If worker A's machine has been off-network long enough that its
+  HLC is far behind, the existing HLC plausibility check (§5.C.3)
+  refuses the op at write time — worker A learns its clock is
+  off and stops trying to claim. This is the same failure mode as
+  any drift-skewed writer.
+
+The recovery story therefore composes cleanly with existing
+primitives **if** the release op is added. Until then, a returning
+claimant's behavior is governed only by the absence of any reclaim
+event — i.e., the issue is still theirs because nobody changed it.
+
+### Implications for Mode B orchestrators
+
+A Mode B orchestrator implementing dispatch today cannot rely on act
+for stale-claim recovery. The orchestrator MUST either:
+
+1. **Track liveness out-of-band.** Maintain orchestrator-side state
+   (process IDs, dispatch timestamps, container lifecycle events)
+   and treat the act claim as advisory. When the orchestrator
+   decides a worker is dead, it clears the assignee with `act
+   update <id> --assignee ""` and re-dispatches. This is what the
+   `/orchestrate` reference flow does implicitly today: each
+   dispatch pass is a fresh orchestrator process whose worker
+   inventory is rebuilt from the dispatch log, not from `act
+   ready` output.
+
+2. **Tolerate stuck claims as a degenerate Mode A case.** Surface
+   long-`in_progress` issues for human review (e.g. via `act list
+   --status in_progress --older-than 24h`, a flag that does not
+   yet exist). This collapses Mode B's "algorithmic decision" back
+   into Mode A's "human notices" — explicitly accepting the
+   asymmetry the act-334e review identified.
+
+Neither approach is endorsed by act itself; both are escape hatches
+the orchestrator builds on top of act's primitives.
+
+### Forward path
+
+Closing this gap is a separate work item. The two-mechanism design
+sketch (HLC-age detection + `release` op for recovery) is the
+likeliest shape because it stays inside the append-only / deterministic
+fold contract and reuses existing config-key plumbing. A spec section
+on the release op would live near §4 (Atomic claim protocol); a
+config key (e.g. `act.claimStalenessSeconds`) would live in the Phase
+2 config schema table; a `stale-claim` doctor check would extend the
+Phase 2 reconciliation table. None of these are filed as tickets at
+the time of writing.
+
+This section will be promoted from "currently undefined" to a
+specification as and when the implementation lands. Until then, the
+explicit answer for any Mode B orchestrator asking "how does act
+handle stale claims?" is: **it does not; the orchestrator owns this
+concern.**
