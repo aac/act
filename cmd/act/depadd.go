@@ -22,7 +22,14 @@ import (
 // `act dep add`, so `args` starts at the first user-supplied token.
 func runDepAdd(args []string) int {
 	fs := flag.NewFlagSet("dep add", flag.ContinueOnError)
-	typ := fs.String("type", "blocks", "edge type (blocks|relates|supersedes)")
+	// Direction primer (act-982a): the positional form
+	// `act dep add A B --type blocks` means "A is blocked by B; A is
+	// hidden from `act ready` until B closes". This is the canonical
+	// child-then-parent ordering — A is the child whose deps[] grows
+	// by an entry pointing at B (the blocker). The output strings on
+	// `act dep add` and `act show` read in this direction (e.g.
+	// "Added: A is blocked by B" and `dep: blocked-by B`).
+	typ := fs.String("type", "blocks", "edge type (blocks|relates|supersedes); for blocks, `act dep add A B --type blocks` means A is blocked by B; A is hidden from ready until B closes")
 	blockedBy := fs.String("blocked-by", "", "directional alias: <a> --blocked-by <b> means a is blocked by b")
 	blocks := fs.String("blocks", "", "directional alias: <a> --blocks <b> means a blocks b")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")

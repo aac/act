@@ -367,6 +367,138 @@ func TestDocClaim_Show_FullDisablesTruncation(t *testing.T) {
 	}
 }
 
+// TestDocClaim_DepDirection_AddBlocksReadsAsBlockedBy pins the
+// `act dep add A B --type blocks` output string (act-982a). Before
+// this ticket the success/idempotent message rendered as
+// "Edge A --[blocks]--> B already present", which read as
+// "A blocks B" but meant the opposite (A is blocked by B). The
+// fix is the natural-English form "A is blocked by B" with the
+// same direction as the underlying semantic; this test pins both
+// the success and the idempotent-replay surfaces.
+//
+// Asserted at the subprocess stdout boundary (the actBinary
+// invocation, same surface a cold-start agent hits), not on
+// FormatDepAddHuman directly.
+func TestDocClaim_DepDirection_AddBlocksReadsAsBlockedBy(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	outA, _ := mustRunAct(t, site, 0, "create", "child A", "--json")
+	idA := pickIDFromJSON(t, outA)
+	outB, _ := mustRunAct(t, site, 0, "create", "blocker B", "--json")
+	idB := pickIDFromJSON(t, outB)
+
+	// First add: success path.
+	addOut, _ := mustRunAct(t, site, 0, "dep", "add", idA, idB, "--type", "blocks")
+	want := "Added: " + idA + " is blocked by " + idB
+	if !strings.Contains(addOut, want) {
+		t.Errorf("dep add stdout missing %q\ngot:\n%s", want, addOut)
+	}
+	// The legacy "Edge A --[blocks]--> B" string must be gone — that's
+	// the literal that read in the inverted direction.
+	if strings.Contains(addOut, "--[blocks]-->") {
+		t.Errorf("dep add stdout still contains legacy inverted form `--[blocks]-->`:\n%s", addOut)
+	}
+
+	// Replay: idempotent path returns "Dep already present: A is blocked by B".
+	replayOut, _ := mustRunAct(t, site, 0, "dep", "add", idA, idB, "--type", "blocks")
+	wantReplay := "Dep already present: " + idA + " is blocked by " + idB
+	if !strings.Contains(replayOut, wantReplay) {
+		t.Errorf("dep add replay stdout missing %q\ngot:\n%s", wantReplay, replayOut)
+	}
+	if strings.Contains(replayOut, "--[blocks]-->") {
+		t.Errorf("dep add replay stdout still contains legacy inverted form `--[blocks]-->`:\n%s", replayOut)
+	}
+}
+
+// TestDocClaim_DepDirection_ShowRendersBlockedBy pins the
+// `act show A` output string for the dep line of a blocked issue
+// (act-982a). Before this ticket the line rendered as
+// "dep: blocks <blocker-id>", which read as "A blocks <blocker-id>"
+// but meant the opposite. The fix renders the line as
+// "dep: blocked-by <blocker-id>" — same direction as the underlying
+// semantic.
+//
+// Other edge types continue to render with the raw edge_type
+// (which reads correctly: "A relates to B", "A supersedes B").
+func TestDocClaim_DepDirection_ShowRendersBlockedBy(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	outA, _ := mustRunAct(t, site, 0, "create", "blocked A", "--json")
+	idA := pickIDFromJSON(t, outA)
+	outB, _ := mustRunAct(t, site, 0, "create", "blocker B", "--json")
+	idB := pickIDFromJSON(t, outB)
+
+	mustRunAct(t, site, 0, "dep", "add", idA, idB, "--type", "blocks")
+
+	showOut, _ := mustRunAct(t, site, 0, "show", idA)
+	wantLine := "dep: blocked-by " + idB
+	if !strings.Contains(showOut, wantLine) {
+		t.Errorf("act show stdout missing %q\ngot:\n%s", wantLine, showOut)
+	}
+	// The pre-act-982a literal "dep: blocks <id>" must be gone.
+	if strings.Contains(showOut, "dep: blocks "+idB) {
+		t.Errorf("act show stdout still contains legacy `dep: blocks <id>` form:\n%s", showOut)
+	}
+}
+
+// TestDocClaim_DepDirection_HelpPrimerInWorkflow pins the
+// direction primer line surfaced via `act help workflow`
+// (act-982a). The primer tells cold-start agents that
+// `act dep add A B --type blocks` means "A is blocked by B" —
+// the same canonical phrasing that landed in dep add's --type
+// flag-help. Asserted at the `act help workflow` stdout boundary
+// so the claim follows the surface a fresh agent hits.
+func TestDocClaim_DepDirection_HelpPrimerInWorkflow(t *testing.T) {
+	site := t.TempDir()
+	out, _ := mustRunAct(t, site, 0, "help", "workflow")
+	want := "act dep add A B --type blocks"
+	if !strings.Contains(out, want) {
+		t.Errorf("act help workflow missing direction primer %q\n%s", want, out)
+	}
+	wantPhrase := "A is blocked by B"
+	if !strings.Contains(out, wantPhrase) {
+		t.Errorf("act help workflow missing primer phrase %q\n%s", wantPhrase, out)
+	}
+	wantBehavior := "hidden from ready until B closes"
+	if !strings.Contains(out, wantBehavior) {
+		t.Errorf("act help workflow missing primer-behavior clause %q\n%s", wantBehavior, out)
+	}
+}
+
+// TestDocClaim_DepDirection_FlagHelpPrimer pins the same primer on
+// `act dep add --help`'s --type flag-help line (act-982a). The
+// flag-help is one of the documentation surfaces enumerated in
+// the act repo's documentation-discipline rule, so it gets its own
+// asserting test at the boundary an agent actually consults.
+func TestDocClaim_DepDirection_FlagHelpPrimer(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	// `act dep add --help` triggers Go's flag package usage path which
+	// writes to stderr and returns a non-zero exit (the convention for
+	// flag.ContinueOnError + -h is to error out of Parse). Pull both
+	// streams from runAct so we read the surface a cold-start agent
+	// would see.
+	stdout, stderr, _ := runAct(t, site, "dep", "add", "--help")
+	help := stdout + stderr
+	wantType := "blocks|relates|supersedes"
+	if !strings.Contains(help, wantType) {
+		t.Errorf("act dep add --help missing --type listing %q\n%s", wantType, help)
+	}
+	wantPrimer := "A is blocked by B; A is hidden from ready until B closes"
+	if !strings.Contains(help, wantPrimer) {
+		t.Errorf("act dep add --help missing direction primer %q\n%s", wantPrimer, help)
+	}
+}
+
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).

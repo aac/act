@@ -614,6 +614,40 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "rebuild with 'act doctor --fix-index'",
 		testName:     "TestDocClaim_DoctorFixIndex_StderrRemediationHint",
 	},
+	// dep-direction-* (act-982a): the display strings for blocks-type
+	// deps now read in the actual semantic direction. The four entries
+	// below pin (a) the dep add success-line phrasing "is blocked by"
+	// in internal/cli/depadd.go's FormatDepAddHuman, (b) the show
+	// rendering "blocked-by" in internal/cli/show.go's depShowLabel,
+	// (c) the --type flag-help primer in cmd/act/depadd.go, and (d)
+	// the same primer surfaced via `act help workflow` in
+	// cmd/act/help.go. Drift shape: a refactor reverts to the
+	// "A blocks B" reading and a cold-start agent files deps backwards
+	// (the original bug).
+	{
+		name:         "dep-direction-add-blocked-by",
+		docFile:      "internal/cli/depadd.go",
+		claimPattern: "is blocked by",
+		testName:     "TestDocClaim_DepDirection_AddBlocksReadsAsBlockedBy",
+	},
+	{
+		name:         "dep-direction-show-blocked-by-label",
+		docFile:      "internal/cli/show.go",
+		claimPattern: "blocked-by",
+		testName:     "TestDocClaim_DepDirection_ShowRendersBlockedBy",
+	},
+	{
+		name:         "dep-direction-flag-help-primer",
+		docFile:      "cmd/act/depadd.go",
+		claimPattern: "A is blocked by B; A is hidden from ready until B closes",
+		testName:     "TestDocClaim_DepDirection_FlagHelpPrimer",
+	},
+	{
+		name:         "dep-direction-workflow-primer",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "A is blocked by B; A is hidden from ready until B closes",
+		testName:     "TestDocClaim_DepDirection_HelpPrimerInWorkflow",
+	},
 	// op-filename-* (act-2f3d): op filenames use '-' rather than ':' in
 	// the time component so the on-disk tree is NTFS-safe (otherwise
 	// `git checkout` on Windows hosts fails before any Go code runs).

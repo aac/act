@@ -341,6 +341,24 @@ THE LOOP IN DETAIL
       $ act create "<follow-up title>" --type bug \
           --description "<repro>" --accept "<resolution criterion>"
 
+  DEP DIRECTION PRIMER
+    The canonical (child, parent) reading for dep add is:
+
+      $ act dep add A B --type blocks
+        # A is blocked by B; A is hidden from ready until B closes.
+
+    The positional ordering is always (child, parent). For
+    edge_type=blocks the natural-English direction is "child IS
+    BLOCKED BY parent", not "child blocks parent" — output strings
+    on 'act dep add' and 'act show' render in this direction
+    ("Added: A is blocked by B"; 'dep: blocked-by B'). Two
+    directional aliases preserve subject-first phrasing for callers
+    that prefer it:
+
+      $ act dep add A --blocked-by B    # same as A B --type blocks
+      $ act dep add A --blocks B        # inverts: B becomes child,
+                                         # A becomes parent.
+
     To file a follow-up AND link it as blocked by an existing issue
     in one atomic commit (replaces a separate 'act dep add' call):
 
