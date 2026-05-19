@@ -48,6 +48,14 @@ const (
 	ErrImportInvalidJSON = "import_invalid_jsonl"
 	ErrCompactionLocked  = "compaction_locked"
 	ErrRedactNotFound    = "redact_target_not_found"
+	// Phase 2 push-retry codes (act-9f3fc5). `push_exhausted` is
+	// emitted by gitops.PushWithRetry after MaxRetries full retry
+	// rounds; `remote_unreachable` is emitted when the underlying
+	// `git fetch` fails for non-recoverable reasons (auth, DNS,
+	// missing remote). Both carry `details.retry_count` and, for
+	// `push_exhausted`, `details.shallow_unshallow_attempted`.
+	ErrPushExhausted     = "push_exhausted"
+	ErrRemoteUnreachable = "remote_unreachable"
 
 	// Internal/per-command error slugs in active use across cli/*.go.
 	// They are surfaced as the `error` field of the envelope; tests and

@@ -910,6 +910,8 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
 | `compaction_locked`        | 0    | `compaction already in progress; skipping` (warning, exit 0)               | `lock_path`                                   |
 | `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
+| `push_exhausted`           | 4    | `push retries exhausted after <N> attempts; last error: <msg>`             | `retry_count`, `shallow_unshallow_attempted`, `last_error` |
+| `remote_unreachable`       | 4    | `git fetch failed: <reason>`                                               | `remote`, `branch`, `stderr_tail`             |
 
 Rules:
 - Every command MUST return exactly one error class on failure; no compound errors.
