@@ -24,9 +24,10 @@ import (
 // Old-form names (with ':') remain readable: Parse accepts both layouts
 // (forward-only fix; existing ops are append-only and stay valid).
 //
-// Exported so adjacent writers that need an NTFS-safe filename (e.g. the
-// importer's `.act/imports/<iso>.json` mapping files in act-561c63) can
-// reuse the constant rather than duplicating the layout string.
+// Exported so adjacent writers that need an NTFS-safe filename (the
+// importer's `.act/imports/<iso>.json` files from act-561c63 and the
+// compact tombstones from act-d5d1ff) reuse the constant rather than
+// duplicating the layout string.
 const IsoLayout = "2006-01-02T15-04-05.000Z"
 
 // isoLayoutLegacy is the pre-act-2f3d form. Retained for Parse so that

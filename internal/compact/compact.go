@@ -28,6 +28,7 @@ import (
 	"github.com/aac/act/internal/canonicaljson"
 	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/hlc"
+	"github.com/aac/act/internal/op"
 )
 
 // SkipCompactionLocked is the sentinel string Run records in Result.Skipped
@@ -473,7 +474,13 @@ func writeCompactOp(opsRoot, issueID, snapPath, treeHash string, subsumedCount i
 	if hashPart == "" {
 		hashPart = "00000000"
 	}
-	iso := t.Format("2006-01-02T15:04:05.000Z")
+	// Filename time-component uses the NTFS-safe dash-form layout shared
+	// with op filenames (act-2f3d / act-d5d1ff). ':' is reserved on NTFS
+	// and breaks `git checkout` on Windows hosts before any Go code runs;
+	// the compact tombstone is written into the same shard as op files
+	// so it must follow the same naming contract. The canonical layout
+	// lives at op.IsoLayout.
+	iso := t.Format(op.IsoLayout)
 	fname := fmt.Sprintf("%s-%s-compact.json", iso, hashPart)
 	path := filepath.Join(shard, fname)
 	if err := atomicWrite(path, canon); err != nil {
