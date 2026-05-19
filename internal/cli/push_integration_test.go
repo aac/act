@@ -285,4 +285,3 @@ func TestPushIntegration_BareRemoteFixtureSanity(t *testing.T) {
 		t.Errorf("nested HEAD %s != bare main %s", localHEAD, remoteHEAD)
 	}
 }
-
