@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS issues (
     parent        TEXT,
     assignee      TEXT,
     created_at    TEXT,
+    claimed_at    TEXT,
     closed_at     TEXT,
     closed_reason TEXT,
     tombstoned    INTEGER DEFAULT 0
@@ -226,6 +227,7 @@ type Row struct {
 	Assignee     string
 	Priority     int
 	CreatedAt    string
+	ClaimedAt    string
 	ClosedAt     string
 	ClosedReason string
 	Accept       []string
@@ -346,6 +348,7 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 	parent, _ := rendered["parent"].(string)
 	assignee, _ := rendered["assignee"].(string)
 	createdAt, _ := rendered["created_at"].(string)
+	claimedAt, _ := rendered["claimed_at"].(string)
 	closedAt, _ := rendered["closed_at"].(string)
 	closedReason, _ := rendered["closed_reason"].(string)
 	priority := coerceInt(rendered["priority"])
@@ -353,10 +356,10 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 	if _, err := tx.Exec(`
         INSERT INTO issues (
             id, title, description, status, priority, type, parent, assignee,
-            created_at, closed_at, closed_reason, tombstoned
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            created_at, claimed_at, closed_at, closed_reason, tombstoned
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `, id, title, description, status, priority, itype, parent, assignee,
-		createdAt, closedAt, closedReason); err != nil {
+		createdAt, claimedAt, closedAt, closedReason); err != nil {
 		return fmt.Errorf("index: insert issues row %s: %w", id, err)
 	}
 
@@ -459,7 +462,7 @@ func (i *Index) ListAll(filter Filter) ([]Row, error) {
 	}
 	q := `
         SELECT id, title, description, status, priority, type, parent,
-               assignee, created_at, closed_at, closed_reason
+               assignee, created_at, claimed_at, closed_at, closed_reason
           FROM issues
          WHERE ` + strings.Join(where, " AND ") + `
          ORDER BY priority ASC, id ASC
@@ -491,7 +494,7 @@ func (i *Index) ListAll(filter Filter) ([]Row, error) {
 func (i *Index) Get(id string) (Row, error) {
 	row := i.db.QueryRow(`
         SELECT id, title, description, status, priority, type, parent,
-               assignee, created_at, closed_at, closed_reason
+               assignee, created_at, claimed_at, closed_at, closed_reason
           FROM issues
          WHERE id = ? AND tombstoned = 0
     `, id)
@@ -514,11 +517,11 @@ func scanInto(s scanner) (Row, error) {
 	var r Row
 	var (
 		title, description, status, itype, parent, assignee sql.NullString
-		createdAt, closedAt, closedReason                   sql.NullString
+		createdAt, claimedAt, closedAt, closedReason        sql.NullString
 		priority                                            sql.NullInt64
 	)
 	if err := s.Scan(&r.ID, &title, &description, &status, &priority, &itype, &parent,
-		&assignee, &createdAt, &closedAt, &closedReason); err != nil {
+		&assignee, &createdAt, &claimedAt, &closedAt, &closedReason); err != nil {
 		return Row{}, err
 	}
 	r.Title = title.String
@@ -528,6 +531,7 @@ func scanInto(s scanner) (Row, error) {
 	r.Parent = parent.String
 	r.Assignee = assignee.String
 	r.CreatedAt = createdAt.String
+	r.ClaimedAt = claimedAt.String
 	r.ClosedAt = closedAt.String
 	r.ClosedReason = closedReason.String
 	r.Priority = int(priority.Int64)

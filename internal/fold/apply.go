@@ -418,6 +418,11 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte, fullHash str
 	state.LastHLC["assignee"] = stamp
 	state.Fields["status"] = "in_progress"
 	state.LastHLC["status"] = stamp
+	// claimed_at: wall time of the winning claim, formatted RFC3339Millis,
+	// so the index (and `act ready`) can render relative timestamps without
+	// re-reading the op log. Symmetrical with created_at / closed_at.
+	state.Fields["claimed_at"] = formatRFC3339Millis(env.HLC.Wall)
+	state.LastHLC["claimed_at"] = stamp
 	return nil
 }
 
@@ -488,6 +493,10 @@ func applyReopen(state *IssueState, env op.Envelope, payload []byte, fullHash st
 	state.LastHLC["closed_reason"] = stamp
 	state.LastHLC["closed_by_node"] = stamp
 	state.LastHLC["closed_no_code"] = stamp
+	// Reopen also drops claim state — the assignee is from a stale claim and
+	// the next claim op will write a fresh assignee/claimed_at pair.
+	delete(state.Fields, "claimed_at")
+	state.LastHLC["claimed_at"] = stamp
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/ids"
@@ -38,12 +39,13 @@ type ReadyOptions struct {
 
 // ReadyIssue is one row of the ready set.
 type ReadyIssue struct {
-	ID       string `json:"id"`
-	ShortID  string `json:"short_id"`
-	Title    string `json:"title"`
-	Priority int    `json:"priority"`
-	Status   string `json:"status"`
-	Assignee string `json:"assignee,omitempty"`
+	ID        string `json:"id"`
+	ShortID   string `json:"short_id"`
+	Title     string `json:"title"`
+	Priority  int    `json:"priority"`
+	Status    string `json:"status"`
+	Assignee  string `json:"assignee,omitempty"`
+	ClaimedAt string `json:"claimed_at,omitempty"`
 }
 
 // ReadyResult is the JSON-serialisable success envelope.
@@ -281,29 +283,97 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 			short = r.ID
 		}
 		out.Ready = append(out.Ready, ReadyIssue{
-			ID:       r.ID,
-			ShortID:  short,
-			Title:    r.Title,
-			Priority: r.Priority,
-			Status:   r.Status,
-			Assignee: r.Assignee,
+			ID:        r.ID,
+			ShortID:   short,
+			Title:     r.Title,
+			Priority:  r.Priority,
+			Status:    r.Status,
+			Assignee:  r.Assignee,
+			ClaimedAt: r.ClaimedAt,
 		})
 	}
 	out.Count = len(out.Ready)
 	return out, 0
 }
 
+// readyEmptyCell is the placeholder for an empty assignee / claimed_at cell
+// in human output. Picked as a single dash so columns stay visually aligned
+// and an unassigned ready row reads as "no assignee" rather than as a typo.
+const readyEmptyCell = "-"
+
 // FormatReadyHuman renders a ReadyResult as one line per issue:
 //
-//	<short> <prio> <title>
+//	<short> <prio> <assignee> <claimed_at> <title>
 //
 // followed by a trailing newline per row. Empty result emits no output.
+// Assignee is truncated to the first 4 hex chars (matching the act-XXXX
+// short-id convention) when it looks like a hex node id; claimed_at is
+// rendered as a relative timestamp ("3m ago", "2h ago"). Unclaimed rows
+// render `-` in both columns so column alignment is preserved.
 func FormatReadyHuman(res ReadyResult) string {
+	return formatReadyHumanAt(res, time.Now())
+}
+
+// formatReadyHumanAt is the deterministic helper FormatReadyHuman uses, with
+// `now` injected so tests can assert on stable relative-time output.
+func formatReadyHumanAt(res ReadyResult, now time.Time) string {
 	var b strings.Builder
 	for _, r := range res.Ready {
-		fmt.Fprintf(&b, "%s %d %s\n", r.ShortID, r.Priority, r.Title)
+		assignee := readyEmptyCell
+		if r.Assignee != "" {
+			assignee = shortenAssignee(r.Assignee)
+		}
+		claimed := readyEmptyCell
+		if r.ClaimedAt != "" {
+			claimed = relativeAge(r.ClaimedAt, now)
+		}
+		fmt.Fprintf(&b, "%s %d %s %s %s\n", r.ShortID, r.Priority, assignee, claimed, r.Title)
 	}
 	return b.String()
+}
+
+// shortenAssignee truncates a node id to its first 4 hex chars when the
+// value looks like a hex string (matching the act-XXXX short-id convention).
+// Non-hex assignees (e.g. human handles, "agent-x") are passed through
+// unchanged so the column stays readable.
+func shortenAssignee(s string) string {
+	if len(s) <= 4 {
+		return s
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		if !isHex {
+			return s
+		}
+	}
+	return s[:4]
+}
+
+// relativeAge renders an RFC3339Millis timestamp (as produced by the fold
+// layer) as a coarse "Nu ago" string. Unparseable input or future-dated
+// stamps yield the raw value so we never silently lie about provenance.
+func relativeAge(ts string, now time.Time) string {
+	t, err := time.Parse("2006-01-02T15:04:05.000Z", ts)
+	if err != nil {
+		return ts
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		// Future-dated (clock skew, test fixtures): fall back to the
+		// raw stamp rather than emit a misleading "0s ago".
+		return ts
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 // descendantSet returns the set of ids reachable from root via the parent
