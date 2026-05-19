@@ -141,11 +141,122 @@ func (i *Index) DB() *sql.DB { return i.db }
 
 // ApplySchema creates tables and indices if missing. It is safe to call on a
 // freshly opened Index or one that already has the schema applied.
+//
+// After running the canonical CREATE TABLE IF NOT EXISTS pass, ApplySchema
+// reconciles each tracked table's column list with the expected list and
+// issues `ALTER TABLE ... ADD COLUMN` for any missing nullable columns. This
+// is the migration path for an index.db that pre-dates a backwards-compatible
+// schema addition (act-4bb6, fixing the act-4b45 regression where
+// `claimed_at` was added without migration). The migration is silent on
+// already-current databases — `PRAGMA table_info` finds the column, the
+// missing-set is empty, and no ALTER fires.
+//
+// ALTER TABLE in SQLite supports ADD COLUMN cleanly but cannot drop or
+// rename in older builds, so this path only handles additive schema changes.
+// A destructive change (column removed or renamed) would require the
+// `.act/ops/` rebuild path; doctor's `--fix-index` covers that case.
 func (i *Index) ApplySchema() error {
 	if _, err := i.db.Exec(schemaSQL); err != nil {
 		return fmt.Errorf("index: apply schema: %w", err)
 	}
+	if err := i.migrateAddMissingColumns(); err != nil {
+		return fmt.Errorf("index: migrate: %w", err)
+	}
 	return nil
+}
+
+// expectedColumns names the column type for every column the current
+// schemaSQL expects on each tracked table. Migration adds any missing column
+// via `ALTER TABLE ... ADD COLUMN <name> <type>`. Keep this in sync with the
+// CREATE TABLE statements above when adding columns.
+//
+// Order within a table matters only for newly-created (post-ALTER) columns:
+// SQLite appends ADDed columns to the end of the row regardless of where they
+// appear in this list. Keeping the list in declaration order makes the
+// mapping easy to audit.
+var expectedColumns = map[string][]struct{ name, sqlType string }{
+	"issues": {
+		{"id", "TEXT PRIMARY KEY"},
+		{"title", "TEXT"},
+		{"description", "TEXT"},
+		{"status", "TEXT"},
+		{"priority", "INTEGER"},
+		{"type", "TEXT"},
+		{"parent", "TEXT"},
+		{"assignee", "TEXT"},
+		{"created_at", "TEXT"},
+		{"claimed_at", "TEXT"},
+		{"closed_at", "TEXT"},
+		{"closed_reason", "TEXT"},
+		{"tombstoned", "INTEGER DEFAULT 0"},
+	},
+}
+
+// migrateAddMissingColumns introspects each tracked table and runs
+// `ALTER TABLE ... ADD COLUMN` for any column expectedColumns lists that
+// `PRAGMA table_info` does not report. The PRIMARY KEY column is skipped
+// for ALTER (SQLite cannot add a PK via ALTER) — its absence indicates a
+// fresh table that the prior `CREATE TABLE IF NOT EXISTS` already
+// populated, so by the time we reach this point, the PK column is always
+// present.
+func (i *Index) migrateAddMissingColumns() error {
+	for table, cols := range expectedColumns {
+		have, err := i.tableColumns(table)
+		if err != nil {
+			return err
+		}
+		for _, c := range cols {
+			if _, ok := have[c.name]; ok {
+				continue
+			}
+			// SQLite ALTER TABLE ADD COLUMN cannot add a PRIMARY KEY
+			// column. The PK is set at CREATE TABLE time; if it's
+			// missing here, the table itself is missing — which the
+			// prior CREATE TABLE IF NOT EXISTS would have repaired.
+			alterType := c.sqlType
+			if strings.Contains(strings.ToUpper(alterType), "PRIMARY KEY") {
+				continue
+			}
+			stmt := fmt.Sprintf(
+				`ALTER TABLE %s ADD COLUMN %s %s`,
+				table, c.name, alterType,
+			)
+			if _, err := i.db.Exec(stmt); err != nil {
+				return fmt.Errorf("alter %s add %s: %w", table, c.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// tableColumns returns the set of column names present on table according to
+// SQLite's `PRAGMA table_info(<table>)`. An empty set indicates the table
+// does not exist (PRAGMA returns zero rows in that case, no error).
+func (i *Index) tableColumns(table string) (map[string]struct{}, error) {
+	rows, err := i.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return nil, fmt.Errorf("table_info(%s): %w", table, err)
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return nil, fmt.Errorf("scan table_info(%s): %w", table, err)
+		}
+		out[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("table_info(%s) iter: %w", table, err)
+	}
+	return out, nil
 }
 
 // IntegrityCheck runs `PRAGMA integrity_check` and returns nil when the
