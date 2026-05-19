@@ -573,6 +573,22 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "upstream: origin-upstream is <N> commits behind origin; run 'act remote sync'",
 		testName:     "TestDocClaim_DoctorCase_H_UpstreamDriftStderr",
 	},
+	// init-gitignore-no-ask (act-d4a2): act init writes only `.act/` to the
+	// host `.gitignore` — never `.ask/` or any other non-act path. Sibling
+	// tools own their own gitignore footprint. The doc surface is the
+	// gitignoreEntry constant's comment in internal/cli/init.go; the
+	// asserting test runs RunInit on a fresh repo and verifies `.ask/` is
+	// absent from the produced .gitignore. Drift shape: a future refactor
+	// adds a second `ensureGitignoreEntry(..., ".ask/")` call and a
+	// cold-start reader of init.go's commentary gets misled — or, more
+	// likely, the comment gets edited away and the regression test silently
+	// becomes the only line of defense.
+	{
+		name:         "init-gitignore-no-ask",
+		docFile:      "internal/cli/init.go",
+		claimPattern: "does NOT write `.ask/`",
+		testName:     "TestDocClaim_Init_GitignoreNoAskEntry",
+	},
 	// op-filename-* (act-2f3d): op filenames use '-' rather than ':' in
 	// the time component so the on-disk tree is NTFS-safe (otherwise
 	// `git checkout` on Windows hosts fails before any Go code runs).

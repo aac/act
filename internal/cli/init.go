@@ -63,6 +63,12 @@ type successOutput struct {
 // is exact (whole-line, trim-space); other shapes (`/.act`, `**/.act/`,
 // `.act` without trailing slash, scoped via a parent .gitignore) are
 // detected separately by ignoresActPath.
+//
+// act init writes ONLY this entry. It does NOT write `.ask/` or any other
+// non-act path to the host `.gitignore` — sibling tools (ask, etc.) own
+// their own .gitignore footprint (act-d4a2). The test
+// TestDocClaim_Init_GitignoreNoAskEntry asserts this at the user-visible
+// boundary.
 const gitignoreEntry = ".act/"
 
 // contributingStanzaStart and contributingStanzaEnd wrap the act-emitted
