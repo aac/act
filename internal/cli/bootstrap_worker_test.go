@@ -424,6 +424,61 @@ func TestDocClaim_BootstrapWorker_HelpListsSubcommand(t *testing.T) {
 	}
 }
 
+// TestBootstrapWorker_SkipsHooks asserts that bootstrap-worker (cwd-source
+// mode) does NOT copy the host's `.act/hooks/` directory to the worker
+// (act-43cf99). Regression for: host-specific close hooks (e.g. the act
+// repo's hook that runs `go vet ./...`) break workers dispatched into
+// non-host repos. Verifies both that the directory is absent and that no
+// loose files from the host's hooks/ tree leak under target.
+func TestBootstrapWorker_SkipsHooks(t *testing.T) {
+	srcRoot, _ := makeBootstrapSource(t)
+	targetRoot := makeBootstrapTarget(t)
+
+	// Seed the source with a host-specific hook file that would fail in
+	// an arbitrary worker context (mimics the act repo's close hook).
+	srcHooks := filepath.Join(srcRoot, ".act", "hooks")
+	if err := os.MkdirAll(srcHooks, 0o755); err != nil {
+		t.Fatalf("mkdir src hooks: %v", err)
+	}
+	hookBody := []byte("#!/bin/sh\necho 'host-specific hook'\nexit 1\n")
+	if err := os.WriteFile(filepath.Join(srcHooks, "close"), hookBody, 0o755); err != nil {
+		t.Fatalf("seed src close hook: %v", err)
+	}
+	// And a stray supporting file under hooks/ to make sure the entire
+	// subtree is skipped, not just files matching a specific name.
+	if err := os.WriteFile(filepath.Join(srcHooks, "helper.sh"), []byte("# helper\n"), 0o755); err != nil {
+		t.Fatalf("seed src helper hook: %v", err)
+	}
+
+	_, code := RunBootstrapWorker(BootstrapWorkerOptions{
+		SourceCWD: srcRoot,
+		Target:    targetRoot,
+	})
+	if code != 0 {
+		t.Fatalf("bootstrap-worker code=%d", code)
+	}
+
+	// The target's `.act/hooks/` must not exist — the whole subtree is
+	// skipped on copy.
+	targetHooks := filepath.Join(targetRoot, ".act", "hooks")
+	if _, err := os.Stat(targetHooks); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("target .act/hooks/ unexpectedly present: err=%v", err)
+	}
+	// Belt-and-braces: no stray files anywhere under target that came
+	// from the host's hooks tree.
+	for _, name := range []string{"close", "helper.sh"} {
+		if _, err := os.Stat(filepath.Join(targetHooks, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("hook %q leaked into target: err=%v", name, err)
+		}
+	}
+
+	// Sanity: a non-hook file (config.json) is still copied — we didn't
+	// over-skip.
+	if _, err := os.Stat(filepath.Join(targetRoot, ".act", "config.json")); err != nil {
+		t.Errorf("config.json missing after skip-hooks copy: %v", err)
+	}
+}
+
 // Silence unused-import warnings when the file is edited down: we keep
 // io and io.EOF available for future cases (e.g. an empty-source test)
 // without churning imports.
