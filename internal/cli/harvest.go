@@ -75,6 +75,13 @@ import (
 	"github.com/aac/act/internal/index"
 )
 
+// HarvestSkipMessage is the literal stderr line emitted when harvest
+// short-circuits because the worker was a Phase 2 remote-attached worker
+// (act.role=worker AND origin matches the orchestrator's canonical
+// .act/.git path). Exported so the cmd-level dispatcher and the
+// TestDocClaim_* tests can reference the exact string without drift.
+const HarvestSkipMessage = "harvest skipped, worker was push-attached"
+
 // HarvestOptions controls `act harvest`.
 type HarvestOptions struct {
 	// HostCWD is the directory the host-repo resolver should start from.
@@ -101,6 +108,13 @@ type HarvestOptions struct {
 	// path. The signature mirrors index.(*Index).Rebuild so we can swap
 	// the function pointer without exposing an interface.
 	indexRebuild func(opsDir string, idx *index.Index) error
+
+	// Stderr is the destination for human-readable warning/skip messages
+	// (today: the Phase 2 push-attached-worker skip notice). Default
+	// (nil) is os.Stderr; tests inject a bytes.Buffer to capture the
+	// emitted line. The cmd-level dispatcher leaves it nil — its own
+	// stderr is the right destination.
+	Stderr io.Writer
 }
 
 // HarvestResult is the success payload. JSON shape is stable; new fields
@@ -136,6 +150,20 @@ type HarvestResult struct {
 	// DryRun echoes the input flag so consumers parsing the envelope
 	// don't have to track the call shape separately.
 	DryRun bool `json:"dry_run"`
+
+	// Skipped is true when harvest short-circuited because the worker
+	// was a Phase 2 remote-attached worker (act.role=worker AND origin
+	// matches the orchestrator's canonical .act/.git path). When set,
+	// HarvestedOps and SkippedOps are empty, CommitMessage is empty,
+	// and FoldDiffSummary is zero — the worker pushed its ops directly
+	// to the orchestrator during execution and there is nothing left
+	// to copy. See docs/coordination-plane-phase2-plan.md ticket 8.
+	Skipped bool `json:"skipped,omitempty"`
+
+	// SkipReason carries a stable slug describing why Skipped is true.
+	// Today only "worker_push_attached"; future skip reasons may grow.
+	// Empty when Skipped is false.
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // SkippedOp is one entry in HarvestResult.SkippedOps. Reason is a stable
@@ -229,6 +257,56 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 			"error":   ErrWorkerStateNotFound,
 			"message": fmt.Sprintf("act harvest: worker %s has no .act/ — pass a path that was seeded by `act bootstrap-worker`", absWorker),
 		}, 2
+	}
+
+	// Phase 2 ticket 8 — push-attached-worker skip pre-check.
+	//
+	// If the worker's .act/.git/config has act.role=worker AND its
+	// remote.origin.url points at this orchestrator's canonical
+	// .act/.git path, the worker was dispatched in Phase 2 remote-
+	// attached mode and pushed its ops directly to the orchestrator
+	// during execution. There is nothing left for harvest to copy —
+	// short-circuit with an empty envelope.
+	//
+	// Note: the "skip" decision is purely on act.role + origin match,
+	// not on actual push status. A worker that local-committed but
+	// never pushed would also be skipped here — its local-only ops
+	// would be missed. That's an acceptable tradeoff for Phase 2:
+	// remote-attached workers are expected to push (the post-commit
+	// hook from ticket 6b auto-pushes on every commit). Workers that
+	// can't push (sandboxed, no network) should NOT have act.role
+	// set — they fall through to the Phase 1.5 file-diff-and-copy
+	// path below.
+	//
+	// Orchestrator-path resolution (per docs/coordination-plane-
+	// phase2-plan.md §5 addendum): canonical .act/.git path is
+	// resolved from the CWD of the `act harvest` invocation (via the
+	// hostStart/hostRoot/hostAct chain above). If the orchestrator's
+	// state isn't resolvable, this whole function has already exited
+	// with ErrActNotInitialized; we cannot reach this point without a
+	// concrete hostAct.
+	workerActGitConfig := config.ActGitConfigPath(workerAct)
+	workerRole, roleErr := config.ReadRole(workerActGitConfig)
+	if roleErr == nil && workerRole == config.RoleWorker {
+		workerOrigin, originErr := config.GetGitConfig(workerActGitConfig, "remote.origin.url")
+		if originErr == nil && workerOrigin != "" {
+			orchActGit := filepath.Join(hostAct, ".git")
+			if pathsRefSame(workerOrigin, orchActGit) {
+				stderr := opts.Stderr
+				if stderr == nil {
+					stderr = os.Stderr
+				}
+				fmt.Fprintln(stderr, HarvestSkipMessage)
+				return HarvestResult{
+					HarvestedOps:    []string{},
+					SkippedOps:      []SkippedOp{},
+					FoldDiffSummary: FoldDiffSummary{},
+					DryRun:          opts.DryRun,
+					Skipped:         true,
+					SkipReason:      "worker_push_attached",
+				}, 0
+			}
+		}
 	}
 
 	// Build the candidate set: every `.json` file under
@@ -498,6 +576,49 @@ func copyFileForHarvest(src, dst string) error {
 		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
+}
+
+// pathsRefSame reports whether two filesystem paths refer to the same
+// location. The comparison rule (Phase 2 ticket 8):
+//
+//   - Both paths are made absolute via filepath.Abs. A relative `origin`
+//     URL is resolved relative to the process's CWD, which matches git's
+//     own behavior for filesystem remotes.
+//   - Each path is cleaned via filepath.Clean (collapses ./, .., and
+//     duplicate separators).
+//   - Trailing path separators are stripped so `/a/b/` and `/a/b` match.
+//   - filepath.EvalSymlinks is attempted for both sides; if it succeeds,
+//     the resolved path is used. A symlink-eval failure (path doesn't
+//     exist yet, permission denied on a parent) is non-fatal — the
+//     cleaned absolute path is used instead. This keeps the comparison
+//     deterministic even when the worker has been torn down between
+//     dispatch and harvest, leaving an `origin` URL whose target no
+//     longer exists.
+//
+// We do NOT attempt to parse `origin` as a URL (file://, https://, ssh://
+// schemes etc.). For Phase 2 the only origin shape that triggers the
+// skip is a bare filesystem path produced by `act bootstrap-worker
+// --from-remote`. Anything else (a real https remote, a file:// URL)
+// will compare as not-equal and harvest falls through to the Phase 1.5
+// path — the safe default.
+func pathsRefSame(a, b string) bool {
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+func canonicalPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	abs = filepath.Clean(abs)
+	abs = strings.TrimRight(abs, string(filepath.Separator))
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = strings.TrimRight(filepath.Clean(resolved), string(filepath.Separator))
+	}
+	return abs
 }
 
 // countIndexedIssues runs a single COUNT(*) against the index's issues
