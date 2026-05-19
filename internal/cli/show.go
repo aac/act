@@ -31,6 +31,11 @@ type ShowOptions struct {
 	// IncludeOps, when true, includes the HLC-sorted op stream alongside
 	// the rendered snapshot under the `ops` key.
 	IncludeOps bool
+	// Full, when true, disables the human-mode truncation guard on
+	// description and closed_reason so the full text renders verbatim
+	// (act-3c89). Independent of AsJSON: --json always returns full data
+	// regardless of this flag.
+	Full bool
 	// Fresh, when true, forces the read-path cache layer to fetch+rebase
 	// before reading state, regardless of FETCH_HEAD freshness (Phase 2
 	// ticket 5). Not surfaced as a CLI flag on `act show` in this phase;
@@ -60,6 +65,10 @@ type ShowResult struct {
 	// showCommitsLimit. Empty (not nil) when the issue has no work commits
 	// or when the show was run outside a git working tree (act-9c8c).
 	Commits []gitops.WorkCommit
+	// Full, when true, signals FormatShowHuman to skip the truncation
+	// guard on description and closed_reason and render them verbatim
+	// (act-3c89). Plumbed in from ShowOptions.Full.
+	Full bool
 }
 
 // ShowTombstoned is the success-shape returned by RunShow when the resolved
@@ -177,7 +186,7 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 		rendered["short_id"] = full
 	}
 
-	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps}
+	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps, Full: opts.Full}
 
 	// Step 6a: list work commits attributed to this issue via the
 	// `(act-XXXX)` marker. Read-side, no caching, single git invocation;
@@ -295,9 +304,14 @@ func formatShowFields(res ShowResult) string {
 	// description: render in human mode with truncation guard (was
 	// hidden in v0.1 — agents reached for show --json | jq for routine
 	// reads; act-10f7). Long descriptions truncate at 5 lines or 400
-	// chars; use --json for the full text.
+	// chars; use --json for the full text, or pass --full to disable
+	// truncation in the human format (act-3c89).
 	if desc, ok := f["description"].(string); ok && desc != "" {
-		fmt.Fprintf(&b, "description: %s\n", truncateForShow(desc))
+		if res.Full {
+			fmt.Fprintf(&b, "description: %s\n", desc)
+		} else {
+			fmt.Fprintf(&b, "description: %s\n", truncateForShow(desc))
+		}
 	}
 	if accept, ok := f["accept"]; ok {
 		switch a := accept.(type) {
@@ -347,8 +361,15 @@ func formatShowFields(res ShowResult) string {
 	if closed, ok := f["closed_at"].(string); ok && closed != "" {
 		fmt.Fprintf(&b, "closed_at: %s\n", closed)
 	}
+	// closed_reason: render in human mode with the same truncation guard
+	// as description so long close-reason text doesn't dominate show
+	// output. Pass --full (act-3c89) or use --json for the verbatim text.
 	if reason, ok := f["closed_reason"].(string); ok && reason != "" {
-		fmt.Fprintf(&b, "closed_reason: %s\n", reason)
+		if res.Full {
+			fmt.Fprintf(&b, "closed_reason: %s\n", reason)
+		} else {
+			fmt.Fprintf(&b, "closed_reason: %s\n", truncateForShow(reason))
+		}
 	}
 	if closer, ok := f["closed_by_node"].(string); ok && closer != "" {
 		fmt.Fprintf(&b, "closed_by_node: %s\n", closer)

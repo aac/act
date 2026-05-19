@@ -810,6 +810,7 @@ func runShow(args []string) int {
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	includeOps := fs.Bool("include-ops", false, "inline the HLC-sorted op stream alongside the snapshot")
 	commitMarker := fs.Bool("commit-marker", false, "emit just the Act-Id: act-XXXX commit-message trailer for this issue and exit")
+	full := fs.Bool("full", false, "render description and closed_reason without truncation in human format (--json is always full)")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -818,7 +819,7 @@ func runShow(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		emitBadFlag(*asJSON, "act show: usage: act show <id> [--json] [--include-ops] [--commit-marker]")
+		emitBadFlag(*asJSON, "act show: usage: act show <id> [--json] [--include-ops] [--commit-marker] [--full]")
 		return 2
 	}
 	idArg := fs.Arg(0)
@@ -836,6 +837,7 @@ func runShow(args []string) int {
 		ID:         idArg,
 		AsJSON:     *asJSON,
 		IncludeOps: *includeOps,
+		Full:       *full,
 	})
 	if code != 0 {
 		m, _ := toMap(out)

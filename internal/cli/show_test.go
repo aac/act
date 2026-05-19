@@ -187,6 +187,77 @@ func TestFormatShowHuman_ShortDescriptionPassthrough(t *testing.T) {
 	}
 }
 
+// TestFormatShowHuman_FullDisablesDescriptionTruncation asserts the
+// --full flag suppresses the truncation guard on description so the
+// verbatim text renders in human format (act-3c89).
+func TestFormatShowHuman_FullDisablesDescriptionTruncation(t *testing.T) {
+	long := strings.Repeat("a really verbose paragraph that goes on and on and on. ", 50)
+	res := ShowResult{
+		Fields: map[string]any{
+			"id":          "act-1234567890abcdef",
+			"title":       "demo",
+			"status":      "open",
+			"priority":    1,
+			"type":        "task",
+			"description": long,
+		},
+		Full: true,
+	}
+	out := FormatShowHuman(res)
+	if strings.Contains(out, "(truncated") {
+		t.Errorf("--full should suppress truncation marker; got:\n%s", out)
+	}
+	// The verbatim long text must appear in full.
+	if !strings.Contains(out, long) {
+		t.Errorf("--full should render full description verbatim; missing in:\n%s", out)
+	}
+}
+
+// TestFormatShowHuman_FullDisablesClosedReasonTruncation asserts that
+// closed_reason renders verbatim in human format when --full is set
+// (act-3c89).
+func TestFormatShowHuman_FullDisablesClosedReasonTruncation(t *testing.T) {
+	long := strings.Repeat("close reason narrative spanning many words. ", 30)
+	res := ShowResult{
+		Fields: map[string]any{
+			"id":            "act-1234567890abcdef",
+			"title":         "demo",
+			"status":        "closed",
+			"priority":      1,
+			"type":          "task",
+			"closed_reason": long,
+		},
+		Full: true,
+	}
+	out := FormatShowHuman(res)
+	if strings.Contains(out, "(truncated") {
+		t.Errorf("--full should suppress truncation marker on closed_reason; got:\n%s", out)
+	}
+	if !strings.Contains(out, long) {
+		t.Errorf("--full should render full closed_reason verbatim; missing in:\n%s", out)
+	}
+}
+
+// TestFormatShowHuman_NoFullPreservesTruncation asserts the absence of
+// --full keeps the existing truncation guard active on description
+// (regression coverage so the default path doesn't accidentally inherit
+// the verbatim render; act-3c89).
+func TestFormatShowHuman_NoFullPreservesTruncation(t *testing.T) {
+	long := strings.Repeat("a really verbose paragraph that goes on and on and on. ", 50)
+	res := ShowResult{Fields: map[string]any{
+		"id":          "act-1234567890abcdef",
+		"title":       "demo",
+		"status":      "open",
+		"priority":    1,
+		"type":        "task",
+		"description": long,
+	}}
+	out := FormatShowHuman(res)
+	if !strings.Contains(out, "(truncated; see --json") {
+		t.Errorf("default render should keep truncation marker; got:\n%s", out)
+	}
+}
+
 func TestRunShow_HappyPath(t *testing.T) {
 	root := makeRepoWithAct(t)
 
