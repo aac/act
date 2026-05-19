@@ -66,8 +66,14 @@ type UpdateOptions struct {
 	// Offline (Phase 2 ticket 3b): commit locally, skip push, append
 	// pending-push record.
 	Offline bool
-	AsJSON  bool
-	Verify  bool
+	// Branch, when non-empty, names the branch in the nested .act/ repo
+	// the auto-commit lands on and the push targets. See
+	// cli.WriteOpts.Branch and act-5d6a. On the --claim path, the value
+	// is honored by the claim wrapper so the win-commit lands on the
+	// same branch.
+	Branch string
+	AsJSON bool
+	Verify bool
 }
 
 // UpdateResult is the JSON shape returned on successful non-claim runs:
@@ -487,6 +493,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			Push:     false,
 			Isolated: opts.Isolated,
 			Offline:  opts.Offline,
+			Branch:   opts.Branch,
 		})
 		if werr != nil {
 			if errors.Is(werr, ErrInvalidFlags) {
@@ -509,9 +516,11 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
-	// Step 10: optional push (after all ops committed).
+	// Step 10: optional push (after all ops committed). When --branch is
+	// supplied (act-5d6a) the explicit push targets that branch on origin
+	// so a stale tracking config can't route the op commit to main.
 	if opts.Push && gops != nil {
-		if perr := gops.Push(); perr != nil {
+		if perr := gops.PushToBranch(opts.Branch); perr != nil {
 			return UpdateErrorOutput{
 				Error:   "push_failed",
 				Message: perr.Error(),
@@ -571,7 +580,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	// WriteOpAndAutoCommit's StageOpFile), so we must stage the ops dir
 	// before the commit fires. Under Phase 1 the wrapper's cwd is the
 	// nested .act/ working tree so the staging path is plain "ops".
-	wrapped := &claimGitOps{inner: gops, repoRoot: paths.Root}
+	wrapped := &claimGitOps{inner: gops, repoRoot: paths.Root, branch: opts.Branch}
 
 	res, err := claim.RunClaim(repoRoot, full, claim.Options{
 		Assignee:    cfg.NodeID, // assignee defaults to the local node id
@@ -715,9 +724,20 @@ func FormatUpdateHuman(res UpdateResult) string {
 type claimGitOps struct {
 	inner    *gitops.ActGitOps
 	repoRoot string
+	// branch, when non-empty, names the nested .act/ branch the claim
+	// auto-commit lands on and the optional --push targets on origin
+	// (act-5d6a). Empty preserves the historical HEAD/tracking-config
+	// behavior.
+	branch string
 }
 
 func (c *claimGitOps) Commit(message string) error {
+	// act-5d6a: switch the nested repo to --branch <ref> (creating if
+	// missing) before staging so the claim commit lands on that branch.
+	// EnsureBranch is a no-op when c.branch is empty.
+	if err := c.inner.EnsureBranch(c.branch); err != nil {
+		return fmt.Errorf("claimGitOps: ensure branch: %w", err)
+	}
 	// Stage the entire ops/ subtree so newly-written op files (and the
 	// corresponding shard directories) are picked up. The path is plain
 	// "ops" because under Phase 1 the wrapper's cwd is the nested .act/
@@ -730,7 +750,7 @@ func (c *claimGitOps) Commit(message string) error {
 }
 
 func (c *claimGitOps) PullRebase() error { return c.inner.PullRebase() }
-func (c *claimGitOps) Push() error       { return c.inner.Push() }
+func (c *claimGitOps) Push() error       { return c.inner.PushToBranch(c.branch) }
 
 // runGit is a tiny inline shellout used only by claimGitOps.Commit. We
 // don't import os/exec at package scope just for this wrapper, so we go

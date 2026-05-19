@@ -34,6 +34,10 @@ type ReopenOptions struct {
 	Isolated bool
 	// Offline (Phase 2 ticket 3b).
 	Offline bool
+	// Branch, when non-empty, names the branch in the nested .act/ repo
+	// the auto-commit lands on and the push targets. See
+	// cli.WriteOpts.Branch and act-5d6a.
+	Branch string
 	// Verify, when true, runs git commit hooks rather than --no-verify.
 	Verify bool
 }
@@ -265,6 +269,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		Push:     opts.Push,
 		Isolated: opts.Isolated,
 		Offline:  opts.Offline,
+		Branch:   opts.Branch,
 	})
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {

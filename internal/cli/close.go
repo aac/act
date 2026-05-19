@@ -40,6 +40,11 @@ type CloseOptions struct {
 	// a pending-push record. The next non-offline close (or any other
 	// non-offline write) flushes the deferred push before its own.
 	Offline bool
+	// Branch, when non-empty, names the branch in the nested .act/ repo
+	// that the close auto-commit lands on and the push targets. See
+	// WriteOpts.Branch (util.go) and act-5d6a for the worktree-subagent
+	// rationale.
+	Branch string
 	// NoCode marks this close as legitimately producing no code change
 	// (tracking-only, wrong-claim retraction, doc correction, etc.).
 	// Plumbed into ClosePayload.NoCode; doctor's reconcile-lite case (b)
@@ -319,6 +324,16 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		// always commits standalone in the nested repo.
 		gops := gitops.NewActGitOps(paths.Root)
 
+		// act-5d6a: --branch <ref> switches the nested repo to the
+		// named branch (creating it if missing) before staging so the
+		// close lands on that ref. Empty branch is a no-op.
+		if err := gops.EnsureBranch(opts.Branch); err != nil {
+			return CloseErrorOutput{
+				Error:   "branch_failed",
+				Message: err.Error(),
+			}, 1
+		}
+
 		// Stage the close op file.
 		if err := gops.StageOpFile(opPath); err != nil {
 			return CloseErrorOutput{
@@ -412,7 +427,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			// The commit has already landed; on push failure we do NOT roll
 			// it back — the close op is on disk locally and recoverable
 			// via the harvest path.
-			if err := gops.AutoPushAfterCommit(); err != nil {
+			if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
 				return closeErrorForPushFailure(err)
 			}
 		}

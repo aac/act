@@ -46,7 +46,11 @@ type DeleteOptions struct {
 	Isolated bool
 	// Offline (Phase 2 ticket 3b).
 	Offline bool
-	Verify  bool
+	// Branch, when non-empty, names the branch in the nested .act/ repo
+	// the auto-commit lands on and the push targets. See
+	// cli.WriteOpts.Branch and act-5d6a.
+	Branch string
+	Verify bool
 }
 
 // DeleteResult is the JSON-serialisable success envelope.
@@ -351,6 +355,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		Push:     opts.Push,
 		Isolated: opts.Isolated,
 		Offline:  opts.Offline,
+		Branch:   opts.Branch,
 	}, commitMsg)
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {

@@ -511,6 +511,14 @@ AUTO-COMMIT
   any write command to bundle multiple ops into one commit (useful
   during a bootstrap or migration).
 
+  --branch <ref> on any write command (create, update, close, dep-add,
+  reopen, delete) pins both the auto-commit and the subsequent push to
+  a named branch in the nested .act/ repo, independent of HEAD or
+  tracking-config defaults. Worktree subagents pass --branch
+  <worktree-branch> so multiple concurrent agents don't fan their op
+  commits onto a shared origin/main; without it, a stale tracking
+  config can silently redirect the publish.
+
 INDEX
   .act/index.db is a SQLite cache rebuilt on demand from the op log.
   It accelerates 'act ready' and 'act list --status closed'. It is

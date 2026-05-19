@@ -660,6 +660,23 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`YYYY-MM-DDTHH-MM-SS.sssZ`",
 		testName:     "TestDocClaim_OpFilename_NoColon",
 	},
+	// branch-flag-* (act-5d6a): the --branch <ref> universal write flag
+	// pins both the auto-commit and the publish to a named branch in the
+	// nested .act/ repo, decoupling them from HEAD / tracking config.
+	// Worktree subagents pass --branch <worktree-branch> so concurrent
+	// agents don't fan their op commits onto origin/main.
+	{
+		name:         "branch-flag-help-overview",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "--branch <ref>",
+		testName:     "TestDocClaim_BranchFlag_AutoCommitTargetsNamedBranch",
+	},
+	{
+		name:         "branch-flag-create-help",
+		docFile:      "cmd/act/create.go",
+		claimPattern: "branch in the nested .act/ repo",
+		testName:     "TestDocClaim_BranchFlag_AutoCommitTargetsNamedBranch",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
