@@ -9,6 +9,13 @@ import (
 	"github.com/aac/act/internal/cli"
 )
 
+// closeReasonMaxBytes is the documented cap on --reason (act help close:
+// "--reason is capped at 500 bytes"). We validate upfront here so the
+// operator learns the cap before the op file is written or staged.
+// internal/op.ClosePayload.Validate enforces the same 500-byte cap as
+// defense-in-depth for direct library callers.
+const closeReasonMaxBytes = 500
+
 // runClose dispatches `act close <id>`. Positional argument is the id;
 // flags follow spec §3 (`--reason TEXT`, `--json`) plus the universal
 // write flags (`--no-commit`, `--push`, `--isolated`).
@@ -30,6 +37,17 @@ func runClose(args []string) int {
 	}
 	if fs.NArg() < 1 {
 		emitBadFlag(*asJSON, "act close: usage: act close <id> [--reason TEXT] [--json]")
+		return 2
+	}
+	// Upfront --reason length validation: fail fast before the op file is
+	// written, with a stderr message that names the byte cap so the
+	// operator knows how much to shorten by. Defense-in-depth re-check
+	// lives in internal/op.ClosePayload.Validate.
+	if n := len(*reason); n > closeReasonMaxBytes {
+		emitBadFlag(*asJSON, fmt.Sprintf(
+			"act close: --reason exceeds %d-byte cap (got %d bytes); please shorten",
+			closeReasonMaxBytes, n,
+		))
 		return 2
 	}
 	idArg := fs.Arg(0)
