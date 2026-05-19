@@ -459,6 +459,7 @@ func runLog(args []string) int {
 	since := fs.String("since", "", "only include ops newer than this duration (e.g. 24h, 7d, 30m); prefix ok")
 	byIssue := fs.String("by-issue", "", "only include ops for this issue id (full or unique prefix)")
 	typeFlag := fs.String("type", "", "only include ops of these types (comma-separated, e.g. create,close)")
+	summary := fs.Bool("summary", false, "render one line per op (timestamp, op_type, 8-char hash, summary) instead of full envelopes")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -471,12 +472,12 @@ func runLog(args []string) int {
 	if fs.NArg() >= 1 {
 		idArg = fs.Arg(0)
 	}
-	if idArg == "" && *byIssue == "" && *since == "" && *typeFlag == "" {
-		emitBadFlag(*asJSON, "act log: usage: act log [<id>] [--since D] [--by-issue ID] [--type T[,T...]] [--json]")
+	if idArg == "" && *byIssue == "" && *since == "" && *typeFlag == "" && !*summary {
+		emitBadFlag(*asJSON, "act log: usage: act log [<id>] [--since D] [--by-issue ID] [--type T[,T...]] [--summary] [--json]")
 		return 2
 	}
 
-	opts := cli.LogOptions{ByIssue: *byIssue}
+	opts := cli.LogOptions{ByIssue: *byIssue, Summary: *summary}
 	if *since != "" {
 		d, perr := parseSinceDuration(*since)
 		if perr != nil {
@@ -520,7 +521,11 @@ func runLog(args []string) int {
 		fmt.Fprintf(os.Stderr, "act log: unexpected output type %T\n", out)
 		return 1
 	}
-	fmt.Print(cli.FormatLogHuman(res))
+	if *summary {
+		fmt.Print(cli.FormatLogHumanSummary(res))
+	} else {
+		fmt.Print(cli.FormatLogHuman(res))
+	}
 	return 0
 }
 
