@@ -112,6 +112,14 @@ If you've been dispatched as a sub-agent into a git worktree (or any other isola
 
 **Staleness window.** Your view of the tracker is frozen at dispatch time. If another worker dispatched in the same pass files an issue or closes one mid-flight, you won't see it; cross-worker visibility is at-merge-back, not real-time. This is acceptable for the Phase 1.5 dispatcher model — workers are typically scoped to disjoint units of work and the orchestrator sequences shape-changing work into single-unit waves. Phase 2 closes the staleness window with a streaming coordination plane; see `docs/coordination-plane-phase2-design.md` once it lands in your project.
 
+### Phase 2 dispatch (push-attached)
+
+When the orchestrator's `.act/.git/config` has `act.role=orchestrator` and an `origin-upstream` is wired (one-time per project via `act remote enable`, then optionally `act remote add-upstream <url>`), the dispatch flow shifts from copy-based bootstrap to push-attached bootstrap. Workers are seeded by `act bootstrap-worker --from-remote <url> <path>` and push their ops directly to the orchestrator's `.act/.git` during execution. The orchestrator's post-receive hook re-folds on every push and replicates to the configured upstream — no per-cycle harvest is needed for normal flows. The staleness window narrows from at-merge-back to next-push.
+
+Harvest remains the fallback for sandboxed workers without network access to the orchestrator, and as a failure-mode rescue when push-attached delivery breaks mid-run. Same shape as Phase 1.5: ops are append-only and the merge is idempotent, so a late harvest after a partial push is safe.
+
+Cross-reference: see `docs/migration-runbook.md` "Phase 1.5 → Phase 2 cutover" for the one-time operator setup and the rollback path.
+
 ## Per-project overrides
 
 Project-specific rules live in the repo's `CLAUDE.md`. That file is for deviations and rationale, not duplication of this skill. If a rule belongs in every project that uses act, it lives here; if it belongs in just one project, it lives in that project's CLAUDE.md.

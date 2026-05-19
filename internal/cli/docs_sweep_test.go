@@ -439,6 +439,28 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "harvest skipped, worker was push-attached",
 		testName:     "TestDocClaim_HarvestNarrow_SkipMessage",
 	},
+	// orchestrate-phase2-* and migration-phase2-* (Phase 2 ticket 10,
+	// act-95bc5c): the cross-repo orchestrate.md update plus the
+	// in-repo skill + migration-runbook surfaces that describe the
+	// Phase 2 push-attached dispatch flow. The orchestrate.md claim
+	// lives in the claude-config repo (commit eae259a on origin/main)
+	// and is enforced directly by
+	// TestDocClaim_OrchestratePhase2_FromRemoteFlow via os.Readlink —
+	// not registered here because this sweep harness can't index files
+	// outside the act repo root. The two entries below cover the
+	// in-repo doc surfaces.
+	{
+		name:         "skill-phase2-dispatch-section",
+		docFile:      "internal/skill/SKILL.md",
+		claimPattern: "Phase 2 dispatch (push-attached)",
+		testName:     "TestDocClaim_Skill_Phase2DispatchSection",
+	},
+	{
+		name:         "migration-phase2-cutover-section",
+		docFile:      "docs/migration-runbook.md",
+		claimPattern: "Phase 1.5 → Phase 2 cutover",
+		testName:     "TestDocClaim_MigrationRunbook_Phase2Cutover",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
@@ -481,6 +503,22 @@ func TestDocSweep_AllClaimsHaveAssertingTests(t *testing.T) {
 	}
 }
 
+// crossRepoDocClaimTests names TestDocClaim_* tests that intentionally
+// assert claims in doc surfaces OUTSIDE the act repo (e.g. the
+// orchestrate command at ~/.claude/commands/orchestrate.md, which is a
+// symlink into the claude-config repo). The sweep harness only
+// indexes files under the act repo root, so these tests cannot be
+// registered in docClaimRegistry. They're listed here to opt them out
+// of the orphan check while keeping the TestDocClaim_ naming
+// convention intact, so cold-start agents grepping for "doc claim
+// tests" still find them.
+var crossRepoDocClaimTests = map[string]string{
+	// Asserts claude-config orchestrate.md still names
+	// `act bootstrap-worker --from-remote` (Phase 2 ticket 10,
+	// act-95bc5c). Skips on hosts without the symlink wired in.
+	"TestDocClaim_OrchestratePhase2_FromRemoteFlow": "claude-config: commands/orchestrate.md",
+}
+
 // TestDocSweep_NoOrphanedDocClaimTests is the inverse pass: every
 // TestDocClaim_* function found under the repo must be referenced by
 // some registry entry, OR it must be a doc-claim helper (we allow
@@ -501,14 +539,19 @@ func TestDocSweep_NoOrphanedDocClaimTests(t *testing.T) {
 		if !strings.HasPrefix(name, "TestDocClaim_") {
 			continue
 		}
-		if !registered[name] {
-			orphans = append(orphans, name)
+		if registered[name] {
+			continue
 		}
+		if _, ok := crossRepoDocClaimTests[name]; ok {
+			continue
+		}
+		orphans = append(orphans, name)
 	}
 	if len(orphans) > 0 {
 		t.Errorf("orphaned TestDocClaim_* tests (no registry entry references them): %v\n"+
 			"  Either add a docClaimRegistry entry pointing at the doc claim, or rename "+
-			"the test if it isn't actually asserting a tracked doc claim.", orphans)
+			"the test if it isn't actually asserting a tracked doc claim.\n"+
+			"  Tests asserting cross-repo doc surfaces can be opted out via crossRepoDocClaimTests.", orphans)
 	}
 }
 
