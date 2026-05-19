@@ -89,6 +89,25 @@ var ErrEmptyAssignee = errors.New("claim: assignee is required")
 // using either sentinel; errors.Is matches both.
 var ErrNoUpstream = errors.New("claim: no upstream remote configured")
 
+// ErrPullRebaseSoftFail is the sentinel a GitOps.PullRebase implementation
+// returns when the rebase pre-step failed for a transient/cosmetic reason
+// that does NOT compromise the local write. By the time RunClaim invokes
+// PullRebase the new claim op has already been written and committed to the
+// local working tree (steps 2-3); a soft pull-rebase failure leaves the
+// local op durable. The op log is convergent — the next read or write will
+// re-fetch and reconcile against any concurrent writer.
+//
+// The canonical case (act-68f08b) is `git pull --rebase` refusing because
+// the working tree has unstaged changes — under Phase 1's nested-repo
+// layout, `.act/index.db` is tracked but rewritten on every read, so any
+// prior `act show` dirties the index even though no op was written. The
+// gitops package re-exports this value as ErrPullRebaseDirtyTree.
+//
+// RunClaim treats this sentinel like ErrNoUpstream: log nothing, continue
+// to the fold/winner-determination step. Other PullRebase failures (rebase
+// conflict on .act/ops/**, network failure, auth) remain hard errors.
+var ErrPullRebaseSoftFail = errors.New("claim: pull --rebase soft failure (local op durable)")
+
 // sleeper is the indirection used to make --wait retry deterministic in
 // tests. The default implementation calls time.Sleep; tests inject a fake.
 type sleeper func(time.Duration)
@@ -291,15 +310,25 @@ func singleAttempt(
 		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: commit: %w", err)
 	}
 
-	// Step 4: pull --rebase unless --isolated. A missing upstream
-	// (ErrNoUpstream) is treated as a successful no-op per act-fdb2: in
-	// the local-first / fresh-repo case there is no remote, therefore no
-	// concurrent writer to rebase against, and the protocol is still
-	// safe. Other PullRebase failures (rebase conflict, network) remain
-	// hard errors.
+	// Step 4: pull --rebase unless --isolated. Two sentinel cases are
+	// swallowed:
+	//
+	//   - ErrNoUpstream: the local-first / fresh-repo case (act-fdb2) —
+	//     no remote means no concurrent writer to rebase against; the
+	//     protocol is still safe.
+	//   - ErrPullRebaseSoftFail: the rebase pre-step refused for a
+	//     transient/cosmetic reason (the canonical case is a dirty
+	//     working tree from a prior read mutating `.act/index.db` —
+	//     act-68f08b). The local commit landed in step 3, so the op is
+	//     durable; the next read/write will re-fetch and reconcile.
+	//     Surfacing raw git stderr here would mislead the agent into
+	//     thinking the write failed.
+	//
+	// Other PullRebase failures (rebase conflict on .act/ops/**, network,
+	// auth) remain hard errors.
 	if !opts.Isolated {
 		if err := gitOps.PullRebase(); err != nil {
-			if !errors.Is(err, ErrNoUpstream) {
+			if !errors.Is(err, ErrNoUpstream) && !errors.Is(err, ErrPullRebaseSoftFail) {
 				return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: pull --rebase: %w", err)
 			}
 		}
