@@ -1705,3 +1705,192 @@ specification as and when the implementation lands. Until then, the
 explicit answer for any Mode B orchestrator asking "how does act
 handle stale claims?" is: **it does not; the orchestrator owns this
 concern.**
+
+## Branch discovery (Mode B)
+
+This section documents the **as-built** behavior. Surfaced by act-d264
+following the act-334e abstractions review: the push-asymmetry framing
+in `docs/orchestration-design.md` has Mode B workers pushing to "their
+assigned branch" while the orchestrator merges that branch into main
+on its own cadence. The framing assumes the orchestrator can answer
+the question "which branch is working issue X?" — but neither the spec
+nor the implementation defines a surface that answers it.
+
+**Current status: NOT DESIGNED.** There is no act surface — CLI, MCP,
+op envelope, config key, or doctor check — through which an
+orchestrator can ask act for the branch ref working a given issue. The
+field set on the `claim` op is `{assignee: string}` and nothing else
+(`internal/op/payloads.go` `ClaimPayload`); there is no `branch`,
+`worktree`, or `ref` slot, populated or reserved. The `assignee` is
+free-form and by convention holds the writer's `node_id` (per
+`internal/cli/util.go` `InClaimWindowForNode` comparing
+`p.Assignee != nodeID`), which identifies the host that wrote the
+op — not the working branch.
+
+### Data sources currently available
+
+The four places an orchestrator might look for branch information,
+and what each actually carries:
+
+- **Op envelopes (`.act/ops/<issue>/**/*.json`).** The `claim` op's
+  payload is `{assignee}`; the envelope adds `node_id`, `hlc`,
+  `op_type`, `op_hash`. None of these are branch refs. The `assignee`
+  is a node id by convention, not a ref. No optional field, no notes
+  channel, no extension point in the schema carries branch.
+
+- **`act show <id>` / `act show <id> --json`.** Surfaces the folded
+  state: `id`, `title`, `status`, `assignee`, `priority`, `type`,
+  `parent`, `description`, `accept`, `deps`, `created_at`,
+  `claimed_at`, `commits`, plus `commit_marker` for the canonical
+  `Act-Id:` trailer (`internal/cli/show.go formatShowFields`,
+  `ShowJSON`). No branch, ref, or worktree field appears in either
+  the human or JSON output. The MCP `act_show` tool returns the same
+  shape.
+
+- **`commits` field on `act show`.** Populated by
+  `gitops.WorkCommitsForIssue` (`internal/gitops/gitops.go`), which
+  runs `git log --all --extended-regexp --grep=<pattern>` against the
+  host repo for either the historical `(act-<hex>` subject form or
+  the `Act-Id: act-<hex>` trailer form (§"Marker placement" in
+  `docs/coordination-plane-design.md` v2.1). This is the closest
+  thing to a branch signal act exposes today — but only *after* the
+  worker has committed with the marker. An orchestrator that has a
+  SHA from `commits` can run `git branch --contains <sha>` to
+  enumerate branches reachable from that commit. Two caveats:
+  (a) `--all` returns commits across every ref on the host repo
+  including main, so reachability of a marker SHA from main does
+  not mean the worker is still on a branch; (b) for an
+  in-progress claim that has not yet written its first work commit,
+  `commits` is empty and the SHA-to-branch path is unavailable.
+
+- **`.act/.git/refs/` (the nested coordination-plane repo, Phase 2).**
+  The nested repo's branch ref is internal to the act state machine
+  — it advances on every op commit, fast-forwards under HLC ordering,
+  and bears no semantic relationship to the host repo's working
+  branch (`docs/coordination-plane-phase2-design.md` "Mutable state
+  in `.act/.git`: only the branch ref"). The nested repo's branch is
+  `main` (or whatever `.act/.git/HEAD` names; see §"Coordination plane:
+  Phase 2 config schema") regardless of which host-repo branch is
+  carrying the worker's code commits. Reading `.act/.git/refs/` does
+  not answer the question.
+
+- **`act.role` config key.** Set to `worker` by
+  `act bootstrap-worker --from-remote` (§"Coordination plane: Phase 2
+  config schema", `act.role` semantics) and to `orchestrator` by
+  `act remote enable`. The role marker partitions sync responsibility;
+  it does not record the worker's host-repo branch. A worker's
+  `.act/.git/config` has no field naming the host-repo branch it is
+  working on, and `act bootstrap-worker` neither requires nor records
+  one.
+
+### Naming conventions
+
+The Claude Code reference implementation uses a fixed convention:
+worktrees live at `<repo>/.claude/worktrees/agent-<hex>/` and the
+branch is `worktree-agent-<hex>` (verifiable on any active orchestrator
+session via `git worktree list`). The convention is **opaque to act**.
+The hex is the harness's worktree id, not the issue id. One worker
+working one issue, one worker working a sequence of issues, and two
+workers working unrelated issues all draw from the same hex namespace.
+There is no inverse: given an issue id, no construction recovers the
+branch name.
+
+This is the design Andrew's `/orchestrate` command flow uses
+(`~/.claude/commands/orchestrate.md`): the orchestrator dispatches a
+worker with `isolation: "worktree"`, the harness mints the worktree
+and branch under the `agent-<hex>` / `worktree-agent-<hex>` shape, the
+orchestrator instructs the worker to **"Return your branch name in
+your final report,"** and the orchestrator extracts the branch from
+the report on completion. The branch-discovery path is the *report
+text*, not any act surface. Any orchestrator that cannot read the
+worker's final report (e.g. the worker crashes mid-flight, the
+harness has no report channel, or the orchestrator wants to query
+mid-execution) has no fallback.
+
+### Guarantees
+
+- **No strong guarantee.** Nothing in the act spec or implementation
+  binds an issue id to a branch ref.
+- **No weak guarantee.** No optional or best-effort field carries
+  branch information either.
+- **No naming convention act enforces.** `worktree-agent-<hex>` is a
+  harness-side convention with no act-side parser, validator, or doc
+  claim. A different harness (gas town on beads, plain `git worktree
+  add` by hand, a future scheduler) could pick any branch name and
+  act would have no way to notice.
+
+### Recommended orchestrator query path
+
+A Mode B orchestrator implementing dispatch today MUST track the
+branch-to-issue mapping out-of-band. Specifically:
+
+1. **Record the branch at dispatch time.** When the orchestrator
+   creates a worktree (via `isolation: "worktree"`, `git worktree
+   add`, or any other mechanism), it knows the branch name it
+   chose — record `(issue_id, branch_ref)` in its own state
+   (dispatch log, in-memory map, scheduler database). This is the
+   only fully reliable path.
+2. **Confirm via the worker's final report.** When a dispatched
+   worker returns, parse its report for the explicit branch line.
+   This is what `/orchestrate` does today; treat it as confirmation
+   of the dispatch-time record, not as the source of truth.
+3. **Fall back to commit-marker grep when the dispatch record is
+   lost.** Given an issue id, run `git log --all --grep='Act-Id:
+   act-<hex>'` (or equivalently `act show <id> --json | jq
+   .commits`) to find work commits, then `git branch --contains
+   <sha>` to enumerate branches reachable from each commit. Filter
+   out main and any already-merged branches. This is best-effort:
+   it works only after the worker has written at least one work
+   commit, returns zero results during the gap between claim and
+   first commit, and returns ambiguous results when a worker has
+   worked multiple issues on the same branch.
+
+Path 1 is the supported design. Paths 2 and 3 are fallbacks the
+orchestrator implements on top of primitives act exposes for other
+purposes.
+
+### Forward path
+
+Closing this gap is a separate work item. Three shapes have been
+sketched in the act-d264 ticket; this section documents the trade-offs
+of each so a future implementer can choose with full context.
+
+- **(a) Convention.** Bake a branch-naming convention into the skill
+  and into act tooling so an orchestrator can construct the branch
+  name from an issue id (e.g. `worktree-act-<hex>`). Trade-off:
+  rigid — fails the moment one issue is worked across two branches,
+  two issues across one branch, or a non-Claude-Code harness picks a
+  different convention. The current `agent-<hex>` convention uses
+  the harness's worktree id precisely because mapping issue-to-branch
+  one-to-one is wrong for the cases above.
+- **(b) Structured field on the claim op.** Add a `branch` (or
+  `worktree`) field to `ClaimPayload` and surface it via `act show
+  --branch` and `act show --json`. Trade-off: requires an op-schema
+  migration (§4 "Op-schema migration"), a new write-time validator,
+  a doctor check for branch-unset-but-status-in-progress, and a
+  decision about whether the field is required or optional. Stays
+  inside the existing op-fold contract (the field is set-once at
+  claim time, LWW like other claim-op writes). The natural surface
+  shape is a new `--branch <ref>` flag on `act update --claim` /
+  `act_next`, written into the claim envelope's payload and
+  propagated to the folded state.
+- **(c) Notes channel.** Add a free-form `notes` field to op
+  envelopes that workers can write conventional strings into
+  (`worktree=worktree-foo`) and orchestrators can grep. Trade-off:
+  loose — no schema, no validation, no surface; consumers have to
+  agree on grep patterns out-of-band. This is the worst of the
+  three for a coordination contract and is documented here only
+  for completeness.
+
+The likeliest shape is (b) — structured field — because it stays
+inside the deterministic-fold contract (§6), composes with existing
+config-key plumbing for default-branch policies, and gives doctor a
+concrete invariant to check. A spec section on the branch field would
+live near §"Op type payloads" and §"`act update <id>`" in this
+document.
+
+This section will be promoted from "currently undefined" to a
+specification as and when the implementation lands. Until then, the
+explicit answer for any Mode B orchestrator asking "how does act
+expose the branch working a given issue?" is: **it does not; the
+orchestrator owns this concern out-of-band.**
