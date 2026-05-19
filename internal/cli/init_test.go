@@ -227,6 +227,75 @@ func TestRunInit_GitignoreEntry(t *testing.T) {
 	}
 }
 
+// TestDocClaim_Init_GitignoreNoAskEntry asserts at the user-visible
+// boundary that `act init` writes only `.act/` to the host .gitignore —
+// never `.ask/` or any other sibling-tool path. Each tool owns its own
+// .gitignore footprint; cross-tool coupling here was the bug the
+// act-d4a2 ticket called out. Asserting on the produced file (not on
+// any internal helper) catches a future refactor that calls
+// ensureGitignoreEntry with a non-act path.
+//
+// Companion assertion: the existing .gitignore is preserved if the user
+// (or another tool, e.g. `ask init`) already added `.ask/` themselves —
+// see TestRunInit_GitignoreLeavesPreExistingAskAlone.
+func TestDocClaim_Init_GitignoreNoAskEntry(t *testing.T) {
+	root := makeRepo(t)
+	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+		t.Fatalf("init code = %d", code)
+	}
+	body, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	// `.act/` must be present (positive claim covered separately by
+	// TestRunInit_GitignoreEntry; we re-assert here so a failure on this
+	// test points at the right surface even if the other test drifts).
+	if !strings.Contains(string(body), ".act/") {
+		t.Errorf("gitignore missing .act/ entry: %q", string(body))
+	}
+	// `.ask/` must NOT be present.
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) == ".ask/" {
+			t.Errorf("gitignore contains .ask/ entry; act init must not write sibling-tool paths. content=%q", string(body))
+		}
+	}
+}
+
+// TestRunInit_GitignoreLeavesPreExistingAskAlone verifies the forward-only
+// behavior called out in act-d4a2: a .gitignore that already contains
+// `.ask/` (from a prior `ask init`, a hand edit, or a legacy act init
+// from before the decoupling) is left alone. act init only ever appends
+// `.act/`; it never removes lines.
+func TestRunInit_GitignoreLeavesPreExistingAskAlone(t *testing.T) {
+	root := makeRepo(t)
+	gi := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(gi, []byte(".ask/\nnode_modules/\n"), 0o644); err != nil {
+		t.Fatalf("seed gitignore: %v", err)
+	}
+	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+		t.Fatalf("init code = %d", code)
+	}
+	got, err := os.ReadFile(gi)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// Pre-existing .ask/ line survives.
+	foundAsk := false
+	for _, line := range strings.Split(string(got), "\n") {
+		if strings.TrimSpace(line) == ".ask/" {
+			foundAsk = true
+			break
+		}
+	}
+	if !foundAsk {
+		t.Errorf("pre-existing .ask/ entry was removed: %q", string(got))
+	}
+	// `.act/` was appended.
+	if !strings.Contains(string(got), ".act/") {
+		t.Errorf("new .act/ entry missing: %q", string(got))
+	}
+}
+
 // TestRunInit_GitignorePreservesExisting verifies that prior entries in
 // the host .gitignore survive across init.
 func TestRunInit_GitignorePreservesExisting(t *testing.T) {
