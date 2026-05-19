@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/testfixtures"
 )
@@ -220,9 +221,15 @@ func TestE2E_PushContentionFourByFifty(t *testing.T) {
 //
 // Implementation notes:
 //
-//   - The drift threshold defaults to 50 commits (see config.Default
-//     EnableDefaults().UpstreamDriftThresholdCommits). 60 commits
-//     deliberately exceeds it.
+//   - The drift threshold defaults to 50 commits; the test lowers it to
+//     `driftThreshold` (5) on the nested .act/.git so we can drive case
+//     (h) with `numDriftOps` (6) commits. The original 60-commit shape
+//     produced flaky CI failures (`bad tree object HEAD`, `unable to
+//     create temporary file: No such file or directory`, `could not
+//     parse commit`) under disk pressure when running in parallel with
+//     the other heavy E2E tests in this package; the AC ("over-threshold
+//     drift trips case (h), sync clears it") only requires N > threshold,
+//     not the exact 60.
 //   - case (h) requires both refs/remotes/origin and refs/remotes/
 //     origin-upstream to be populated. Doctor's pre-(h) fetch arranges
 //     this; we run with NoFetch=false so the fetch happens.
@@ -263,6 +270,17 @@ func TestE2E_UpstreamDrift(t *testing.T) {
 	mustGitIn(t, "", "--git-dir="+actGitDir, "--work-tree="+filepath.Join(host, ".act"),
 		"config", "commit.gpgsign", "false")
 
+	// Lower the drift threshold so we can trip case (h) with a small
+	// number of commits. See the implementation note above for the
+	// rationale (CI flakiness under 60-commit disk pressure).
+	const driftThreshold = 5
+	actConfigPath := config.ActGitConfigPath(filepath.Join(host, ".act"))
+	if err := config.SetGitConfig(actConfigPath,
+		config.UpstreamDriftThresholdCommitsKey,
+		fmt.Sprintf("%d", driftThreshold)); err != nil {
+		t.Fatalf("set drift threshold: %v", err)
+	}
+
 	// Initial publish: force-push current main to both remotes so
 	// the remote-tracking refs are valid baselines for case (h)'s
 	// rev-list. The BareRemote fixture seeds itself with a .gitkeep
@@ -271,9 +289,9 @@ func TestE2E_UpstreamDrift(t *testing.T) {
 	mustGitIn(t, "", "--git-dir="+actGitDir, "push", "-qf", "origin", "main")
 	mustGitIn(t, "", "--git-dir="+actGitDir, "push", "-qf", "origin-upstream", "main")
 
-	// Generate 60 commits on the orchestrator's local main, pushing
-	// the run to `origin` but NOT to `origin-upstream` — that's the
-	// drift the test exercises. Each commit touches a unique file
+	// Generate `numDriftOps` commits on the orchestrator's local main,
+	// pushing the run to `origin` but NOT to `origin-upstream` — that's
+	// the drift the test exercises. Each commit touches a unique file
 	// under .act/.drift/ (NOT .act/ops/, which doctor parses as op
 	// JSON files); the case-(h) check counts commits on
 	// origin/main, not op-file content, so the path doesn't matter
@@ -282,7 +300,7 @@ func TestE2E_UpstreamDrift(t *testing.T) {
 	if err := os.MkdirAll(driftDir, 0o755); err != nil {
 		t.Fatalf("mkdir drift dir: %v", err)
 	}
-	const numDriftOps = 60
+	const numDriftOps = driftThreshold + 1
 	for i := 0; i < numDriftOps; i++ {
 		name := fmt.Sprintf("drift-%03d.txt", i)
 		body := []byte(fmt.Sprintf("i=%d\n", i))
