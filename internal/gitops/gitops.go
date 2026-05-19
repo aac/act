@@ -18,12 +18,15 @@ package gitops
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/aac/act/internal/claim"
+	"github.com/aac/act/internal/config"
 )
 
 // TestPushInvocationCount is a process-global counter incremented every time
@@ -38,6 +41,16 @@ import (
 // (atomic.Int64) but the absolute value is process-global so parallel
 // tests should diff against snapshots, not absolute values.
 var TestPushInvocationCount atomic.Int64
+
+// TestOrchestratorSyncFireCount is a process-global counter incremented
+// every time (*GitOps).maybeFireOrchestratorSync (the Phase 2 ticket-6b
+// trigger) decides the role is orchestrator AND successfully starts the
+// background `act remote sync` child process. Workers and unset-role
+// repos do NOT increment the counter; a Start() failure does NOT
+// increment it either. Tests snapshot the value at start and compare
+// against the new value at end — same monotonic-counter contract as
+// TestPushInvocationCount. Production code never reads it.
+var TestOrchestratorSyncFireCount atomic.Int64
 
 // Compile-time assertion: *GitOps satisfies the claim.GitOps interface
 // declared by act-9824. If a future signature drift breaks this, the build
@@ -267,6 +280,25 @@ func (g *GitOps) Commit(message string) error {
 // *PushExhaustedError{RetryCount=5}. See push_retry.go for the precise
 // counter semantics and ResetPushAttemptCounter for test setup.
 func (g *GitOps) AutoPushAfterCommit() error {
+	// Phase 2 ticket 6b: orchestrator-write upstream-sync trigger. The
+	// trigger is gated on `act.role=orchestrator` only — NOT on the
+	// presence of an `origin` remote. The orchestrator's own `.act/.git`
+	// typically has no `origin` (it IS the canonical history); workers
+	// are the ones with `origin` pointing at the orchestrator. Putting
+	// the trigger above the no-origin early-return means orchestrator-
+	// role repos without `origin` (the common production shape) still
+	// republish their writes to `origin-upstream` via the background
+	// `act remote sync`. Worker repos (act.role=worker or unset) skip
+	// the trigger; their writes reach the orchestrator via PushWithRetry
+	// below, and the orchestrator's post-receive hook (ticket 6a) fans
+	// them out to `origin-upstream`.
+	//
+	// Orchestrator detection is config-key-based only — no filesystem-
+	// path heuristic (closes OQ #4 per ticket 1a's pinned decision and
+	// the ticket 6b addendum). A push failure below does not suppress
+	// the sync attempt above; the two legs are independent.
+	g.maybeFireOrchestratorSync()
+
 	if !g.hasOriginRemote() {
 		// No remote configured: this is the local-only path. Keep silent
 		// so tests / single-machine users see no surprise behavior.
@@ -278,6 +310,78 @@ func (g *GitOps) AutoPushAfterCommit() error {
 	}
 	TestPushInvocationCount.Add(1)
 	return g.PushWithRetry(branch, PushOpts{})
+}
+
+// maybeFireOrchestratorSync fork-execs `act remote sync` in the
+// background when `act.role=orchestrator` is set in the nested .act/
+// repo's git config (`.act/.git/config`). When the key is unset or
+// `worker`, the trigger is a no-op (safe-by-default).
+//
+// Background detach mechanism (POSIX):
+//
+//   - cmd.Start() (no cmd.Wait()) so the parent does not block on the
+//     child's lifecycle.
+//   - cmd.SysProcAttr.Setsid=true puts the child in its own session
+//     so it survives the parent's exit and does not inherit the
+//     controlling terminal.
+//   - cmd.Stdin/Stdout/Stderr are wired to /dev/null. The spawned
+//     `act remote sync` writes its own structured JSON-line records to
+//     `.act/.sync-log` (via tmp-file rewrite); redirecting our raw
+//     stderr to the same file would interleave non-JSON bytes and
+//     corrupt the file's JSON-lines invariant. The post-receive hook
+//     (ticket 6a) uses `nohup ... >/dev/null 2>&1 &` for the same
+//     reason.
+//
+// The trigger is fire-and-forget by design: this is a publish-leg
+// optimization, and a missed fire is recoverable on the next write
+// (which will fire again) or by an explicit `act remote sync`. We
+// log nothing on the success path and never propagate errors to the
+// caller — the post-commit path returns immediately.
+//
+// g.RepoRoot is the nested .act/ directory for callers constructed via
+// NewActGitOps (every CLI writer); the config layer's ActGitConfigPath
+// resolves it to `.act/.git/config`. If the role read itself errors
+// (e.g. config file missing on a malformed install) we treat the
+// failure as RoleUnknown and skip — matching ReadRole's documented
+// safe-by-default behavior.
+func (g *GitOps) maybeFireOrchestratorSync() {
+	if g.RepoRoot == "" {
+		return
+	}
+	configPath := config.ActGitConfigPath(g.RepoRoot)
+	role, err := config.ReadRole(configPath)
+	if err != nil || role != config.RoleOrchestrator {
+		return
+	}
+	devNull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	cmd := exec.Command("act", "remote", "sync")
+	cmd.Dir = g.RepoRoot
+	if devNull != nil {
+		cmd.Stdin = devNull
+		cmd.Stdout = devNull
+		cmd.Stderr = devNull
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if startErr := cmd.Start(); startErr != nil {
+		// Best-effort: nothing to do — close handles and move on. The
+		// next write will retry the trigger; an explicit `act remote
+		// sync` will catch up regardless. We deliberately do NOT
+		// increment TestOrchestratorSyncFireCount on a Start failure
+		// so the test counter reflects "the trigger reached a spawned
+		// child," not just "the role gate let us through."
+		if devNull != nil {
+			devNull.Close()
+		}
+		return
+	}
+	TestOrchestratorSyncFireCount.Add(1)
+	// Close the parent's copy of /dev/null. The child has its own
+	// duped copies; closing here prevents the parent from holding the
+	// file open longer than necessary. Do NOT cmd.Wait(): the child is
+	// reparented to init via Setsid and runs independently.
+	if devNull != nil {
+		devNull.Close()
+	}
 }
 
 // PullRebase runs `git pull --rebase`. If no upstream is configured the

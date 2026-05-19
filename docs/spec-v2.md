@@ -1288,6 +1288,39 @@ append would push the count past the cap. The pruning shape matches
 |------|------|-------|---------|
 | `upstream_not_configured` | 2 | `act remote sync` | No `origin-upstream` remote configured in `.act/.git/config`. Stderr line: `no origin-upstream configured; run 'act remote add-upstream <url>'`. |
 
+### Orchestrator-write trigger (Phase 2 ticket 6b)
+
+Every successful local commit by an `act` write subcommand on a
+remote-configured project fires `act remote sync` in the background
+when `act.role=orchestrator` is set in the nested .act/ repo's git
+config. Workers (`act.role=worker` or unset) skip the trigger; their
+publish path is the synchronous `git push` to the orchestrator (ticket
+3a), and the orchestrator's post-receive hook (ticket 6a) then fans
+the new ops out to `origin-upstream`. The orchestrator-write trigger
+covers the symmetric leg: the orchestrator's own writes do not pass
+through a post-receive hook, so the post-commit path is what
+republishes them upstream.
+
+Behavior:
+
+- Role detection is config-key-based only: the trigger reads
+  `act.role` from `.act/.git/config` via `config.ReadRole`. No
+  filesystem-path heuristic is used (closes v1 OQ #4).
+- The trigger uses `fork-exec` with `cmd.Start()` (no `cmd.Wait()`),
+  `SysProcAttr.Setsid=true` for POSIX session detach, and
+  stdin/stdout/stderr wired to `/dev/null`. The post-commit code path
+  returns immediately; the spawned `act remote sync` runs
+  independently and writes its own structured JSON-line records to
+  `.act/.sync-log` (capped at 100 entries per the `act remote sync`
+  schema above).
+- `act.role=worker` or unset: the trigger is a no-op. Worker writes
+  rely on the synchronous push + post-receive-hook chain rather than
+  this trigger.
+- A spawn failure (binary not on PATH, file-descriptor exhaustion, …)
+  is silently swallowed: this is a publish-leg optimization, and the
+  next orchestrator write will retry. The agent can also run `act
+  remote sync` directly to catch up.
+
 ## `act remote add-upstream` (Phase 2 ticket 1b)
 
 `act remote add-upstream <url>` configures the orchestrator's
