@@ -1007,7 +1007,12 @@ func checkIndexSchema(paths config.LayoutPaths, fix bool) []Finding {
 
 	expected := []string{"issues", "issue_accept", "issue_deps", "issue_meta", "fts"}
 	have := map[string]bool{}
-	rows, err := idx.DB().Query(`SELECT name FROM sqlite_master WHERE type IN ('table','virtual') OR type='table'`)
+	// sqlite_master reports both regular tables and FTS5 virtual tables with
+	// type='table'; the `sql` column distinguishes them ("CREATE VIRTUAL TABLE
+	// ... USING fts5(...)" for the FTS index). A plain type='table' filter is
+	// sufficient to enumerate both — see act-cc65 for the prior wrong query
+	// that masked this with a redundant OR.
+	rows, err := idx.DB().Query(`SELECT name FROM sqlite_master WHERE type='table'`)
 	if err != nil {
 		if index.IsMalformed(err) {
 			return nil
