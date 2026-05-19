@@ -240,6 +240,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "bypass the read-path TTL cache",
 		testName:     "TestDocClaim_ReadCache_FreshFlagInReadyHelp",
 	},
+	// show-full-* (act-3c89): `act show --full` disables the human-mode
+	// truncation guard on description and closed_reason. The flag-help
+	// string in cmd/act/main.go is the load-bearing claim; the asserting
+	// test drives the subprocess `act show <id> --full` and confirms a
+	// long description renders verbatim (no "(truncated; see --json"
+	// marker).
+	{
+		name:         "show-full-flag-help",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "render description and closed_reason without truncation",
+		testName:     "TestDocClaim_Show_FullDisablesTruncation",
+	},
 	// skill-worker-* (act-9e7078): the worker-protocol section in the
 	// embedded SKILL.md tells dispatched sub-agents (a) that the
 	// orchestrator pre-seeds .act/ via bootstrap-worker before launch and

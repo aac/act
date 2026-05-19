@@ -321,6 +321,52 @@ func findShared2CharPrefix(ids []string) string {
 	return ""
 }
 
+// TestDocClaim_Show_FullDisablesTruncation pins the act-3c89 claim made
+// in cmd/act/main.go: `act show --full` renders description (and
+// closed_reason) verbatim in the human format, skipping the truncation
+// guard that otherwise kicks in for long values. The boundary asserted
+// is `act show <id> --full` stdout against a long-enough description
+// that the default render would have truncated.
+func TestDocClaim_Show_FullDisablesTruncation(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	// Build a description long enough to trip the truncation guard (the
+	// guard caps at ~400 chars or 5 lines). 600 chars in 8 lines makes
+	// both axes blow past the limit.
+	long := strings.Repeat("verbose narrative line. ", 30) + "\n" +
+		strings.Repeat("line two. ", 10) + "\n" +
+		strings.Repeat("line three. ", 10) + "\n" +
+		strings.Repeat("line four. ", 10) + "\n" +
+		strings.Repeat("line five. ", 10) + "\n" +
+		strings.Repeat("line six. ", 10) + "\n" +
+		strings.Repeat("line seven. ", 10) + "\n" +
+		strings.Repeat("line eight tail.", 5)
+
+	createOut, _ := mustRunAct(t, site, 0, "create", "long-desc probe", "--description", long, "--json")
+	id := pickIDFromJSON(t, createOut)
+
+	// Without --full: the default render truncates and emits the marker.
+	defOut, _ := mustRunAct(t, site, 0, "show", id)
+	if !strings.Contains(defOut, "(truncated; see --json") {
+		t.Errorf("default `act show` should truncate a long description; got:\n%s", defOut)
+	}
+
+	// With --full: the truncation marker disappears and the verbatim
+	// tail of the description appears in the output.
+	fullOut, _ := mustRunAct(t, site, 0, "show", id, "--full")
+	if strings.Contains(fullOut, "(truncated") {
+		t.Errorf("`act show --full` should suppress the truncation marker; got:\n%s", fullOut)
+	}
+	// The tail of the description is the surest "is this verbatim?"
+	// signal — truncation always drops the tail first.
+	if !strings.Contains(fullOut, "line eight tail.line eight tail.") {
+		t.Errorf("`act show --full` should render the description tail verbatim; got:\n%s", fullOut)
+	}
+}
+
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).
