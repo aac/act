@@ -36,7 +36,3 @@ If the harness is in **auto mode**, it may block several canonical-loop steps as
 (Adjust branch names if the project uses something other than `main`/`master`.) The trade-off: removing these safety nets means the agent's per-issue merge+push proceeds without confirmation. The rationale for accepting that trade in act-using projects: the loop already gates the close+commit cycle behind in-session review, and the value of immediate visibility-to-other-agents (the whole multi-writer story) depends on those merges and pushes landing. Discovered during the aac-website dogfood (2026-05-10): only the `git push` rule was in the original carveout, and the merge step had to be unblocked mid-loop.
 
 If you're not in auto mode, this section is irrelevant — confirms happen normally.
-
-## Bundle strategy (`.act/config.json`)
-
-act's default `bundle_strategy=per_op` auto-commits each op standalone. For a project that mixes code commits with many act ops — the typical case — set `bundle_strategy=per_session` in `.act/config.json`. Under `per_session`, close ops stage and get subsumed by the next `git commit -am '... (act-XXXX)'`, collapsing a typical lifecycle from claim+work+close into claim+work-with-close. The act repo itself runs `per_op` to keep dogfood visibility into every op; set `per_session` in any other project to keep git history readable.

@@ -36,7 +36,7 @@ func makeLegacyActRepo(t *testing.T) string {
 		t.Fatalf("mkdir ops: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".act", "config.json"),
-		[]byte(`{"node_id":"00000000-0000-0000-0000-000000000000","writer_version":"0.1.0","created_at":"2026-05-01T00:00:00.000Z","last_hlc":{"wall":"","logical":0,"node_id":""},"bundle_strategy":"per_session"}`+"\n"),
+		[]byte(`{"node_id":"00000000-0000-0000-0000-000000000000","writer_version":"0.1.0","created_at":"2026-05-01T00:00:00.000Z","last_hlc":{"wall":"","logical":0,"node_id":""}}`+"\n"),
 		0o644); err != nil {
 		t.Fatalf("write config.json: %v", err)
 	}

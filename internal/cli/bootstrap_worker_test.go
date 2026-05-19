@@ -270,7 +270,7 @@ func TestBootstrapWorker_SourceMissingGit(t *testing.T) {
 		t.Fatalf("mkdir src .act: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(srcRoot, ".act", "config.json"),
-		[]byte(`{"node_id":"deadbeef","version":"0.1.0","bundle_strategy":"per_session","created_at":"2026-05-01T00:00:00.000Z","last_hlc":{"wall":"2026-05-01T00:00:00.000Z","logical":0,"node_id":"deadbeef"}}`),
+		[]byte(`{"node_id":"deadbeef","version":"0.1.0","created_at":"2026-05-01T00:00:00.000Z","last_hlc":{"wall":"2026-05-01T00:00:00.000Z","logical":0,"node_id":"deadbeef"}}`),
 		0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

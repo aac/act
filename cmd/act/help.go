@@ -83,24 +83,17 @@ THE CANONICAL WORK LOOP (use this in every session)
                                   #          resolve via last-write-wins)
   3. <do the work, write tests, run them>
   4. act close <id> [--reason "..."]
-                                  # writes + stages the close op. If the
-                                  # working tree has uncommitted code
-                                  # changes, the op stays staged for the
-                                  # NEXT git commit to subsume — one
-                                  # work commit instead of work + close
-                                  # (see 'act help workflow' for the
-                                  # rationale and act-a659 in the rough).
-                                  # If the tree is otherwise clean, the
-                                  # close commits standalone.
+                                  # writes the close op + commits it
+                                  # standalone in the nested .act/ repo.
   5. git commit -a -m "<summary>" -m "Act-Id: act-<short-id>"
-                                  # subsumes the staged close op + your
-                                  # code changes. The 'Act-Id: act-XXXX'
-                                  # trailer in the commit body lets 'act
-                                  # doctor' correlate work commits with
-                                  # closed issues. Use two -m flags so
-                                  # the trailer becomes its own paragraph
-                                  # in the body (separated from the
-                                  # subject by a blank line).
+                                  # your separate work commit in the host
+                                  # repo. The 'Act-Id: act-XXXX' trailer
+                                  # in the commit body lets 'act doctor'
+                                  # correlate work commits with closed
+                                  # issues. Use two -m flags so the
+                                  # trailer becomes its own paragraph in
+                                  # the body (separated from the subject
+                                  # by a blank line).
   6. git push                     # publish for the other agents.
 
   In an MCP context, prefer act_next + act_finish — they compose the
@@ -336,12 +329,11 @@ THE LOOP IN DETAIL
     suffix; doctor still resolves the old form for back-compat, but
     new commits should always use the trailer.
 
-    Order matters. The canonical loop is close-then-commit, NOT
-    commit-then-close: 'act close' stages its op file but defers
-    the commit when the working tree has code changes; your next
-    'git commit -a' subsumes the staged op into the work commit.
-    Result: one work-commit-with-close per task instead of work +
-    close (act-a659).
+    Under Phase 1, 'act close' commits the close op standalone in
+    the nested .act/ git repo, and the agent's separate 'git commit
+    -a' in the host repo is independent. The two commits live in
+    different repos and don't interleave; order between them is
+    free.
 
     If you find a bug or surface gap mid-flight, file it as a
     follow-up but keep working on the current issue:
@@ -379,25 +371,14 @@ THE LOOP IN DETAIL
   Closing
     $ act close <id> --reason "<one-liner>"
 
-    Writes the close op file, runs .act/hooks/close (if present), and
-    stages the op for git. Three commit outcomes depending on context:
+    Writes the close op file, runs .act/hooks/close (if present),
+    stages the op, and commits it standalone in the nested .act/
+    repo. Two outcomes:
 
-      - Working tree has non-.act changes (typical): close op stays
-        staged. Your next 'git commit -a' picks it up alongside the
-        code change. The CloseResult includes commit_marker (the
-        'Act-Id: act-XXXX' trailer) so the agent's prompt can build
-        the message verbatim.
-      - Working tree clean outside .act/: close commits standalone
-        (preserves no-code-close UX as a single command).
+      - Default: close commits standalone in the nested .act/ repo.
+        The CloseResult includes commit_marker (the 'Act-Id: act-XXXX'
+        trailer) for the agent's separate host-repo work commit.
       - --no-commit: op file written, not staged, not committed.
-
-    --push errors when the close stays staged — there's nothing on
-    HEAD yet to publish. The error path fully rolls back the close
-    (op file removed), so the recovery is: commit your work first
-    via 'git commit -a -m <subject> -m "Act-Id: act-XXXX"', then
-    either re-run 'act close <id> --push' or push manually after
-    the work commit subsumes the close op via the next plain
-    'act close'.
 
     --reason is capped at 500 bytes. The cap is deliberate: reasons
     are audit-trail summaries, intended to be readable at a glance
@@ -413,8 +394,6 @@ EXAMPLE SESSION (CLI)
   $ # ... edit code, write tests, run them ...
   $ act close act-c26a01 --reason "all 5 acceptance criteria green"
   Closed act-c26a01: all 5 acceptance criteria green
-    Close op staged. Include in your next commit:
-    git commit -a -m '<subject>' -m 'Act-Id: act-c26a01'
   $ git commit -a -m "implement --blocked-by flag" -m "Act-Id: act-c26a01"
   $ git push
 

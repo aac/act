@@ -9,7 +9,7 @@ This skill activates whenever you're in a repo that uses `act` (the agent-first 
 
 **Reference files (read when the situation applies):**
 
-- `references/setup.md` — installing/finding the act binary, Claude Code auto-mode permission carveouts, `bundle_strategy` choice. Read once per project at bootstrap.
+- `references/setup.md` — installing/finding the act binary, Claude Code auto-mode permission carveouts. Read once per project at bootstrap.
 - `references/worktree-subagents.md` — the worktree `--push` trap and parallelism-vs-isolation guidance. Read before dispatching any sub-agent.
 
 If act isn't already installed and configured in this project, read `references/setup.md` first. Otherwise proceed.
@@ -89,8 +89,6 @@ Before dispatching any worktree subagent, read `references/worktree-subagents.md
 - Every work commit includes the issue's `Act-Id: act-XXXXXX` trailer in the commit body (separated from the subject by a blank line). Use two `-m` flags or a heredoc; do not append the marker to the subject line. Doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat, but new commits emit only the trailer.
 - Group `act create` / `act update` / `act dep add` ops with their work commit when they're load-bearing for the issue (e.g. filing follow-ups for an unresolved acceptance criterion). Otherwise let the auto-commit per `act` op stand on its own.
 - Use `--no-commit` only for true bootstrap or migration cases where bundling is the right unit.
-
-For `bundle_strategy` tuning at project setup, see `references/setup.md`.
 
 ## Documentation discipline
 
