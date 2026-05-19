@@ -1,8 +1,10 @@
 # Coordination plane — Phase 2 design brief
 
-**Status:** v2 draft, awaiting second review pass.
-**Author:** drafted in session 2026-05-18; revised after first review gate (architect + cold-eye).
-**Supersedes:** v1 (commit `00c4215`). Substantive changes from v1: topology committed (orchestrator's `.act/.git` is canonical, no separate bare repo); push-contention loop rewritten (rebase not merge); harvest scope narrowed; glossary, trust model, clock-skew, op-log growth, doctor three-state extension all added; implementation fanout removed.
+**Status:** v3 draft, awaiting narrow remediation-check review.
+**Author:** drafted in session 2026-05-18; revised through two review gates.
+**Supersedes:** v2 (commit `4776643`), v1 (commit `00c4215`).
+**v3 changes** (closes second-gate findings): post-push reachability verification mandated; `updateInstead` silent-rejection failure mode owned; GitHub upstream lifecycle committed to `act remote sync` (no hook, no cron); fold-checkpoint invalidation on rebase stated; harvest explicitly orchestrator-initiated; doctor case-(f) detection mechanism specified; bootstrap-over-SSH knobs (shallow, timeout, atomic) named; `push_exhausted` / `remote_unreachable` spec-v2.md and `TestDocClaim_*` dependencies called out; dispatch-mode signal named (`ACT_DISPATCH_MODE`); read-cache state location committed; migration-UX non-question dropped.
+**v2 changes from v1:** topology committed (orchestrator's `.act/.git` is canonical, no separate bare repo); push-contention loop rewritten (rebase not merge); harvest scope narrowed; glossary, trust model, clock-skew, op-log growth, doctor three-state extension all added; implementation fanout removed.
 **Builds on:** Phase 1 design at `docs/coordination-plane-design.md` v2.1 (as-built in `f3d9945`..`3298840`), plus the Phase 1.5 worker-isolation pivot currently in tickets `act-12dc23`, `act-9fadf0`, `act-9e7078`, `act-c8028f` (umbrella `act-b77a80`).
 
 ## Glossary
@@ -78,7 +80,9 @@ git clone <orchestrator>/.act/.git <worker-tree>/.act/.git
 
 For same-machine workers, `<orchestrator>` is an absolute path. For remote workers, it's `ssh://user@host/path/to/.act/.git`. Standard git URL semantics; no new transport.
 
-**Optional GitHub upstream** for durability and cross-machine convenience: the orchestrator's `.act/.git` has GitHub configured as a second remote (e.g., `origin-upstream`). A periodic background push (cron, post-commit hook, or `act remote sync`) replicates state. Workers do not interact with the upstream directly — they only talk to the orchestrator's `.act/.git`. If the orchestrator's machine is gone, recovery is "clone the GitHub upstream and reconfigure."
+**Optional GitHub upstream** for durability and cross-machine convenience: the orchestrator's `.act/.git` has GitHub configured as a second remote (e.g., `origin-upstream`). State replication is by an explicit `act remote sync` call invoked by the orchestrator's dispatch loop after each successful worker push. **Not** a post-commit hook (would block worker writes on slow GitHub network and could fire mid-rebase during contention retries, publishing partial state). **Not** cron (multi-minute durability gap defeats the "as durable as the upstream" claim). Workers do not interact with the upstream directly — they only talk to the orchestrator's `.act/.git`. If the orchestrator's machine is gone, recovery is "clone the GitHub upstream, reconfigure as the new orchestrator."
+
+The dispatch loop's responsibility for `act remote sync` is documented in `/orchestrate` and is fail-soft: a failed upstream push warns but does not block dispatch — durability is best-effort, not synchronous.
 
 **Alternatives considered and rejected:** (a) a separate bare repo at `~/.local/share/act/<project>/repo.git` — XDG-canonical but adds a second location to track, complicates backup, and provides no benefit since the orchestrator's `.act/.git` is already the source of truth; (b) GitHub-required as primary — forces every read and write through network latency, breaks offline operation, doesn't fit the single-user-many-agents target.
 
@@ -92,33 +96,40 @@ Writes push synchronously. Reads fetch with a TTL cache. Specific commands overr
 - Push rejected after exhausted retries → fail with `push_exhausted` error code, distinct from transient errors.
 - Local commit succeeded but push failed → op file exists locally; recovery via the harvest fallback (see Harvest in Phase 2).
 
-**Read path:** `act show`/`ready`/`log` checks the local fetch timestamp. If fetched within TTL window, read local state directly. If stale, `git fetch && git rebase origin/<branch>` first, then read.
+**Read path:** `act show`/`ready`/`log` checks the local fetch timestamp. If fetched within TTL window, read local state directly. If stale, `git fetch && git rebase origin/<branch>` first, then read. **Post-rebase invariant:** any `.act/fold-checkpoint.json` and `.act/index.db` MUST be treated as stale; the next fold re-verifies against the current tree hash before relying on cached state.
+
+**Cache state location.** The "last fetch" timestamp is the mtime of `.act/.git/FETCH_HEAD` — written by git on every successful fetch, no sidecar file needed. TTL is read from `.act/.git/config` key `act.readCacheTTLSeconds` (default 5).
 
 **Cache invalidation triggers** (cache is considered fresh if any of):
 
-1. Last fetch was within TTL (default 5s, configurable via `.act/.git/config`'s `act.readCacheTTLSeconds`).
-2. A local write happened more recently than the last fetch (the writer's own push is by definition fresher than any pre-push fetched state). Writes unconditionally invalidate the local read cache.
+1. mtime of `.act/.git/FETCH_HEAD` is within TTL.
+2. A local write happened more recently than the last fetch (the writer's own push is by definition fresher than any pre-push fetched state). Writes unconditionally invalidate the local read cache by touching FETCH_HEAD-or-equivalent on success.
 
 **Commands that bypass the TTL cache** (always fetch):
 
 - `act doctor` — diagnostic by nature; always wants ground truth.
-- `act ready` when invoked by `/orchestrate` in dispatch mode (detected via env var or flag set by the orchestrator). A stale `act ready` here causes duplicate-claim attempts that waste work even if LWW resolves them.
+- `act ready` when invoked by `/orchestrate` in dispatch mode. The orchestrator sets `ACT_DISPATCH_MODE=1` in the env of its `act ready` invocation; the act binary reads this env var and bypasses the cache. A stale `act ready` here causes duplicate-claim attempts that waste work even if LWW resolves them.
 - Anything passed `--fresh` or `--no-cache`.
 
 **Alternatives considered and rejected:** (a) eager-everywhere (push on write, fetch on every read, no cache) — pays network latency per command, breaks offline reads, slows doctor sweeps significantly; (b) lazy daemon-based sync — adds a moving part, makes "did my close publish?" a real question, harder to diagnose failures.
 
-## Push contention — fetch and rebase, never merge
+## Push contention — fetch, rebase, push, verify
 
 Two workers commit ops with non-overlapping filenames (HLC+nonce ensures this) and both push to the same ref. Whichever pushes first wins; the second gets non-fast-forward. The retry loop is:
 
 1. `git fetch origin <branch>`.
 2. `git rebase origin/<branch>` — replay local commits on top of the fetched state. Because each commit adds new files in disjoint paths and edits nothing, rebase produces zero conflicts.
-3. `git push origin <branch>`. On non-fast-forward again, repeat from 1.
-4. After N (default 5) retries with exponential backoff capped at 1s, abort with `push_exhausted`.
+3. `git push origin <branch>`.
+4. **Post-push reachability verification.** `git fetch origin <branch>` and `git merge-base --is-ancestor <local-HEAD> origin/<branch>`. If the local commit is reachable from the remote ref, push succeeded. If not, the push was silently rejected — go to step 2.
+5. After N (default 5) full retries with exponential backoff capped at 1s, abort with `push_exhausted`.
 
 **Why rebase, not merge:** preserves linear history in the coordination plane. Merge commits in the op log are noise — the ops themselves carry HLC, so reconstructing causality from merge topology isn't needed. Linear history makes log inspection and bisect (for the rare case of a corrupt op surviving fold) trivial. Specifically, `git merge --ff-only` would always fail after the first concurrent push because divergent histories aren't fast-forwards.
 
-**Partial push failures.** Git's object transfer is not atomic with the ref update. A worker can transfer objects successfully, then have the ref update fail (network drop, server hiccup). The retry loop's `git fetch` reveals whether the prior push's objects arrived — if they did, the worker's rebase becomes a no-op (its commits are already in `origin/<branch>`). If they didn't, the retry transfers them again. The cost of re-transferring already-arrived objects is harmless (git deduplicates on the receiver). The risk is the retry loop spinning forever on a remote that accepts objects but never confirms the ref update — bounded by the N-retry cap.
+**Why the reachability check is mandatory.** Git's push can return exit 0 in two cases where the remote ref did not advance: (a) network drops between object transfer and ref-update confirmation; (b) `receive.denyCurrentBranch=updateInstead` silently rejects the push when the orchestrator's working tree is dirty (a worker push arriving during the orchestrator's own sub-second write window). Without the reachability check, a worker's retry loop treats both as success and proceeds with the worker believing its ops are published when they are not. The check makes the silent-rejection class observable and triggers retry. This is the same mechanism that handles the network-drop case — both are recovered identically.
+
+**`updateInstead` as the cross-write serialization mechanism.** When the orchestrator runs its own `act` commands, the same working tree is touched as is the target of inbound worker pushes. `updateInstead` is the lock: it refuses pushes while the working tree is dirty, and refuses local writes from completing inconsistently while a push is in progress. Workers observe push refusal via step 4 and retry. Orchestrators do not need an explicit lock around their own write path because their writes don't push (they're already on the canonical) — they only need to commit fast enough that the dirty window doesn't widen pathologically. Doctor adds a check: if any `act` write takes more than 1s wall-clock between op-file stage and commit, warn (indicates filesystem trouble — slow NFS, encrypted overlay, etc.).
+
+**Partial push failures.** Git's object transfer is not atomic with the ref update. A worker can transfer objects successfully, then have the ref update fail. The retry loop's step-1 fetch reveals whether the prior push's objects arrived; if they did, the worker's rebase becomes a no-op (its commits are already in `origin/<branch>`). If they didn't, the retry transfers them again. Re-transferring already-arrived objects is harmless (git deduplicates on the receiver). The N-retry cap bounds spin risk.
 
 **Mutable state in `.act/.git`:** only the branch ref. No config, hooks, or working-tree state is touched by ops. Index file is reset between operations. This makes the rebase safe under any concurrent state.
 
@@ -126,7 +137,7 @@ Two workers commit ops with non-overlapping filenames (HLC+nonce ensures this) a
 
 Replaces Phase 1.5's copy-on-dispatch for remote-attached workers (workers that can reach the orchestrator's `.act/.git`):
 
-1. **Dispatch.** Orchestrator runs `git clone <orchestrator-url> <worktree>/.act/.git`. Worker's `.act/` is a full clone, with `origin` configured to the orchestrator's `.act/.git`. A new subcommand `act bootstrap-worker --from-remote <url> <target>` wraps this and validates the resulting state (round-trip with a fresh `act ready`).
+1. **Dispatch.** Orchestrator runs `act bootstrap-worker --from-remote <orchestrator-url> <worktree>`. The subcommand: (a) clones with `--depth 1` (coordination plane only needs current state — fold replays op files, not git history, so deep history is dead weight); (b) clones into a temp directory under `<worktree>/.act.bootstrap/`, then atomically renames to `<worktree>/.act/` on success — a partial or stalled clone leaves no debris; (c) honors `act.bootstrapTimeoutSeconds` from `.act/.git/config` (default 30s) and aborts cleanly on timeout; (d) validates the resulting state with a round-trip `act ready` before returning success.
 2. **Execution.** Worker calls `act` commands normally. Writes push to origin (the orchestrator's `.act/.git`). Reads fetch within TTL. The worker never knows it's a worker.
 3. **Cross-worker discovery.** Worker B's `act ready` after worker A's `act close` of issue X (with fetch cache cold) sees the close. Latency window is min(TTL, time since last fetch). For TTL=5s, typical worker-to-worker visibility is sub-10s.
 4. **Failure.** Worker dies mid-execution. If its last write was successfully pushed, no recovery needed — the op is on the orchestrator. If a local commit hadn't yet pushed (network blip, process kill), harvest the worker's `.act/.git` from main before tearing down the worktree (see Harvest in Phase 2).
@@ -145,10 +156,12 @@ Phase 1 v2.1 tabulated five reconciliation cases between code and act state. Pha
 | (c) marker and issue both present, status mismatched | Sub-case (c'): local and remote disagree on status → HLC LWW picks the winner; doctor logs the resolution. |
 | (d) closed issue, no marker | Unchanged. |
 | (e) marker present, issue closed | Unchanged. |
-| (new — Phase 2) | (f) issue exists locally, never pushed to remote → flag, suggest manual push or harvest. |
-| (new — Phase 2) | (g) remote ahead of local by more than TTL after a fetch attempt failed → flag remote-unreachable. |
+| (new — Phase 2) | (f) issue exists locally, never pushed to remote → flag, suggest manual push or harvest. Detection: `git diff-tree origin/<branch>..HEAD -- .act/ops/` non-empty after a fresh fetch. |
+| (new — Phase 2) | (g) remote ahead of local by more than TTL after a fetch attempt failed → flag remote-unreachable. Detection: fetch returns non-zero or hangs past `act.fetchTimeoutSeconds` (default 10s). |
 
-Doctor in Phase 2 fetches before running checks (unless `--no-fetch`) and includes a remote-status block in its output. The full table extension lives in the implementation-side doc once a plan exists; this brief commits to the shape.
+Doctor in Phase 2 fetches before running checks (unless `--no-fetch`) and includes a remote-status block in its output. The full table extension lives in the implementation-side doc once a plan exists; this brief commits to the shape and the detection mechanism for each new case.
+
+**Exit-code mapping.** Case (f) is severity warn (exit 0 with stderr finding); case (g) is severity error (exit 4, matching Phase 1's `remote_unreachable` envelope) unless `--no-fetch` was passed, in which case it's downgraded to warn.
 
 ## Clock skew and op-log growth
 
@@ -165,10 +178,10 @@ Preconditions:
 
 Steps:
 
-1. On the orchestrator: `git config -f .act/.git/config receive.denyCurrentBranch updateInstead`. (Wrapped by a new `act remote enable` subcommand for ergonomics.)
+1. On the orchestrator: `act remote enable`. The subcommand sets `receive.denyCurrentBranch=updateInstead` on `.act/.git`, sets `act.readCacheTTLSeconds` and related config keys to their defaults, and runs a doctor pass to confirm the result.
 2. Optionally, configure the GitHub upstream: `act remote add-upstream <github-url>` — adds the URL as a second remote and does an initial push.
 3. Update `/orchestrate`'s dispatch path to use clone-based worker bootstrap (`act bootstrap-worker --from-remote ...`) instead of copy. The orchestrate doc gains a "Phase 1.5 → Phase 2 cutover" note; copy-on-dispatch is deprecated for remote-attached workers but stays in the codebase for sandboxed-no-network workers.
-4. From this point on, the project is on Phase 2. Reverting: unset `receive.denyCurrentBranch`, revert orchestrate to copy-based dispatch, optionally remove the upstream remote. All ops continue to fold correctly — Phase 2 doesn't change the op format.
+4. From this point on, the project is on Phase 2. Reverting: `act remote disable` (unsets the config keys, optionally removes the upstream remote), revert orchestrate to copy-based dispatch. All ops continue to fold correctly — Phase 2 doesn't change the op format.
 
 **Worktree regression resolved.** Under Phase 1 + 1.5 alone, `git worktree add` doesn't carry `.act/`, so worker agents can't run `act` commands (the regression documented in the session handoff at `f3d9945`..`3298840`). Phase 2's clone-on-dispatch path solves this: every worktree gets its own `.act/.git` clone via the bootstrap subcommand, no longer dependent on filesystem layout.
 
@@ -179,7 +192,9 @@ Harvest is not retired. It is scoped:
 - **In scope for harvest:** (a) sandboxed-no-network workers (containers, remote VMs without orchestrator reachability) — their workflow remains copy-on-dispatch + harvest-on-teardown; (b) crash recovery — a worker that local-committed but never successfully pushed before dying. Harvest pulls those ops back from the worker's `.act/.git` before worktree teardown.
 - **Out of scope for harvest:** normal teardown of remote-attached workers. Those workers pushed during execution; by teardown, the orchestrator already has everything. No-op the harvest call on those workers' teardown.
 
-**Idempotency requirement (test-enforced).** Harvest of a worker whose ops already landed on the orchestrator via push must be a no-op. Detection: op-set diff between the worker's local `.act/ops/` and the orchestrator's. Same set → no-op. Different set → copy the difference. The HLC+nonce filename guarantee makes the diff exact and unambiguous.
+**Initiation side.** Harvest is always orchestrator-initiated. The worker (or its filesystem mount) is a passive op-source — for no-network sandboxed workers, the worker cannot fetch to diff against the orchestrator, so it cannot run harvest itself. The orchestrator inspects the worker's `.act/ops/` directory directly (over filesystem or rsync-over-ssh for sandboxed cases), diffs against its own op set, and copies only the delta.
+
+**Idempotency requirement (test-enforced).** Harvest of a worker whose ops already landed on the orchestrator via push must be a no-op. Detection: op-set diff between the worker's `.act/ops/` and the orchestrator's. Same set → no-op. Different set → copy the difference. The HLC+nonce filename guarantee makes the diff exact and unambiguous.
 
 **`--push-every-op` flag** for sandboxed workers that do have network: forces each `act` write to push immediately rather than batching. Tradeoffs network cost for crash-resilience. Off by default; opt-in for workers in environments where harvest isn't practical.
 
@@ -192,13 +207,24 @@ From v1, these are now closed:
 - **Auth model** — explicitly single-user-machines-under-operator-control, SSH + filesystem only. Trust section above.
 - **Orphan worker clone GC** — op-set diff between remote and worker clone is the detection mechanism. No worker manifest needed. Data loss when a sandbox is wiped before first push is accepted; `--push-every-op` mitigates for workers that have network.
 
+## Spec and test-discipline dependencies
+
+Phase 2 introduces two new error codes that callers (CLI users, agents parsing envelopes) will rely on: `push_exhausted` (distinct from transient errors; retry-limit exhaustion) and `remote_unreachable` (network-level failure, transient). Per the doc-discipline rule in this repo's `CLAUDE.md`, every user-visible behavior claim requires an asserting test at the user-visible boundary, and the spec must enumerate it.
+
+Concretely, this means the Phase 2 implementation must, in the same commits that introduce the codes:
+
+1. Add `push_exhausted` and `remote_unreachable` to the error-envelope code table in `docs/spec-v2.md` with exit-code mappings (proposed: exit 4 for both, distinguished by code+`details`).
+2. Add `Envelope.Code` constants for both in `internal/cli/errors.go`.
+3. Register `TestDocClaim_PushExhaustedCode` and `TestDocClaim_RemoteUnreachableCode` in `internal/cli/docs_sweep_test.go`, asserting the codes appear in CLI output on the failure paths they describe.
+
+The brief flags this dependency so plan-writing can scope it correctly; it is not a separate ticket but a constraint on every ticket that touches a write path or doctor output.
+
 ## Remaining open questions
 
 These need plan-stage decisions but don't gate the design:
 
-1. **Migration command UX** — single `act remote enable` vs. separate `act remote init` + `act remote configure`. Resolvable at implementation time.
-2. **Doctor's remote-status block format** — JSON shape and human-readable rendering. Plan-stage detail.
-3. **Worker telemetry** — should the orchestrator log when a worker's `act` command times out fetching, to surface flaky network early? Probably yes; needs a small instrumentation hook.
+1. **Doctor's remote-status block format.** JSON shape and human-readable rendering. Plan-stage detail; the shape is informed by the existing Phase 1 doctor output.
+2. **Worker telemetry.** Should the orchestrator log when a worker's `act` command times out fetching, to surface flaky network early? Probably yes; needs a small instrumentation hook somewhere in the dispatch loop.
 
 ## Cross-references
 
