@@ -458,6 +458,17 @@ func TestE2E_DispatchLoop(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", filepath.Dir(actBinaryPath)+string(os.PathListSeparator)+origPath)
 
+	// ACT_BIN_OVERRIDE: the post-receive hook embeds the absolute
+	// path of the binary that ran `act remote enable`. Under
+	// `go test`, that path resolves (via os.Executable) to the test
+	// binary itself, which does not implement `remote sync` — so
+	// the rendered hook would silently no-op and `.sync-log` would
+	// never be written. Pointing the seam at the prebuilt act
+	// binary makes the rendered hook invoke the real CLI. Same
+	// pattern as TestRemoteSync_PostReceiveHookFiresBackgroundSync
+	// in internal/cli/remote_sync_test.go.
+	t.Setenv("ACT_BIN_OVERRIDE", actBinaryPath)
+
 	// Stand up the orchestrator.
 	host := newHostRepo(t)
 	if _, code := cli.RunInit(host, false, "machine-orch5", "orch5@example.com",
