@@ -29,6 +29,7 @@ func runClose(args []string) int {
 	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
 	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Worktree subagents pass --branch <worktree-branch> so op commits don't fan onto origin/main.")
 	noCode := fs.Bool("no-code", false, "mark this close as producing no code change (tracking, wrong-claim, doc-only); doctor suppresses orphan-close warnings for these closes")
+	noDoctor := fs.Bool("no-doctor", false, "skip the post-close single-issue commit-marker correlation check (default: warn on stderr if no host commit in the last 50 carries an 'Act-Id:' trailer for this issue)")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -72,6 +73,7 @@ func runClose(args []string) int {
 		Offline:  *offline,
 		Branch:   *branch,
 		NoCode:   *noCode,
+		NoDoctor: *noDoctor,
 	})
 	if code != 0 {
 		m, _ := toMap(out)

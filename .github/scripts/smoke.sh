@@ -124,7 +124,12 @@ assert_jq "claim.claimed"  "${CLAIM_JSON}" '.claimed == true'
 assert_jq "claim.ok"       "${CLAIM_JSON}" '.ok == true'
 
 # Step 7 — close with a reason. JSON shape: {id, ops_written, committed, reason}.
-CLOSE_JSON="$(run_act 0 close --reason "smoke complete" --json "${ID}")"
+# --no-doctor opts out of the post-close commit-marker correlation check
+# (act-f2ea): the smoke flow never builds a host work commit carrying the
+# `Act-Id:` trailer, so the check would always warn on stderr and
+# run_act's `2>&1` capture would pollute the JSON envelope passed to jq.
+# The check itself is regression-tested in close_test.go.
+CLOSE_JSON="$(run_act 0 close --no-doctor --reason "smoke complete" --json "${ID}")"
 assert_jq "close.id"      "${CLOSE_JSON}" '.id == $id' --arg id "${ID}"
 assert_jq "close.reason"  "${CLOSE_JSON}" '.reason == "smoke complete"'
 
