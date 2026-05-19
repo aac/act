@@ -296,3 +296,148 @@ func TestRunRemote_ReadRoleDefault(t *testing.T) {
 		t.Errorf("default ReadRole = %q, want %q", role, config.RoleUnknown)
 	}
 }
+
+// seedOrphanCloseWarn writes a host commit carrying an `Act-Id:`
+// trailer for an id that does not exist in act state, producing the
+// orphan-close case-(d) warn-severity finding. The commit is authored
+// by the fixture's existing internal email so the external-PR
+// suppression in checkOrphanClose does NOT fire. Used by the warn-
+// only tests below — this path avoids touching .act/ops/ directly so
+// it doesn't accidentally trip index-divergence (which is
+// error-severity) alongside the warn.
+func seedOrphanCloseWarn(t *testing.T, host, syntheticID string) {
+	t.Helper()
+	p := filepath.Join(host, "warn-seed-"+syntheticID+".txt")
+	if err := os.WriteFile(p, []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	runGit(t, host, "add", filepath.Base(p))
+	runGit(t, host, "commit", "-q", "--no-verify",
+		"-m", "synthetic warn seed",
+		"-m", "Act-Id: "+syntheticID)
+}
+
+// TestRemoteEnable_WarnOnlyDoctor_Succeeds asserts that act remote
+// enable succeeds (exit 0) when the post-config doctor pass reports
+// only warn-severity findings (e.g. historical orphan-close from
+// commits referencing ids that don't exist in act state — the
+// dogfood signal that motivated act-06ef97). Per docs/spec-v2.md the
+// role transition + hook install must NOT be blocked by warns; only
+// error-severity findings are blocking.
+func TestRemoteEnable_WarnOnlyDoctor_Succeeds(t *testing.T) {
+	host := newRemoteFixture(t)
+	id := "act-deadbe"
+	seedOrphanCloseWarn(t, host, id)
+
+	// Pre-flight: confirm doctor reports a warn (and not an error)
+	// for the synthetic id so the test is exercising the path we
+	// mean to. Scoped to orphan-close to avoid noise from other
+	// checks.
+	docOut, _ := RunDoctor(host, DoctorOptions{Check: "orphan-close"})
+	dr := docOut.(DoctorResult)
+	sawWarn := false
+	for _, f := range dr.Findings {
+		if f.IssueID == id {
+			if f.Severity != "warn" {
+				t.Fatalf("seed for case-(d) should be warn, got %s for %+v", f.Severity, f)
+			}
+			sawWarn = true
+		}
+	}
+	if !sawWarn {
+		t.Fatalf("seed did not produce warn finding for %s; findings=%+v", id, dr.Findings)
+	}
+
+	// The enable call. Acceptance: exit 0, RemoteResult returned (not
+	// an envelope map), role key written, hook installed.
+	out, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: host})
+	if code != 0 {
+		t.Fatalf("warn-only doctor must not block enable; code=%d out=%v", code, out)
+	}
+	res, ok := out.(RemoteResult)
+	if !ok {
+		t.Fatalf("expected RemoteResult, got %T (%v)", out, out)
+	}
+	if !res.Changed {
+		t.Errorf("RemoteResult.Changed = false; want true")
+	}
+
+	configPath := filepath.Join(host, ".act", ".git", "config")
+	val, gc := gitConfigGet(t, configPath, config.ActRoleKey)
+	if gc != 0 {
+		t.Fatalf("act.role unset after enable; git config --get exit=%d", gc)
+	}
+	if val != "orchestrator" {
+		t.Errorf("act.role = %q, want orchestrator", val)
+	}
+	hookPath := filepath.Join(host, ".act", ".git", "hooks", "post-receive")
+	if _, err := os.Stat(hookPath); err != nil {
+		t.Errorf("post-receive hook missing after enable: %v", err)
+	}
+}
+
+// TestRemoteEnable_ErrorDoctor_FailsCleanly asserts that an
+// error-severity doctor finding blocks the enable, the envelope is
+// the canonical doctor_failed shape, AND the exit code is non-zero
+// (the original bug was exit code 0 with an error envelope on
+// stderr). (act-06ef97.)
+func TestRemoteEnable_ErrorDoctor_FailsCleanly(t *testing.T) {
+	host := newRemoteFixture(t)
+
+	// Seed an orphan-ops error: a directory under .act/ops/ with a
+	// non-create op and no create op. checkOrphanOps emits this as
+	// Severity=error.
+	id := "act-errord"
+	writeRawOp(t, host, id, "close", map[string]string{"reason": "no-create"}, 1)
+
+	out, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: host})
+	if code == 0 {
+		t.Fatalf("error-severity doctor finding must block enable; got code=0 out=%v", out)
+	}
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected envelope map, got %T (%v)", out, out)
+	}
+	if m["error"] != "doctor_failed" {
+		t.Errorf("envelope.error = %v, want doctor_failed", m["error"])
+	}
+	msg, _ := m["message"].(string)
+	if !strings.Contains(msg, "doctor reported") || !strings.Contains(msg, "error-severity") {
+		t.Errorf("envelope.message = %q; want a doctor_failed message naming error-severity", msg)
+	}
+	details, _ := m["details"].(map[string]any)
+	if details == nil {
+		t.Errorf("envelope.details missing")
+	}
+}
+
+// TestRemoteEnable_ExitCodeMatchesOutput asserts the exit-code /
+// output mismatch documented in act-06ef97 is closed: whenever the
+// caller sees a non-zero exit, the output is an error envelope;
+// whenever the caller sees a zero exit, the output is RemoteResult
+// (success). No envelope-with-exit-0 path remains.
+func TestRemoteEnable_ExitCodeMatchesOutput(t *testing.T) {
+	// Case A: warn-only — exit 0, RemoteResult.
+	hostWarn := newRemoteFixture(t)
+	seedOrphanCloseWarn(t, hostWarn, "act-cafebe")
+
+	out, code := RunRemote(RemoteOptions{Verb: "enable", SourceCWD: hostWarn})
+	if code != 0 {
+		t.Fatalf("case A: exit=%d, want 0; out=%v", code, out)
+	}
+	if _, ok := out.(RemoteResult); !ok {
+		t.Errorf("case A: exit=0 must return RemoteResult, got %T", out)
+	}
+
+	// Case B: error — non-zero exit, envelope map.
+	hostErr := newRemoteFixture(t)
+	writeRawOp(t, hostErr, "act-eccme1", "close", map[string]string{"reason": "no-create"}, 1)
+
+	out, code = RunRemote(RemoteOptions{Verb: "enable", SourceCWD: hostErr})
+	if code == 0 {
+		t.Fatalf("case B: exit=0, want non-zero; out=%v", out)
+	}
+	if _, ok := out.(map[string]any); !ok {
+		t.Errorf("case B: non-zero exit must return envelope map, got %T", out)
+	}
+}

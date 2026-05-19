@@ -158,3 +158,28 @@ func TestDocClaim_Remote_PostReceiveSkeletonNamesTicket(t *testing.T) {
 		t.Errorf("hook skeleton missing ticket 6a reference:\n%s", body)
 	}
 }
+
+// TestDocClaim_Remote_EnableOnlyBlocksOnErrorSeverity pins the
+// docs/spec-v2.md §"Verification" claim: "MUST run `act doctor` after
+// the writes complete and return non-zero if doctor reports any
+// error-severity finding". The boundary an orchestrator hits is the
+// `act remote enable` exit code when a repo carries warn-only doctor
+// state (e.g. historical orphan-close from re-sliced .git history).
+// The drift shape: a refactor of runRemoteEnable that goes back to
+// blocking on any finding (warns + errors) would reintroduce the
+// act-06ef97 bug. Drive at the subprocess boundary so the assertion
+// stays anchored where a cold-start agent hits it.
+func TestDocClaim_Remote_EnableOnlyBlocksOnErrorSeverity(t *testing.T) {
+	host := remoteFixtureForDocClaim(t)
+	// Seed a synthetic warn (case-(d) orphan-close): a host commit
+	// carrying an `Act-Id:` trailer for an id that doesn't exist in
+	// act state. checkOrphanClose surfaces this as Severity=warn.
+	// We use the case-(d) shape rather than case-(b) so the seed
+	// doesn't touch .act/ops/ — direct op-file writes would trip
+	// index-divergence (error-severity) alongside the warn and the
+	// assertion would conflate the two paths.
+	seedOrphanCloseWarn(t, host, "act-dccafe")
+	// The enable must succeed (exit 0) despite the warn. mustRunAct
+	// fatals on any other exit code, which IS the assertion we want.
+	mustRunAct(t, host, 0, "remote", "enable", "--json")
+}
