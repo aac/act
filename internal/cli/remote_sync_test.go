@@ -390,4 +390,3 @@ func TestRemoteSync_SyncLogPruningCap(t *testing.T) {
 		t.Errorf("sync-log lines=%d, want %d (cap)", len(lines), SyncLogMaxEntries)
 	}
 }
-
