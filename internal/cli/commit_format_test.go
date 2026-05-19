@@ -1,6 +1,6 @@
 // Tests in this file pin the canonical auto-commit subject format
 // across every act write op (create, claim, update_field, close, dep-add,
-// redact, reopen, delete) plus the cascade-tombstone batch case.
+// reopen, delete) plus the cascade-tombstone batch case.
 //
 // Format: `act-op: (act-XXXX) <op_type>` (or `... +N` for batched ops).
 //
@@ -135,29 +135,6 @@ func TestCommitFormat_DepAdd(t *testing.T) {
 		t.Fatalf("RunDepAdd: code=%d", code)
 	}
 	assertCanonicalSubject(t, root, "add_dep")
-}
-
-// TestCommitFormat_Redact asserts the canonical subject for `act redact`.
-func TestCommitFormat_Redact(t *testing.T) {
-	root := makeCreateRepo(t)
-	out, code := RunCreate(root, CreateOptions{
-		Title:       "secret",
-		Type:        "task",
-		Description: "leaks: foo",
-	})
-	if code != 0 {
-		t.Fatalf("RunCreate: code=%d", code)
-	}
-	id := out.(CreateResult).ID
-
-	if _, code := RunRedact(root, RedactOptions{
-		ID:          id,
-		FieldPath:   "description",
-		Replacement: "[REDACTED]",
-	}); code != 0 {
-		t.Fatalf("RunRedact: code=%d", code)
-	}
-	assertCanonicalSubject(t, root, "redact")
 }
 
 // TestCommitFormat_Reopen asserts the canonical subject for `act reopen`.

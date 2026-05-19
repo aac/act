@@ -14,7 +14,6 @@ import (
 // are used to track per-op bookkeeping that downstream rendering consumes.
 const (
 	keyAcceptRemoved = "__accept_removed"
-	keyRedactedPaths = "__redacted_paths"
 	keyImportSource  = "__import_source"
 	keyLastMigration = "__last_migration"
 
@@ -49,7 +48,9 @@ func gateLWW(state *IssueState, field string, stamp hlc.Stamp) bool {
 }
 
 // ApplyDispatch returns the per-op-type apply function for opType. Unknown
-// op types yield nil, which fold.applyAll surfaces as an error.
+// or legacy-no-op-path op types (e.g. "redact" after act-8d1d) yield nil;
+// fold.applyAll silently skips such ops so historical .act/ops/ trees fold
+// cleanly without the removed handler.
 func ApplyDispatch(opType string) ApplyFunc {
 	switch opType {
 	case "create":
@@ -74,8 +75,6 @@ func ApplyDispatch(opType string) ApplyFunc {
 		return applyClose
 	case "reopen":
 		return applyReopen
-	case "redact":
-		return applyRedact
 	case "import":
 		return applyImport
 	case "migrate":
@@ -501,19 +500,6 @@ func isClosed(state *IssueState) bool {
 	return s == "closed"
 }
 
-// applyRedact records a redacted field path. Rendering enforcement happens
-// at read time via RenderState.
-func applyRedact(state *IssueState, _ op.Envelope, payload []byte, _ string) error {
-	var p op.RedactPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("redact: unmarshal: %w", err)
-	}
-	set := getStringSet(state, keyRedactedPaths)
-	set[p.FieldPath] = true
-	state.Fields[keyRedactedPaths] = set
-	return nil
-}
-
 // applyImport records the source ref under a reserved bookkeeping key.
 func applyImport(state *IssueState, _ op.Envelope, payload []byte, _ string) error {
 	var p op.ImportPayload
@@ -545,22 +531,10 @@ func applyTombstone(state *IssueState, _ op.Envelope, _ []byte, _ string) error 
 	return nil
 }
 
-func getStringSet(state *IssueState, key string) map[string]bool {
-	raw, ok := state.Fields[key]
-	if !ok {
-		return map[string]bool{}
-	}
-	if m, ok := raw.(map[string]bool); ok {
-		return m
-	}
-	return map[string]bool{}
-}
-
 // RenderState produces a public-facing view of state.
 //
 // Tombstoned issues yield nil. Reserved __* keys are stripped. The accept
 // list is filtered through __accept_removed to produce the visible criteria.
-// Any redacted scalar field is replaced with the string "<redacted>".
 //
 // Collection fields are normalised to a single canonical Go type so consumers
 // (the SQLite index, callers iterating rendered state) can rely on one type
@@ -581,7 +555,6 @@ func RenderState(state *IssueState) map[string]any {
 	out["id"] = state.ID
 
 	removed := getRemovedAcceptSet(state)
-	redacted := getStringSet(state, keyRedactedPaths)
 
 	for k, v := range state.Fields {
 		if strings.HasPrefix(k, "__") {
@@ -607,10 +580,6 @@ func RenderState(state *IssueState) map[string]any {
 		if k == "external_deps" {
 			// Normalise to []string for the same reason.
 			out[k] = getExternalDeps(state)
-			continue
-		}
-		if redacted[k] {
-			out[k] = "<redacted>"
 			continue
 		}
 		out[k] = v

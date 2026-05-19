@@ -66,7 +66,7 @@ Every op carries `op_version`, `schema_version`, and `writer_version` in its pay
 
 **Compaction.** Opportunistic, not user-invoked. Any writer holding the lock auto-compacts an issue past 50 ops or 30 days since its last snapshot. Closed issues collapse to a single terminal snapshot after 30 days. Deleted issues retain only a tombstone. Steady-state size budget: ~1KB per closed issue. v1 compaction is mechanical only — no LLM summarization. `act doctor --compact` is the manual escape hatch.
 
-**Redact / delete.** A `redact` op is preserved as a tombstone; prior op payloads are NEVER mutated on disk (the immutability invariant holds). During fold, redact ops cause snapshots and query output to render the named fields as `"<redacted>"`. Reproducibility holds because redaction is deterministic from the op log. For true secret removal from git history, the documented escape hatch is `git-filter-repo`.
+**Redact / delete.** The original `redact` op-type (soft-scrubbing accidentally-committed sensitive content in issue fields) was removed in act-8d1d after ~17 days of zero legitimate usage. The only path for true secret removal from git history is `git-filter-repo`. Historical `redact` ops left in `.act/ops/` still parse — `redact` is retained as a parse-only legacy entry in `op.ValidOpTypes` so existing trees fold cleanly — but the fold dispatch returns nil and `applyAll` silently skips them, so previously-redacted fields now render in their original form.
 
 **Index.** SQLite file rebuilt on-demand from ops/snapshots for fast queries (`act ready`, `act list --status closed`, FTS5 for `act search`). Treated as a derived cache, not source of truth. Never committed to git.
 

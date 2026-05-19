@@ -127,8 +127,6 @@ func main() {
 		os.Exit(runDelete(args))
 	case "update":
 		os.Exit(runUpdate(args))
-	case "redact":
-		os.Exit(runRedact(args))
 	case "doctor":
 		os.Exit(runDoctor(args))
 	case "migrate":
@@ -162,7 +160,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest, remote")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest, remote")
 }
 
 // unknownSubcommandMsg returns the canonical "you typed a subcommand
@@ -316,7 +314,6 @@ var writeNoStateCommands = map[string]bool{
 	"close":  true,
 	"reopen": true,
 	"delete": true,
-	"redact": true,
 	"import": true,
 }
 

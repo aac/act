@@ -68,7 +68,7 @@ func TestResolveHookUnknownOpType(t *testing.T) {
 	dir := t.TempDir()
 	// Even if a file exists, unknown op-types should not resolve.
 	writeScript(t, dir, "create", "#!/bin/sh\nexit 0\n", 0o755)
-	for _, opType := range []string{"update_field", "redact", "import", "", "post-fold"} {
+	for _, opType := range []string{"update_field", "import", "", "post-fold"} {
 		if path, ok := ResolveHook(dir, opType); ok {
 			t.Errorf("ResolveHook(%q) = (%q, true); want (\"\", false)", opType, path)
 		}

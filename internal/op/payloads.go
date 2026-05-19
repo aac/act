@@ -300,20 +300,6 @@ func (p ReopenPayload) Validate() error {
 	return nil
 }
 
-// RedactPayload is the payload for op_type=redact.
-type RedactPayload struct {
-	FieldPath   string `json:"field_path"`
-	Replacement string `json:"replacement,omitempty"`
-}
-
-// Validate implements the redact write-time rules.
-func (p RedactPayload) Validate() error {
-	if p.FieldPath == "" {
-		return fmt.Errorf("op: redact.field_path is empty")
-	}
-	return nil
-}
-
 // ImportPayload is the payload for op_type=import.
 type ImportPayload struct {
 	SourceRef string            `json:"source_ref"`
@@ -451,12 +437,6 @@ func ValidatePayload(opType string, payload []byte) error {
 		var p ReopenPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("op: unmarshal reopen payload: %w", err)
-		}
-		return p.Validate()
-	case "redact":
-		var p RedactPayload
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return fmt.Errorf("op: unmarshal redact payload: %w", err)
 		}
 		return p.Validate()
 	case "import":

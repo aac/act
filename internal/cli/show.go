@@ -43,8 +43,8 @@ type ShowOptions struct {
 // fold.RenderState plus `id` and `short_id`. When IncludeOps is set, Ops
 // carries the HLC-sorted op envelopes.
 type ShowResult struct {
-	// Fields is the public-facing rendered state (after redaction filtering
-	// and accept-removal filtering). It always contains at least `id` and
+	// Fields is the public-facing rendered state (after accept-removal
+	// filtering). It always contains at least `id` and
 	// `short_id`. JSON serialisation is handled by main.go which marshals
 	// this map directly.
 	Fields map[string]any

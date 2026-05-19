@@ -333,22 +333,6 @@ func TestClosePayload_Validate_ReasonTooLong(t *testing.T) {
 	}
 }
 
-// RedactPayload --------------------------------------------------------------
-
-func TestRedactPayload_Validate_OK(t *testing.T) {
-	p := RedactPayload{FieldPath: "description", Replacement: "<redacted>"}
-	if err := p.Validate(); err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-}
-
-func TestRedactPayload_Validate_FieldPathEmpty(t *testing.T) {
-	p := RedactPayload{FieldPath: ""}
-	if err := p.Validate(); err == nil {
-		t.Fatal("want error")
-	}
-}
-
 // ImportPayload --------------------------------------------------------------
 
 func TestImportPayload_Validate_OK(t *testing.T) {
@@ -440,14 +424,24 @@ func TestValidatePayload_AllOpTypes(t *testing.T) {
 		{"claim", `{"assignee":"alice"}`},
 		{"close", `{"reason":"done"}`},
 		{"reopen", `{"reason":"regressed"}`},
-		{"redact", `{"field_path":"description","replacement":"<redacted>"}`},
 		{"import", `{"source_ref":"github:owner/repo#1"}`},
 		{"migrate", `{"from_version":1,"to_version":2}`},
 		{"tombstone", `{"deleted_at":"2026-04-29T12:00:00Z"}`},
 	}
-	if len(cases) != len(ValidOpTypes) {
-		t.Fatalf("dispatcher smoke test covers %d types, but ValidOpTypes has %d",
-			len(cases), len(ValidOpTypes))
+	// "redact" stays in ValidOpTypes as a parse-only legacy entry (see
+	// envelope.go and act-8d1d): historical .act/ops/ files must continue
+	// to parse, but the command + payload + apply path were removed and
+	// ValidatePayload has no case for it. Subtract from the count so the
+	// dispatcher-coverage assertion still catches a missing live op type.
+	wantCases := len(ValidOpTypes) - 1 // -1 for "redact"
+	if len(cases) != wantCases {
+		t.Fatalf("dispatcher smoke test covers %d types, want %d (ValidOpTypes=%d minus 1 legacy)",
+			len(cases), wantCases, len(ValidOpTypes))
+	}
+	// Verify ValidatePayload still rejects "redact" — no writer should
+	// ever emit one again, and the dispatcher must not silently accept it.
+	if err := ValidatePayload("redact", []byte(`{"field_path":"x"}`)); err == nil {
+		t.Fatal("ValidatePayload(redact): want error (legacy op type, no validator)")
 	}
 	for _, tc := range cases {
 		t.Run(tc.opType, func(t *testing.T) {

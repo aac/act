@@ -143,7 +143,7 @@ DEEPER DIVES
 
   Subcommands:
     init version log list search ready mine show
-    create close reopen delete update redact
+    create close reopen delete update
     dep add doctor import mcp install-skill
     bootstrap-worker harvest remote
 
@@ -578,7 +578,6 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     index_corrupt           SQLite cache failed integrity check
     import_invalid_jsonl    'act import' could not parse a line
     compaction_locked       another compaction is in progress
-    redact_target_not_found 'act redact' target id missing
 
   Internal / per-command codes (also stable; tests pin them):
     bad_flag                argparse rejected a flag/value

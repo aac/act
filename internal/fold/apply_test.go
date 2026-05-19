@@ -307,25 +307,6 @@ func TestApply_UpdateFieldStatusIgnored(t *testing.T) {
 	}
 }
 
-func TestApply_RedactRendersPlaceholder(t *testing.T) {
-	id := "act-aaaa"
-	st := freshState(id)
-	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
-		op.CreatePayload{Title: "secret", Description: "private", Type: "task", Nonce: "00000000000000000000000000000000"})
-
-	if err := applyRedact(st, mkEnv(id, "redact", 5, 0, "11111111"),
-		mustJSON(t, op.RedactPayload{FieldPath: "description"}), testHash(mkEnv(id, "redact", 5, 0, "11111111"))); err != nil {
-		t.Fatal(err)
-	}
-	rendered := RenderState(st)
-	if rendered["description"] != "<redacted>" {
-		t.Fatalf("description: %v want <redacted>", rendered["description"])
-	}
-	if rendered["title"] != "secret" {
-		t.Fatalf("title leaked: %v", rendered["title"])
-	}
-}
-
 func TestApply_TombstoneRendersNil(t *testing.T) {
 	id := "act-aaaa"
 	st := freshState(id)
@@ -392,7 +373,6 @@ func TestApply_DispatchAllOpTypesSmoke(t *testing.T) {
 		{"remove_accept", op.RemoveAcceptPayload{Index: 0}},
 		{"remove_dep", op.RemoveDepPayload{Parent: "act-bbbb", EdgeType: "blocks"}},
 		{"claim", op.ClaimPayload{Assignee: "alice"}},
-		{"redact", op.RedactPayload{FieldPath: "description"}},
 		{"import", op.ImportPayload{SourceRef: "src"}},
 		{"migrate", op.MigratePayload{FromVersion: 1, ToVersion: 2}},
 		{"close", op.ClosePayload{Reason: "done"}},
@@ -442,17 +422,10 @@ func TestApply_RenderStripsInternalKeys(t *testing.T) {
 		mustJSON(t, op.ImportPayload{SourceRef: "src"}), testHash(mkEnv(id, "import", 2, 0, "11111111"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyRedact(st, mkEnv(id, "redact", 3, 0, "11111111"),
-		mustJSON(t, op.RedactPayload{FieldPath: "title"}), testHash(mkEnv(id, "redact", 3, 0, "11111111"))); err != nil {
-		t.Fatal(err)
-	}
 	rendered := RenderState(st)
 	for k := range rendered {
 		if len(k) >= 2 && k[:2] == "__" {
 			t.Fatalf("internal key %q leaked: %v", k, rendered)
 		}
-	}
-	if rendered["title"] != "<redacted>" {
-		t.Fatalf("redacted title not rendered: %v", rendered["title"])
 	}
 }
