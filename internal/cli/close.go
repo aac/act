@@ -82,8 +82,13 @@ type CloseErrorOutput struct {
 	Candidates []string       `json:"-"`
 }
 
-// closeReasonMaxBytes mirrors spec §"Edge cases": reason >4KB exits 2.
-const closeReasonMaxBytes = 4096
+// closeReasonMaxBytes mirrors the documented cap (act help close:
+// "--reason is capped at 500 bytes") and the write-time enforcement in
+// internal/op.ClosePayload.Validate. The CLI layer here is
+// defense-in-depth for direct library callers; the cmd/act layer
+// validates upfront at flag-parse time so the operator learns the cap
+// before any op file is written.
+const closeReasonMaxBytes = 500
 
 // RunClose implements `act close`.
 //
