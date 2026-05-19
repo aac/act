@@ -94,6 +94,31 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "act harvest <worker-path>",
 		testName:     "TestDocClaim_Harvest_HelpListsSubcommand",
 	},
+	// harvest-json-* (act-c8028f): the harvest help text in cmd/act/help.go
+	// names three JSON-envelope fields that the orchestrator (and the act
+	// skill's recommended postlude) depend on. If any field name disappears
+	// from the doc OR the wire shape stops emitting that key, the matching
+	// TestDocClaim_Harvest_JSON*Field test breaks at the user-visible
+	// boundary (json.Unmarshal against the envelope), not just in an
+	// internal struct assertion.
+	{
+		name:         "harvest-json-harvested-ops",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "harvested_ops",
+		testName:     "TestDocClaim_Harvest_JSONHarvestedOpsField",
+	},
+	{
+		name:         "harvest-json-skipped-ops",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "skipped_ops",
+		testName:     "TestDocClaim_Harvest_JSONSkippedOpsField",
+	},
+	{
+		name:         "harvest-json-fold-diff-summary",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "fold_diff_summary",
+		testName:     "TestDocClaim_Harvest_JSONFoldDiffSummaryField",
+	},
 	{
 		name:         "canonical-loop-git-push",
 		docFile:      "cmd/act/help.go",
