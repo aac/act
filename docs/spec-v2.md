@@ -914,6 +914,8 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
 | `push_exhausted`           | 4    | `push retries exhausted after <N> attempts; last error: <msg>`             | `retry_count`, `shallow_unshallow_attempted`, `last_error` |
 | `remote_unreachable`       | 4    | `git fetch failed: <reason>`                                               | `remote`, `branch`, `stderr_tail`             |
+| `bootstrap_timeout`        | 4    | `act bootstrap-worker: clone <url> exceeded <N>s budget`                   | `timeout_seconds`, `url`                      |
+| `target_not_empty`         | 2    | `act bootstrap-worker: <path> exists and is non-empty; pass --force to overwrite` | `target`                                |
 
 Rules:
 - Every command MUST return exactly one error class on failure; no compound errors.
@@ -1285,3 +1287,57 @@ append would push the count past the cap. The pruning shape matches
 | Code | Exit | Where | Meaning |
 |------|------|-------|---------|
 | `upstream_not_configured` | 2 | `act remote sync` | No `origin-upstream` remote configured in `.act/.git/config`. Stderr line: `no origin-upstream configured; run 'act remote add-upstream <url>'`. |
+
+## `act bootstrap-worker --from-remote` (Phase 2 ticket 7)
+
+`act bootstrap-worker --from-remote <url> <target-path>` clones the
+orchestrator's `.act/.git` from a remote URL into the dispatched
+worker's worktree. Phase 1.5's `act bootstrap-worker <target-path>`
+(cwd-source) mode is preserved unchanged for sandboxed-no-network
+workers; the two modes are mutually exclusive at the flag layer.
+
+### Behavior
+
+- Pre-flight: target parent MUST exist. Target `.act/` MUST be absent
+  or empty unless `--force` is passed; otherwise exit 2 with envelope
+  `target_not_empty`.
+- Run `git clone --depth 1 <url> <target>/.act.bootstrap/` with a
+  context-bound wall-clock deadline equal to
+  `act.bootstrapTimeoutSeconds` (default 30, per the Phase 2 config
+  schema). The flag `--timeout-seconds N` overrides this for tests
+  and ad-hoc runs.
+- On timeout: the clone subprocess is killed (SIGKILL via Go's
+  `exec.CommandContext`), the staging dir is torn down, and the
+  command exits 4 with envelope `bootstrap_timeout` carrying
+  `details.timeout_seconds` and `details.url`.
+- On a non-timeout clone failure (DNS, auth, unreachable URL, …) the
+  staging dir is torn down and the command exits 3 with envelope
+  `remote_unreachable` carrying `details.stderr_tail`.
+- On successful clone: atomic-rename `<target>/.act.bootstrap/` →
+  `<target>/.act/`, then write `act.role=worker` to
+  `<target>/.act/.git/config` via `git config -f`. The worker role
+  marker is the single mechanism the post-receive hook and the
+  post-commit upstream-sync trigger use to decide whether to fire.
+- Round-trip validate: run a `ready`-equivalent against the new
+  target; tear it down on validation failure. Same shape as the
+  cwd-source mode.
+- Idempotent re-runs: a re-bootstrap into a non-empty target without
+  `--force` is rejected with `target_not_empty`; with `--force`, the
+  previous `.act/` is removed and the clone replays.
+
+### Concurrency
+
+Concurrent `act bootstrap-worker --from-remote` invocations into
+disjoint target paths MUST NOT interfere: each clone uses a private
+staging dir under its own target, and the role-config write touches
+only the new target's nested `.git/config`. The §5 addenda
+interference test asserts: "N parallel bootstraps to disjoint target
+paths, each followed by `act ready`, all return the same state and
+exit 0."
+
+### Error-code entries
+
+| Code | Exit | Where | Meaning |
+|------|------|-------|---------|
+| `bootstrap_timeout` | 4 | `act bootstrap-worker --from-remote` | Clone exceeded the wall-clock budget. Carries `details.timeout_seconds` (the value enforced) and `details.url`. |
+| `target_not_empty` | 2 | `act bootstrap-worker` | Target `.act/` exists and is non-empty; `--force` is required to overwrite. Carries `details.target`. |

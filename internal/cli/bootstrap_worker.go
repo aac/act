@@ -50,12 +50,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,8 +70,16 @@ import (
 // BootstrapWorkerOptions controls `act bootstrap-worker`.
 type BootstrapWorkerOptions struct {
 	// SourceCWD is the directory the resolver should start its host-repo
-	// walk from. Callers usually pass os.Getwd(); tests set it explicitly.
+	// walk from in the cwd-source mode. Ignored when FromRemoteURL is
+	// set. Callers usually pass os.Getwd(); tests set it explicitly.
 	SourceCWD string
+
+	// FromRemoteURL, when non-empty, switches the command into the Phase
+	// 2 ticket 7 "from-remote" mode: instead of copying the source
+	// `.act/` from cwd, the command runs `git clone --depth 1
+	// <FromRemoteURL>` into a staging dir and atomic-renames it to
+	// <Target>/.act/. Mutually exclusive with the cwd-source path.
+	FromRemoteURL string
 
 	// Target is the path under which the new `.act/` will land. The
 	// command creates `<target>/.act/`; the parent path must exist (we
@@ -82,6 +93,14 @@ type BootstrapWorkerOptions struct {
 	// AsJSON selects the JSON output rendering branch (the caller's
 	// concern; this struct is plumbed for parity with other commands).
 	AsJSON bool
+
+	// TimeoutSeconds, when > 0, overrides act.bootstrapTimeoutSeconds for
+	// the from-remote clone. Tests inject a small value (e.g. 1) to
+	// drive the timeout path against a stalled-clone fixture. When 0,
+	// the from-remote path reads act.bootstrapTimeoutSeconds from
+	// SourceCWD's nested .act/.git/config; if unset, falls back to
+	// config.DefaultEnableDefaults().BootstrapTimeoutSeconds.
+	TimeoutSeconds int
 
 	// Now is an injectable clock for tests; default time.Now.
 	Now func() time.Time
@@ -128,6 +147,12 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 			"error":   ErrBadFlag,
 			"message": "act bootstrap-worker: <target-path> is required",
 		}, 2
+	}
+
+	// From-remote mode (Phase 2 ticket 7) short-circuits the cwd-source
+	// path: we don't resolve a local .act/, we clone the URL instead.
+	if opts.FromRemoteURL != "" {
+		return runBootstrapFromRemote(opts)
 	}
 
 	// Resolve the source host repo root and its .act/.
@@ -204,7 +229,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		}, 3
 	} else if nonEmpty && !opts.Force {
 		return map[string]any{
-			"error":   "target_not_empty",
+			"error":   ErrTargetNotEmpty,
 			"message": fmt.Sprintf("act bootstrap-worker: %s exists and is non-empty; pass --force to overwrite", targetAct),
 		}, 2
 	}
@@ -450,6 +475,229 @@ func readSourceNodeID(srcAct string) string {
 		return "00000000"
 	}
 	return cfg.NodeID
+}
+
+// runBootstrapFromRemote handles `act bootstrap-worker --from-remote
+// <url> <target>`. Phase 2 ticket 7 (act-0480c9). The shape mirrors the
+// cwd-source path: pre-flight target, stage clone into .act.bootstrap/,
+// rename, stamp role=worker, validate via ready, return the same
+// BootstrapWorkerResult success envelope.
+//
+// Timeout: a context.WithTimeout drives the underlying git-clone
+// subprocess via exec.CommandContext, so a stalled clone is killed (the
+// Go runtime sends SIGKILL when the context fires) without leaving an
+// orphan process. The deadline value comes from opts.TimeoutSeconds
+// when > 0, otherwise from act.bootstrapTimeoutSeconds in the
+// orchestrator's nested .act/.git/config (best-effort read; missing
+// SourceCWD or missing config key both fall through to the default).
+func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
+	absTarget, err := filepath.Abs(opts.Target)
+	if err != nil {
+		return map[string]any{
+			"error":   ErrBadFlag,
+			"message": fmt.Sprintf("act bootstrap-worker: abs(%q): %v", opts.Target, err),
+		}, 2
+	}
+	if _, err := os.Stat(absTarget); err != nil {
+		return map[string]any{
+			"error":   ErrStatFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: target %s: %v", absTarget, err),
+		}, 3
+	}
+
+	// Pre-flight: refuse non-empty .act/ unless --force.
+	targetAct := filepath.Join(absTarget, ".act")
+	if nonEmpty, err := dirNonEmpty(targetAct); err != nil {
+		return map[string]any{
+			"error":   ErrStatFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: stat target .act/: %v", err),
+		}, 3
+	} else if nonEmpty && !opts.Force {
+		return map[string]any{
+			"error":   ErrTargetNotEmpty,
+			"message": fmt.Sprintf("act bootstrap-worker: %s exists and is non-empty; pass --force to overwrite", targetAct),
+			"details": map[string]any{
+				"target": targetAct,
+			},
+		}, 2
+	}
+
+	// Resolve the timeout.
+	timeoutSec := resolveBootstrapTimeoutSeconds(opts)
+
+	// Stage path.
+	stagingAct := filepath.Join(absTarget, ".act.bootstrap")
+	if err := os.RemoveAll(stagingAct); err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: clear staging %s: %v", stagingAct, err),
+		}, 3
+	}
+
+	// Run `git clone --depth 1 <url> <staging>` with a hard wall-clock
+	// timeout. exec.CommandContext sends SIGKILL when the context fires,
+	// which terminates the clone subprocess deterministically. The
+	// alternative (Cmd.Process.Kill on a timer) races with normal
+	// completion and leaks the goroutine when clone finishes first;
+	// exec.CommandContext is the canonical Go answer here.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", opts.FromRemoteURL, stagingAct)
+	cloneOut, cloneErr := cloneCmd.CombinedOutput()
+	if cloneErr != nil {
+		// Tear down any partial staging dir before deciding which
+		// error code to surface — both branches benefit from a clean
+		// filesystem.
+		_ = os.RemoveAll(stagingAct)
+
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return map[string]any{
+				"error":   ErrBootstrapTimeout,
+				"message": fmt.Sprintf("act bootstrap-worker: clone %s exceeded %ds budget", opts.FromRemoteURL, timeoutSec),
+				"details": map[string]any{
+					"timeout_seconds": timeoutSec,
+					"url":             opts.FromRemoteURL,
+				},
+			}, 4
+		}
+		return map[string]any{
+			"error":   ErrRemoteUnreachable,
+			"message": fmt.Sprintf("act bootstrap-worker: clone %s: %v", opts.FromRemoteURL, cloneErr),
+			"details": map[string]any{
+				"url":         opts.FromRemoteURL,
+				"stderr_tail": CaptureStderrTail(string(cloneOut)),
+			},
+		}, 3
+	}
+
+	// Sanity-check the staging tree shape: a successful clone must have
+	// produced a nested .git directory. Without it, the rename would
+	// land an unusable .act/ at the target.
+	if _, err := os.Stat(filepath.Join(stagingAct, ".git")); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: cloned tree at %s missing .git: %v", stagingAct, err),
+		}, 3
+	}
+
+	// Atomic-ish rename. If `<target>/.act/` exists (we're in --force
+	// territory), remove it first.
+	if _, err := os.Stat(targetAct); err == nil {
+		if err := os.RemoveAll(targetAct); err != nil {
+			_ = os.RemoveAll(stagingAct)
+			return map[string]any{
+				"error":   ErrWriteFailed,
+				"message": fmt.Sprintf("act bootstrap-worker: remove existing %s: %v", targetAct, err),
+			}, 3
+		}
+	}
+	if err := os.Rename(stagingAct, targetAct); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: rename %s → %s: %v", stagingAct, targetAct, err),
+		}, 3
+	}
+
+	// Stamp act.role=worker into the new clone's nested .git/config.
+	// This is the load-bearing post-bootstrap action — without it the
+	// upstream-sync trigger doesn't know it's running on a worker.
+	roleConfigPath := config.ActGitConfigPath(targetAct)
+	if err := config.SetGitConfig(roleConfigPath, config.ActRoleKey, string(config.RoleWorker)); err != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: set %s=%s: %v", config.ActRoleKey, config.RoleWorker, err),
+		}, 3
+	}
+
+	// Round-trip validation against the new target.
+	if validErr := validateBootstrappedTarget(absTarget); validErr != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   "bootstrap_validation_failed",
+			"message": fmt.Sprintf("act bootstrap-worker: validation against %s failed: %v", targetAct, validErr),
+		}, 3
+	}
+
+	// Compute ops/snapshots counts for the success envelope.
+	stats := countActFiles(targetAct)
+
+	// Derive a dispatch_hlc from the cloned tree's node_id for envelope
+	// parity with the cwd-source path.
+	now := opts.Now()
+	dispatchHLC := hlc.HLC{
+		Wall:    now.UTC().UnixMilli(),
+		Logical: 0,
+		NodeID:  readSourceNodeID(targetAct),
+	}
+	hlcJSON, _ := dispatchHLC.MarshalJSON()
+
+	return BootstrapWorkerResult{
+		SourceRoot:      opts.FromRemoteURL,
+		Target:          absTarget,
+		OpsCopied:       stats.OpsCopied,
+		SnapshotsCopied: stats.SnapshotsCopied,
+		DispatchHLC:     string(hlcJSON),
+	}, 0
+}
+
+// resolveBootstrapTimeoutSeconds picks the timeout value for a
+// from-remote clone. Order of precedence:
+//
+//  1. opts.TimeoutSeconds when > 0 (test injection point).
+//  2. act.bootstrapTimeoutSeconds from the orchestrator's nested
+//     .act/.git/config when opts.SourceCWD is set and the key is
+//     readable.
+//  3. config.DefaultEnableDefaults().BootstrapTimeoutSeconds.
+func resolveBootstrapTimeoutSeconds(opts BootstrapWorkerOptions) int {
+	if opts.TimeoutSeconds > 0 {
+		return opts.TimeoutSeconds
+	}
+	if opts.SourceCWD != "" {
+		// Best-effort: locate the source .act/, read the key, ignore
+		// errors. The default fallback below handles any failure path.
+		if root, err := gitops.FindHostRepoRoot(opts.SourceCWD); err == nil {
+			if act, err := gitops.FindActStatePath(root); err == nil {
+				cfgPath := config.ActGitConfigPath(act)
+				if v, err := config.GetGitConfig(cfgPath, config.BootstrapTimeoutSecondsKey); err == nil && v != "" {
+					if n, err := strconv.Atoi(v); err == nil && n > 0 {
+						return n
+					}
+				}
+			}
+		}
+	}
+	return config.DefaultEnableDefaults().BootstrapTimeoutSeconds
+}
+
+// countActFiles is a minimal stat-only walk over <act>/ops and
+// <act>/snapshots that returns the JSON-file counts the success
+// envelope surfaces. Mirrors copyTreeWithStats's accounting but doesn't
+// require a copy.
+func countActFiles(actPath string) copyStats {
+	var stats copyStats
+	_ = filepath.Walk(filepath.Join(actPath, "ops"), func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(p) == ".json" {
+			stats.OpsCopied++
+		}
+		return nil
+	})
+	_ = filepath.Walk(filepath.Join(actPath, "snapshots"), func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(p) == ".json" {
+			stats.SnapshotsCopied++
+		}
+		return nil
+	})
+	return stats
 }
 
 // validateBootstrappedTarget runs RunReady against the bootstrapped
