@@ -10,17 +10,19 @@ import (
 	"github.com/aac/act/internal/cli"
 )
 
-// runRemote dispatches `act remote <enable|disable|sync> [--json]`.
-// Wraps cli.RunRemote / cli.RunRemoteSync and renders either JSON or a
-// small human-friendly summary.
+// runRemote dispatches `act remote <enable|disable|sync|add-upstream> [--json]`.
+// Wraps cli.RunRemote / cli.RunRemoteSync / cli.RunRemoteAddUpstream and
+// renders either JSON or a small human-friendly summary.
 //
-// Phase 2 tickets 1a (enable/disable) + 6a (sync). The verbs toggle the
-// `act.*` config keys in `.act/.git/config` plus the post-receive hook
-// (1a installs the skeleton; 6a fills the body), and `sync` pushes the
-// orchestrator's `.act/.git` to `origin-upstream` (fail-soft on push
-// failure). See the respective Run* functions for schema details and
-// the rationale for why these knobs live in the nested `.git/config`
-// rather than `.act/config.json`.
+// Phase 2 tickets 1a (enable/disable), 6a (sync), 1b (add-upstream). The
+// verbs toggle the `act.*` config keys in `.act/.git/config` plus the
+// post-receive hook (1a installs the skeleton; 6a fills the body), and
+// `sync` pushes the orchestrator's `.act/.git` to `origin-upstream`
+// (fail-soft on push failure). `add-upstream <url>` configures the
+// origin-upstream URL and does an initial push, refusing public-host
+// patterns unless `--force-public` is passed. See the respective Run*
+// functions for schema details and the rationale for why these knobs
+// live in the nested `.git/config` rather than `.act/config.json`.
 func runRemote(args []string) int {
 	// Parse the verb positional before constructing a FlagSet so
 	// that `act remote --help` and `act remote --json enable` both
@@ -37,6 +39,13 @@ func runRemote(args []string) int {
 		break
 	}
 
+	// `add-upstream` has its own positional (the URL) and flag
+	// (`--force-public`). Branch early so the shared FlagSet below
+	// doesn't have to thread the URL+flag through cli.RemoteOptions.
+	if verb == "add-upstream" {
+		return runRemoteAddUpstream(rest)
+	}
+
 	fs := flag.NewFlagSet("remote", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(rest); err != nil {
@@ -44,7 +53,7 @@ func runRemote(args []string) int {
 	}
 
 	if verb == "" {
-		emitBadFlag(*asJSON, "act remote: usage: act remote <enable|disable|sync> [--json]")
+		emitBadFlag(*asJSON, "act remote: usage: act remote <enable|disable|sync|add-upstream> [--json]")
 		return 2
 	}
 
@@ -93,6 +102,69 @@ func runRemote(args []string) int {
 		}
 		fmt.Printf("  config:  %s\n", res.ConfigPath)
 		fmt.Printf("  hook:    %s (removed)\n", res.HookPath)
+	}
+	return 0
+}
+
+// runRemoteAddUpstream is the `act remote add-upstream <url>` path.
+// Phase 2 ticket 1b. Parses its own flag set so the URL positional and
+// `--force-public` flag don't have to thread through the shared verb
+// dispatcher above. Renders RemoteAddUpstreamResult (or the failure
+// envelope) using the standard JSON/human switch.
+func runRemoteAddUpstream(args []string) int {
+	fs := flag.NewFlagSet("remote add-upstream", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	forcePublic := fs.Bool("force-public", false, "override the curated public-URL refusal")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	// One positional: the URL. We tolerate extras with a usage error
+	// rather than silently dropping them.
+	rest := fs.Args()
+	if len(rest) == 0 {
+		emitBadFlag(*asJSON, "act remote add-upstream: missing URL; usage: act remote add-upstream <url> [--force-public]")
+		return 2
+	}
+	if len(rest) > 1 {
+		emitBadFlag(*asJSON, fmt.Sprintf(
+			"act remote add-upstream: too many positional args (%d); usage: act remote add-upstream <url> [--force-public]",
+			len(rest)))
+		return 2
+	}
+	url := rest[0]
+
+	out, code := cli.RunRemoteAddUpstream(cli.RemoteAddUpstreamOptions{
+		URL:         url,
+		ForcePublic: *forcePublic,
+		AsJSON:      *asJSON,
+	})
+
+	if code != 0 {
+		emitEnvelope(*asJSON, out)
+		return code
+	}
+
+	if *asJSON {
+		data, jerr := json.Marshal(out)
+		if jerr != nil {
+			fmt.Fprintf(os.Stderr, "act remote add-upstream: json marshal: %v\n", jerr)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	res, ok := out.(cli.RemoteAddUpstreamResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act remote add-upstream: unexpected output type %T\n", out)
+		return 1
+	}
+	fmt.Printf("Configured origin-upstream at %s\n", res.URL)
+	fmt.Printf("  config:  %s\n", res.ConfigPath)
+	fmt.Printf("  branch:  %s (initial push landed)\n", res.Branch)
+	if res.ForcePublic {
+		fmt.Printf("  note:    --force-public was passed\n")
 	}
 	return 0
 }

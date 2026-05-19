@@ -368,6 +368,32 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "| `reason` | string |",
 		testName:     "TestDocClaim_RemoteSync_SyncLogSchemaFields",
 	},
+	// remote-add-upstream-* (Phase 2 ticket 1b, act-4f9375): the
+	// `act remote add-upstream <url>` verb plus the public-URL refusal
+	// path. Help-text claims live in cmd/act/help.go; the
+	// stderr-literal refusal message and the `upstream_public` error
+	// code claim live in docs/spec-v2.md. Drift shape: someone changes
+	// the stderr literal away from the canonical refusal phrasing, or
+	// drops the `--force-public` flag from the help listing, and a
+	// cold-start agent reading either surface gets misled.
+	{
+		name:         "remote-add-upstream-help-listed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "add-upstream",
+		testName:     "TestDocClaim_RemoteAddUpstream_HelpListed",
+	},
+	{
+		name:         "remote-add-upstream-public-refusal-stderr",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "refusing public upstream",
+		testName:     "TestDocClaim_RemoteAddUpstream_PublicRefusalStderr",
+	},
+	{
+		name:         "remote-add-upstream-force-public-flag",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "--force-public",
+		testName:     "TestDocClaim_RemoteAddUpstream_ForcePublicFlag",
+	},
 	// bootstrap-from-remote-* (Phase 2 ticket 7, act-0480c9): the
 	// `act bootstrap-worker --from-remote` mode and the two new error
 	// codes (`bootstrap_timeout`, `target_not_empty`) it introduces.

@@ -241,6 +241,9 @@ ACT REMOTE (PHASE 2 COORDINATION PLANE)
     act remote enable               # set canonical keys + install post-receive hook
     act remote disable              # unset keys + remove post-receive hook
     act remote sync                 # push .act/.git to origin-upstream (fail-soft)
+    act remote add-upstream <url>   # configure origin-upstream + initial push
+    act remote add-upstream <url> --force-public
+                                    # override the curated public-URL refusal
     act remote enable --json        # machine-readable summary
 
   Enable writes the following keys to .act/.git/config:
@@ -270,6 +273,17 @@ ACT REMOTE (PHASE 2 COORDINATION PLANE)
   invocation never blocks a worker push on upstream connectivity. The
   only non-zero exit is configuration: 'no origin-upstream configured'
   (exit 2, envelope upstream_not_configured).
+
+  'act remote add-upstream <url>' wires the orchestrator's
+  origin-upstream to <url> and does an initial 'git push origin-upstream
+  <branch>' so the mirror is seeded immediately. The command refuses
+  URLs that match the curated public-host patterns in
+  internal/config/upstream_patterns.go (envelope upstream_public,
+  exit 2, stderr literal 'refusing public upstream; pass --force-public
+  to override') so an agent doesn't accidentally publish op-log churn
+  to a public repo. Pass --force-public to override. Unlike 'sync',
+  add-upstream's initial push is NOT fail-soft: a push failure exits 3
+  so the agent learns immediately if the URL is unreachable.
 
   If 'act.role' is unset (legacy or hand-crafted repo), the default
   parsed value is 'worker' (safe — workers don't trigger upstream
