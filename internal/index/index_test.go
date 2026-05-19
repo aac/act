@@ -456,3 +456,110 @@ func TestRebuild_Idempotent(t *testing.T) {
 		}
 	}
 }
+
+// TestIntegrityCheck_CleanDB: a freshly-opened, schema-applied index
+// reports no integrity defects.
+func TestIntegrityCheck_CleanDB(t *testing.T) {
+	idx, _ := newTempIndex(t)
+	if err := idx.IntegrityCheck(); err != nil {
+		t.Fatalf("IntegrityCheck on clean DB = %v, want nil", err)
+	}
+}
+
+// TestIntegrityCheck_CorruptedPages: scribble over the middle of a populated
+// index file (after closing it) and verify IntegrityCheck returns a non-nil
+// error matched by IsMalformed.
+//
+// The scribble strategy mirrors the production failure shape — header is
+// intact (Open + Ping succeed) but a page-interior tree is mangled.
+func TestIntegrityCheck_CorruptedPages(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.db")
+	idx, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := idx.ApplySchema(); err != nil {
+		t.Fatalf("ApplySchema: %v", err)
+	}
+	// Force the file to grow past one page so corruption has somewhere
+	// to land — populate with many rows.
+	for i := 0; i < 50; i++ {
+		if _, err := idx.DB().Exec(
+			`INSERT INTO issues (id, title, status) VALUES (?, ?, 'open')`,
+			"act-pad"+string(rune('a'+i%26))+string(rune('0'+i%10)),
+			"padding row to grow pages",
+		); err != nil {
+			// Duplicate-ID collisions are fine; we just need pages.
+			continue
+		}
+	}
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Scribble 4KiB of 0xAA into page 2 (offset 4096). Page 1 is the
+	// header — leaving it intact ensures Open succeeds.
+	f, err := os.OpenFile(dbPath, os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open db for scribble: %v", err)
+	}
+	garbage := make([]byte, 4096)
+	for i := range garbage {
+		garbage[i] = 0xAA
+	}
+	if _, err := f.WriteAt(garbage, 4096); err != nil {
+		t.Fatalf("scribble: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close db file: %v", err)
+	}
+
+	idx2, err := Open(dbPath)
+	if err != nil {
+		// Acceptable: some scribbles trip Open via Ping. Confirm IsMalformed.
+		if !IsMalformed(err) {
+			t.Fatalf("Open after scribble: %v (IsMalformed=false)", err)
+		}
+		return
+	}
+	defer idx2.Close()
+	icErr := idx2.IntegrityCheck()
+	if icErr == nil {
+		t.Fatal("IntegrityCheck returned nil on corrupted DB")
+	}
+	if !IsMalformed(icErr) {
+		t.Errorf("IntegrityCheck error = %v; IsMalformed(err) = false, want true", icErr)
+	}
+}
+
+// TestIsMalformed_KnownPhrases: pin the substring contract — IsMalformed
+// must trigger for both SQLite corruption messages the modernc driver
+// surfaces.
+func TestIsMalformed_KnownPhrases(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"some other error", false},
+		{"index: database disk image is malformed: page 7", true},
+		{"index: ping foo.db: file is not a database (26)", true},
+		{"index: integrity_check query: file is not a database (26)", true},
+	}
+	for _, c := range cases {
+		var err error
+		if c.in != "" {
+			err = errString(c.in)
+		}
+		got := IsMalformed(err)
+		if got != c.want {
+			t.Errorf("IsMalformed(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// errString is a tiny error wrapper used only in IsMalformed tests.
+type errString string
+
+func (e errString) Error() string { return string(e) }

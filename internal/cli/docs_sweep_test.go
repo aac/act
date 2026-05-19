@@ -589,6 +589,19 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "does NOT write `.ask/`",
 		testName:     "TestDocClaim_Init_GitignoreNoAskEntry",
 	},
+	// doctor-fix-index-* (act-f2f93a): the `--fix-index` flag rebuilds a
+	// malformed `.act/index.db` from `.act/ops/`. The user-visible literal
+	// claim is the remediation hint that surfaces when doctor sees the
+	// corruption without `--fix-index`. The spec section ALSO documents
+	// the flag and the recovery semantics — both surfaces have to keep
+	// naming the literal or a cold-start agent reading either gets misled
+	// about how to recover.
+	{
+		name:         "doctor-fix-index-remediation-hint",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "rebuild with 'act doctor --fix-index'",
+		testName:     "TestDocClaim_DoctorFixIndex_StderrRemediationHint",
+	},
 	// op-filename-* (act-2f3d): op filenames use '-' rather than ':' in
 	// the time component so the on-disk tree is NTFS-safe (otherwise
 	// `git checkout` on Windows hosts fails before any Go code runs).

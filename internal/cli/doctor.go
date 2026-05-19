@@ -47,6 +47,13 @@ type DoctorOptions struct {
 	// entirely (drift detection requires a successful upstream fetch).
 	// Per Phase 2 ticket 9 (act-aa4f19) §5 addendum.
 	NoFetch bool
+	// FixIndex enables auto-remediation for the `index-malformed` check:
+	// when the on-disk `.act/index.db` fails Open or IntegrityCheck, the
+	// existing file is renamed to `.act/index.db.malformed-<unix-ts>`
+	// and a fresh index is rebuilt from `.act/ops/`. Without --fix-index,
+	// the malformed-image case surfaces as an error-severity finding
+	// whose message names the canonical remediation command. Per act-f2f93a.
+	FixIndex bool
 }
 
 // Finding is a single doctor finding.
@@ -85,6 +92,7 @@ var allChecks = []string{
 	"time-travel",
 	"cycle",
 	"unknown-op-version",
+	"index-malformed",
 	"index-divergence",
 	"index-schema",
 	"gitignore-effective",
@@ -178,6 +186,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			findings = append(findings, checkCycle(foldRes)...)
 		case "unknown-op-version":
 			findings = append(findings, checkUnknownOpVersion(paths.Ops)...)
+		case "index-malformed":
+			findings = append(findings, checkIndexMalformed(paths, opts.FixIndex)...)
 		case "index-divergence":
 			findings = append(findings, checkIndexDivergence(paths, opts.Fix)...)
 		case "index-schema":
@@ -761,6 +771,122 @@ func extractOpVersion(body []byte) int {
 	return n
 }
 
+// checkIndexMalformed: detect a corrupt `.act/index.db` and, with --fix-index,
+// back it up and rebuild from `.act/ops/`. Two failure shapes are caught:
+//
+//  1. Open/Ping fails with the SQLITE_NOTADB code (truncated file, scrambled
+//     header). The driver's error string carries "file is not a database".
+//  2. Open succeeds but a subsequent read trips SQLITE_CORRUPT — page-tree
+//     damage. IntegrityCheck surfaces this with the canonical phrase
+//     "database disk image is malformed".
+//
+// index.IsMalformed encapsulates both substring matches so the doctor stays
+// resilient if the driver versions its error format.
+//
+// On detection without --fix-index: emit one error-severity finding whose
+// Message ends with the literal remediation hint
+// `rebuild with 'act doctor --fix-index'` (the stderr-literal claim
+// docs/spec-v2.md "act doctor index-malformed" pins).
+//
+// On detection WITH --fix-index: rename the malformed file to
+// `.act/index.db.malformed-<unix-ts>` (no destruction — the old file is
+// preserved for post-mortem), then Open a fresh path and Rebuild from
+// paths.Ops. Emit a warn-severity finding naming the backup path and the
+// count of issues folded. Per act-f2f93a acceptance criteria.
+//
+// Implementation note: this check runs BEFORE checkIndexDivergence and
+// checkIndexSchema in allChecks, so when --fix-index repairs the file, the
+// later checks operate on the rebuilt copy and report cleanly. When run
+// without --fix-index on a malformed file, the later checks short-circuit
+// via their own IsMalformed sniff to avoid stderr noise duplication.
+func checkIndexMalformed(paths config.LayoutPaths, fixIndex bool) []Finding {
+	if _, err := os.Stat(paths.IndexDB); err != nil {
+		// No on-disk index — nothing to repair. The first read after
+		// this doctor pass will create one fresh.
+		return nil
+	}
+
+	// Step 1: try Open + IntegrityCheck. Either failure is the signal.
+	var probeErr error
+	current, openErr := index.Open(paths.IndexDB)
+	if openErr != nil {
+		probeErr = openErr
+	} else {
+		icErr := current.IntegrityCheck()
+		_ = current.Close()
+		if icErr != nil {
+			probeErr = icErr
+		}
+	}
+	if probeErr == nil {
+		return nil
+	}
+	// Belt-and-braces: only act on errors that look like a real
+	// malformed-image signal. A different kind of Open failure (perms,
+	// missing dir, etc.) is a separate class — pass it through as an
+	// error finding without invoking the rebuild path.
+	if !index.IsMalformed(probeErr) {
+		return []Finding{{
+			Check:    "index-malformed",
+			Severity: "error",
+			Message:  fmt.Sprintf("index probe failed: %v", probeErr),
+		}}
+	}
+
+	if !fixIndex {
+		return []Finding{{
+			Check:    "index-malformed",
+			Severity: "error",
+			Message:  "index: .act/index.db is malformed; rebuild with 'act doctor --fix-index'",
+		}}
+	}
+
+	// Fix path: backup, then rebuild. The backup name is stamped with
+	// unix-nano so concurrent doctor invocations (rare) don't collide.
+	backup := fmt.Sprintf("%s.malformed-%d", paths.IndexDB, time.Now().UnixNano())
+	if err := os.Rename(paths.IndexDB, backup); err != nil {
+		return []Finding{{
+			Check:    "index-malformed",
+			Severity: "error",
+			Message:  fmt.Sprintf("index: backup before rebuild failed: %v", err),
+		}}
+	}
+	// Also remove any stray journal/WAL siblings so the fresh open
+	// starts clean. Failures are non-fatal — modernc's open will
+	// regenerate.
+	for _, sib := range []string{paths.IndexDB + "-wal", paths.IndexDB + "-shm", paths.IndexDB + "-journal"} {
+		_ = os.Remove(sib)
+	}
+
+	fresh, ferr := index.Open(paths.IndexDB)
+	if ferr != nil {
+		return []Finding{{
+			Check:    "index-malformed",
+			Severity: "error",
+			Message:  fmt.Sprintf("index: rebuild open failed: %v (backup at %s)", ferr, filepath.Base(backup)),
+		}}
+	}
+	if rerr := fresh.Rebuild(paths.Ops); rerr != nil {
+		_ = fresh.Close()
+		return []Finding{{
+			Check:    "index-malformed",
+			Severity: "error",
+			Message:  fmt.Sprintf("index: rebuild from ops failed: %v (backup at %s)", rerr, filepath.Base(backup)),
+		}}
+	}
+	// Count what we folded for a useful summary.
+	var n int
+	if row := fresh.DB().QueryRow(`SELECT COUNT(*) FROM issues WHERE tombstoned = 0`); row != nil {
+		_ = row.Scan(&n)
+	}
+	_ = fresh.Close()
+	return []Finding{{
+		Check:    "index-malformed",
+		Severity: "warn",
+		Message:  fmt.Sprintf("index: rebuilt %d issues from .act/ops/ (malformed copy preserved at %s)", n, filepath.Base(backup)),
+	}}
+}
+
 // checkIndexDivergence: open .act/index.db, rebuild into temp; row-by-row diff.
 // With --fix, replace .act/index.db with the rebuilt copy.
 func checkIndexDivergence(paths config.LayoutPaths, fix bool) []Finding {
@@ -770,7 +896,16 @@ func checkIndexDivergence(paths config.LayoutPaths, fix bool) []Finding {
 	}
 	current, err := index.Open(paths.IndexDB)
 	if err != nil {
+		if index.IsMalformed(err) {
+			// The index-malformed check owns this surface; stay
+			// quiet here so the operator sees one finding, not two.
+			return nil
+		}
 		return []Finding{{Check: "index-divergence", Severity: "error", Message: err.Error()}}
+	}
+	if icErr := current.IntegrityCheck(); icErr != nil && index.IsMalformed(icErr) {
+		_ = current.Close()
+		return nil
 	}
 	defer current.Close()
 
@@ -858,7 +993,15 @@ func checkIndexSchema(paths config.LayoutPaths, fix bool) []Finding {
 	}
 	idx, err := index.Open(paths.IndexDB)
 	if err != nil {
+		if index.IsMalformed(err) {
+			// The index-malformed check owns this surface; defer to it.
+			return nil
+		}
 		return []Finding{{Check: "index-schema", Severity: "error", Message: err.Error()}}
+	}
+	if icErr := idx.IntegrityCheck(); icErr != nil && index.IsMalformed(icErr) {
+		_ = idx.Close()
+		return nil
 	}
 	defer idx.Close()
 
@@ -866,6 +1009,9 @@ func checkIndexSchema(paths config.LayoutPaths, fix bool) []Finding {
 	have := map[string]bool{}
 	rows, err := idx.DB().Query(`SELECT name FROM sqlite_master WHERE type IN ('table','virtual') OR type='table'`)
 	if err != nil {
+		if index.IsMalformed(err) {
+			return nil
+		}
 		return []Finding{{Check: "index-schema", Severity: "error", Message: err.Error()}}
 	}
 	for rows.Next() {
