@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
@@ -444,6 +446,108 @@ func TestRunReady_MissingActDir(t *testing.T) {
 	}
 	if _, ok := out.(ReadyErrorOutput); !ok {
 		t.Fatalf("output type = %T, want ReadyErrorOutput", out)
+	}
+}
+
+// TestFormatReadyHuman_Columns asserts the five-column layout:
+//
+//	<short> <prio> <assignee> <claimed_at> <title>
+//
+// for both unclaimed (dash placeholders) and assignee-set ready rows. The
+// fixed `now` keeps the relative-time column deterministic. Regression
+// coverage for act-4b45.
+func TestFormatReadyHuman_Columns(t *testing.T) {
+	// 2026-05-19T10:00:00Z; claim is 2h earlier.
+	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	res := ReadyResult{
+		Ready: []ReadyIssue{
+			{ID: "act-aaaa00000000aaaa", ShortID: "act-aaaa", Priority: 1, Title: "unclaimed"},
+			{
+				ID:        "act-bbbb00000000bbbb",
+				ShortID:   "act-bbbb",
+				Priority:  2,
+				Title:     "claimed",
+				Assignee:  "0123abcd",
+				ClaimedAt: "2026-05-19T08:00:00.000Z",
+			},
+		},
+		Count: 2,
+	}
+	got := formatReadyHumanAt(res, now)
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines; want 2\nfull=%q", len(lines), got)
+	}
+	// Line 1: unclaimed row uses `-` placeholders in both new columns.
+	wantUnclaimed := "act-aaaa 1 - - unclaimed"
+	if lines[0] != wantUnclaimed {
+		t.Errorf("unclaimed row = %q\n           want %q", lines[0], wantUnclaimed)
+	}
+	// Line 2: assignee truncated to 4 hex chars; claimed_at rendered "2h ago".
+	wantClaimed := "act-bbbb 2 0123 2h ago claimed"
+	if lines[1] != wantClaimed {
+		t.Errorf("claimed row = %q\n         want %q", lines[1], wantClaimed)
+	}
+}
+
+// TestFormatReadyHuman_NonHexAssigneePassesThrough asserts that a non-hex
+// assignee (e.g. a human handle) is rendered verbatim instead of truncated.
+func TestFormatReadyHuman_NonHexAssigneePassesThrough(t *testing.T) {
+	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	res := ReadyResult{
+		Ready: []ReadyIssue{{
+			ID:        "act-cccc00000000cccc",
+			ShortID:   "act-cccc",
+			Priority:  1,
+			Title:     "human-owned",
+			Assignee:  "agent-x",
+			ClaimedAt: "2026-05-19T09:55:00.000Z",
+		}},
+		Count: 1,
+	}
+	got := formatReadyHumanAt(res, now)
+	want := "act-cccc 1 agent-x 5m ago human-owned\n"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+// TestRunReady_ReadyIssueIncludesAssigneeAndClaimedAt asserts the JSON-side
+// surface: a ready row whose assignee was set via update_field (status stays
+// open) carries Assignee through; ClaimedAt is empty for that row because
+// only a claim op writes claimed_at. Together with the format test above
+// this pins both branches of the new columns.
+func TestRunReady_ReadyIssueIncludesAssigneeAndClaimedAt(t *testing.T) {
+	root := makeRepoWithAct(t)
+	seedIssueWithParent(t, root, "act-1aaa00000000aaaa", "with-assignee", "task", "", 1, 1700000000000, "2026-04")
+	seedIssueWithParent(t, root, "act-2bbb00000000bbbb", "bare", "task", "", 1, 1700000010000, "2026-04")
+	// update_field sets assignee while leaving status=open so the row stays
+	// in the ready candidate set (a claim op would flip it to in_progress
+	// and exclude it per act-d79b).
+	seedAssignee(t, root, "act-1aaa00000000aaaa", "node-self", 1700000030000, 0, "2026-04")
+
+	out, code := RunReady(root, ReadyOptions{})
+	if code != 0 {
+		t.Fatalf("exit=%d out=%+v", code, out)
+	}
+	res := out.(ReadyResult)
+	if res.Count != 2 {
+		t.Fatalf("count=%d, want 2", res.Count)
+	}
+	byID := map[string]ReadyIssue{}
+	for _, r := range res.Ready {
+		byID[r.ID] = r
+	}
+	withA := byID["act-1aaa00000000aaaa"]
+	if withA.Assignee != "node-self" {
+		t.Errorf("with-assignee row Assignee=%q, want %q", withA.Assignee, "node-self")
+	}
+	if withA.ClaimedAt != "" {
+		t.Errorf("with-assignee row ClaimedAt=%q, want empty (no claim op)", withA.ClaimedAt)
+	}
+	bare := byID["act-2bbb00000000bbbb"]
+	if bare.Assignee != "" || bare.ClaimedAt != "" {
+		t.Errorf("bare row carries data: assignee=%q claimed_at=%q", bare.Assignee, bare.ClaimedAt)
 	}
 }
 
