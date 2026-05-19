@@ -209,24 +209,36 @@ func runRemoteEnable(actRoot, hostRoot, configPath, hookPath string) (any, int) 
 		}, 3
 	}
 
-	// Doctor verification. We treat error-severity findings as a
-	// remote-enable failure; warnings are surfaced via the count but
-	// not blocking. RunDoctor returns 0 when there are no error
-	// findings.
-	doctorOut, doctorCode := RunDoctor(hostRoot, DoctorOptions{})
-	findings := 0
-	if dr, ok := doctorOut.(DoctorResult); ok {
-		findings = dr.Count
+	// Doctor verification. We treat error-severity findings as
+	// blocking but treat warn-severity findings (e.g. orphan-close
+	// case-(d) from historical commits that reference ids not in the
+	// current act state) as informational — they don't block the role
+	// transition that just landed. This closes act-06ef97: any repo
+	// with historical orphan-close warns (i.e. virtually every real
+	// act repo) previously saw a confusing `doctor_failed` envelope
+	// here even though the role key + hook were already written.
+	//
+	// We inspect the findings list ourselves rather than trusting the
+	// doctor exit code so the block decision is anchored at the
+	// user-visible severity, decoupled from doctor's exit-code policy
+	// (e.g. the phase2 case-(g) exit-4 path that promotes beyond 1).
+	doctorOut, _ := RunDoctor(hostRoot, DoctorOptions{})
+	dr, _ := doctorOut.(DoctorResult)
+	errorFindings := 0
+	for _, f := range dr.Findings {
+		if f.Severity == "error" {
+			errorFindings++
+		}
 	}
-	if doctorCode != 0 {
+	if errorFindings > 0 {
 		return map[string]any{
 			"error":   "doctor_failed",
-			"message": fmt.Sprintf("act remote enable: doctor reported %d finding(s) (exit %d)", findings, doctorCode),
+			"message": fmt.Sprintf("act remote enable: doctor reported %d error-severity finding(s)", errorFindings),
 			"details": map[string]any{
-				"doctor_exit":     doctorCode,
-				"doctor_findings": findings,
+				"doctor_findings":       dr.Count,
+				"doctor_error_findings": errorFindings,
 			},
-		}, 3
+		}, 1
 	}
 
 	return RemoteResult{
@@ -235,7 +247,7 @@ func runRemoteEnable(actRoot, hostRoot, configPath, hookPath string) (any, int) 
 		ConfigPath:     configPath,
 		HookPath:       hookPath,
 		Changed:        true,
-		DoctorFindings: findings,
+		DoctorFindings: dr.Count,
 	}, 0
 }
 

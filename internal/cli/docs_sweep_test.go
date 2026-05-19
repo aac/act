@@ -316,6 +316,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "ticket 6a",
 		testName:     "TestDocClaim_Remote_PostReceiveSkeletonNamesTicket",
 	},
+	// remote-enable doctor verification (act-06ef97): spec §"Verification"
+	// pins that the post-config doctor pass blocks the role transition
+	// ONLY on error-severity findings. Warn-severity findings (typically
+	// orphan-close from historical commits not in the current clone) are
+	// informational and must not block. The drift shape: a refactor of
+	// runRemoteEnable that treats `doctorCode != 0` (or `dr.Count > 0`)
+	// as a failure would reintroduce the exit-code/output mismatch that
+	// motivated this ticket.
+	{
+		name:         "remote-spec-enable-only-error-severity-blocks",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "any error-severity finding",
+		testName:     "TestDocClaim_Remote_EnableOnlyBlocksOnErrorSeverity",
+	},
 	{
 		name:         "config-act-role-orchestrator",
 		docFile:      "docs/spec-v2.md",
