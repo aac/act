@@ -134,11 +134,12 @@ DEEPER DIVES
   act help errors           # error-envelope contract (--json error shape & codes)
   act <subcommand> --help   # flag reference for any subcommand
 
-  Subcommands:
-    init version log list search ready mine show
-    create close reopen delete update
-    dep add doctor import mcp install-skill
-    bootstrap-worker harvest remote
+  Subcommands (comma-separated; "dep add" is one multi-word
+  subcommand, not three items):
+    init, version, log, list, search, ready, mine, show,
+    create, close, reopen, delete, update,
+    dep add, doctor, import, mcp, install-skill,
+    bootstrap-worker, harvest, remote
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue

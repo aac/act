@@ -28,7 +28,7 @@ func runUpdate(args []string) int {
 	statusFlag := fs.String("status", "", "new status (open|blocked); use --claim for in_progress; `act close` for closed")
 	priorityFlag := fs.Int("priority", -1, "new priority [0..3]")
 	assigneeFlag := fs.String("assignee", "", "new assignee (empty string clears)")
-	descriptionFlag := fs.String("description", "", "new description (empty string clears)")
+	descriptionFlag := fs.String("description", "", "new description (empty string explicitly clears the existing description. Contrast 'act create --description \"\"' which is silently accepted as a no-op — see act-f2c7).")
 	descriptionFileFlag := fs.String("description-file", "", "read new description from file (UTF-8); use - for stdin")
 	var acceptFlag stringSliceFlag
 	fs.Var(&acceptFlag, "accept", "append an acceptance criterion (repeatable)")

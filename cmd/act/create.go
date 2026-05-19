@@ -34,7 +34,7 @@ func runCreate(args []string) int {
 	fs.IntVar(priority, "p", 2, "issue priority (shorthand)")
 	parent := fs.String("parent", "", "parent issue id (full or unique prefix)")
 	typ := fs.String("type", "task", "issue type (task|bug|epic|chore)")
-	description := fs.String("description", "", "issue description")
+	description := fs.String("description", "", "issue description (empty string is silently accepted as no-op-equivalent; the new issue is created without a description. Contrast 'act update --description \"\"' which explicitly clears an existing description — see act-f2c7).")
 	descriptionFile := fs.String("description-file", "", "read description from file (UTF-8); use - for stdin")
 	var accept stringSlice
 	fs.Var(&accept, "accept", "acceptance criterion (repeatable)")

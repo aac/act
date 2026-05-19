@@ -499,6 +499,138 @@ func TestDocClaim_DepDirection_FlagHelpPrimer(t *testing.T) {
 	}
 }
 
+// TestDocClaim_BareAct_ListsSubcommandsAndHelpHint pins finding #1 of
+// the act-f2c7 UX-polish pass: a bare `act` invocation must surface
+// both the subcommand list and a pointer to `act help`. The pre-polish
+// behavior was a single "usage: act <subcommand> [flags]" line that
+// gave a fresh agent no concrete next step.
+//
+// Asserted at the user-visible boundary: the binary's stderr output
+// when invoked with no subcommand. Asserts on (a) at least one
+// representative subcommand name appears, (b) the disambiguating
+// "dep add" multi-word subcommand is present, and (c) the
+// `act help` hint is present.
+func TestDocClaim_BareAct_ListsSubcommandsAndHelpHint(t *testing.T) {
+	site := t.TempDir()
+	// No git init needed — bare `act` errors before any state guard
+	// could fire.
+	_, stderr, code := runAct(t, site)
+	if code != 2 {
+		t.Errorf("bare act: exit = %d, want 2; stderr=%q", code, stderr)
+	}
+	// Subcommand list is present, with comma separators.
+	for _, sub := range []string{"init", "create", "ready", "close", "show", "list", "update", "doctor"} {
+		if !strings.Contains(stderr, sub) {
+			t.Errorf("bare act stderr missing subcommand %q; got:\n%s", sub, stderr)
+		}
+	}
+	// The multi-word "dep add" subcommand is named (finding #2 — also
+	// pinned independently by TestDocClaim_BareAct_DepAddNotThreeItems).
+	if !strings.Contains(stderr, "dep add") {
+		t.Errorf("bare act stderr missing multi-word 'dep add' subcommand; got:\n%s", stderr)
+	}
+	// Pointer to the full tutorial.
+	if !strings.Contains(stderr, "act help") {
+		t.Errorf("bare act stderr missing 'act help' pointer; got:\n%s", stderr)
+	}
+}
+
+// TestDocClaim_BareAct_DepAddNotThreeItems pins finding #2 of act-f2c7:
+// the subcommand list (in both the bare-act usage block and `act help`)
+// uses comma separators so multi-word subcommands like "dep add" don't
+// look like three separate items. The drift shape: a future refactor
+// drops the commas, the list reverts to space-separated, and a fresh
+// agent reading either surface infers three subcommands named "dep",
+// "add", "doctor" instead of the actual two ("dep add" and "doctor").
+//
+// Asserted at both surfaces a cold-start agent might hit: bare `act`
+// stderr and `act help` stdout.
+func TestDocClaim_BareAct_DepAddNotThreeItems(t *testing.T) {
+	site := t.TempDir()
+
+	// Surface 1: bare `act` stderr.
+	_, stderr, _ := runAct(t, site)
+	if !strings.Contains(stderr, "dep add, doctor") && !strings.Contains(stderr, "dep add,\n") {
+		t.Errorf("bare act usage: 'dep add' should be followed by a comma so it parses as one subcommand; got:\n%s", stderr)
+	}
+
+	// Surface 2: `act help` overview body. The Subcommands: block
+	// renders comma-separated; "dep add, doctor" is the canonical
+	// adjacent pair.
+	helpOut, _ := mustRunAct(t, site, 0, "help")
+	if !strings.Contains(helpOut, "dep add, doctor") {
+		t.Errorf("act help: 'dep add' should be comma-separated from 'doctor'; got:\n%s", helpOut)
+	}
+}
+
+// TestDocClaim_Init_NextStepHint pins finding #5 of act-f2c7: a
+// successful `act init` must print a "Next:" line that names both the
+// immediate next step (`act create`) AND the canonical-loop tutorial
+// (`act help workflow`). The pre-polish behavior had a one-line
+// "Run \"act create\" to file your first issue." that omitted the
+// loop pointer; an agent doing `act init` in a fresh project that
+// didn't have act's own CLAUDE.md to fill the gap saw no loop hint
+// at all.
+//
+// Asserted at the user-visible boundary: the binary's stdout after
+// `act init` succeeds in a fresh git repo.
+func TestDocClaim_Init_NextStepHint(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	stdout, _ := mustRunAct(t, site, 0, "init")
+	if !strings.Contains(stdout, "Next:") {
+		t.Errorf("act init stdout missing 'Next:' hint; got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "act create") {
+		t.Errorf("act init Next: hint missing 'act create' anchor; got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "act help workflow") {
+		t.Errorf("act init Next: hint missing 'act help workflow' anchor; got:\n%s", stdout)
+	}
+}
+
+// TestDocClaim_Description_CreateUpdateConsistencyNote pins finding #3
+// of act-f2c7: both `act create --help` and `act update --help` must
+// surface a note clarifying the behavior of an empty `--description`.
+// `act create --description ”` is silently accepted (no-op
+// equivalent); `act update --description ”` explicitly clears an
+// existing description. The behaviors differ; the docs note pins both
+// surfaces so an agent reading either learns the contrast.
+//
+// Asserted at the --help boundary for both commands.
+func TestDocClaim_Description_CreateUpdateConsistencyNote(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	// Flag-help is reachable by --help on Go's flag package. Exit code
+	// is non-zero (Go convention) and content lands on stderr.
+	for _, sub := range []string{"create", "update"} {
+		_, stderr, _ := runAct(t, site, sub, "--help")
+		if !strings.Contains(stderr, "--description") {
+			t.Errorf("act %s --help missing --description listing; got:\n%s", sub, stderr)
+		}
+		// The note must reference the contrast — either surface (create or
+		// update) mentions the other so an agent reading one learns the
+		// other's semantics.
+		if !strings.Contains(stderr, "act-f2c7") {
+			t.Errorf("act %s --help: --description note should cite act-f2c7 (the ticket pinning the consistency note); got:\n%s", sub, stderr)
+		}
+		switch sub {
+		case "create":
+			if !strings.Contains(stderr, "silently accepted") {
+				t.Errorf("act create --help: --description note should describe empty-string as 'silently accepted' no-op; got:\n%s", stderr)
+			}
+		case "update":
+			if !strings.Contains(stderr, "clears") {
+				t.Errorf("act update --help: --description note should describe empty-string as clearing the existing description; got:\n%s", stderr)
+			}
+		}
+	}
+}
+
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).
