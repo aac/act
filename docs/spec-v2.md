@@ -1288,6 +1288,46 @@ append would push the count past the cap. The pruning shape matches
 |------|------|-------|---------|
 | `upstream_not_configured` | 2 | `act remote sync` | No `origin-upstream` remote configured in `.act/.git/config`. Stderr line: `no origin-upstream configured; run 'act remote add-upstream <url>'`. |
 
+## `act remote add-upstream` (Phase 2 ticket 1b)
+
+`act remote add-upstream <url>` configures the orchestrator's
+`origin-upstream` remote to point at `<url>` and does an initial
+`git push origin-upstream <branch>` so the mirror is seeded
+immediately. Used to wire `act remote sync` (and the post-receive
+hook's background sync) to a durable mirror — typically a GitHub repo
+private to the agent run.
+
+### Behavior
+
+- Public-URL refusal: if the parsed host (case-insensitive) plus its
+  first path component matches any entry in
+  `internal/config/upstream_patterns.go` (`PublicHostPatterns`), the
+  command exits 2 with envelope `upstream_public` and the stderr
+  literal `refusing public upstream; pass --force-public to override`.
+  No state is mutated on the refusal path.
+- `--force-public` skips the public-URL refusal. The command otherwise
+  succeeds as if the URL were private.
+- On accepted URL: writes `remote.origin-upstream.url=<url>` and
+  `remote.origin-upstream.fetch=+refs/heads/*:refs/remotes/origin-upstream/*`
+  to `.act/.git/config` via `git config -f`, then runs
+  `git --git-dir=.act/.git push origin-upstream <branch>` where
+  `<branch>` is the branch named by `.act/.git/HEAD` (default `main`
+  on detached HEAD).
+- Initial push failure is NOT fail-soft (contrast with `act remote
+  sync`): the command exits 3 with envelope `push_failed` carrying
+  `details.url` and `details.branch`. The config writes are NOT rolled
+  back — the user can re-run `add-upstream` (idempotent at the config
+  layer) or run `act remote sync` once the URL is reachable.
+- Idempotence: re-running with the same URL is safe; the `git config`
+  writes overwrite to the same values and the push is a no-op when
+  upstream already matches.
+
+### Error-code entry
+
+| Code | Exit | Where | Meaning |
+|------|------|-------|---------|
+| `upstream_public` | 2 | `act remote add-upstream` | URL matches a curated public-host pattern. Stderr line: `refusing public upstream; pass --force-public to override`. Pass `--force-public` to override. |
+
 ## `act bootstrap-worker --from-remote` (Phase 2 ticket 7)
 
 `act bootstrap-worker --from-remote <url> <target-path>` clones the

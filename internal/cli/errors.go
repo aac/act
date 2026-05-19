@@ -62,6 +62,12 @@ const (
 	// exit-2 (bad input / configuration error) and the stderr line
 	// `no origin-upstream configured; run 'act remote add-upstream <url>'`.
 	ErrUpstreamNotConfigured = "upstream_not_configured"
+	// ErrUpstreamPublic is emitted by `act remote add-upstream <url>`
+	// (Phase 2 ticket 1b) when the supplied URL matches one of the
+	// curated public-host patterns (`internal/config/upstream_patterns.go`)
+	// and the caller did not pass `--force-public`. Exit 2 with stderr
+	// literal `refusing public upstream; pass --force-public to override`.
+	ErrUpstreamPublic = "upstream_public"
 
 	// Phase 2 ticket 7 (act-0480c9). `bootstrap_timeout` fires when
 	// `act bootstrap-worker --from-remote` exceeds the wall-clock budget
