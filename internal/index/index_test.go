@@ -563,3 +563,125 @@ func TestIsMalformed_KnownPhrases(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// TestApplySchema_MigratesMissingClaimedAt is the regression test for
+// act-4bb6: act-4b45 added the `claimed_at` column to the issues table but
+// shipped no migration path, so every existing .act/index.db broke on its
+// next write with "table issues has no column named claimed_at". ApplySchema
+// now reconciles each tracked table against expectedColumns and runs
+// `ALTER TABLE ... ADD COLUMN` for any missing column.
+//
+// The test reproduces the pre-act-4b45 state by creating an index.db whose
+// issues table is missing claimed_at, then reopens and calls ApplySchema and
+// confirms (a) the column appears and (b) an upsert that references
+// claimed_at succeeds.
+func TestApplySchema_MigratesMissingClaimedAt(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.db")
+
+	// Open with the canonical Open path so DSN pragmas (WAL etc.) match
+	// production. We then hand-create an issues table that mirrors the
+	// pre-act-4b45 schema — same columns, sans claimed_at.
+	idx, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := idx.db.Exec(`
+        CREATE TABLE issues (
+            id            TEXT PRIMARY KEY,
+            title         TEXT,
+            description   TEXT,
+            status        TEXT,
+            priority      INTEGER,
+            type          TEXT,
+            parent        TEXT,
+            assignee      TEXT,
+            created_at    TEXT,
+            closed_at     TEXT,
+            closed_reason TEXT,
+            tombstoned    INTEGER DEFAULT 0
+        )
+    `); err != nil {
+		t.Fatalf("create legacy issues table: %v", err)
+	}
+	// Confirm the table really lacks claimed_at before the migration runs.
+	have, err := idx.tableColumns("issues")
+	if err != nil {
+		t.Fatalf("tableColumns pre-migrate: %v", err)
+	}
+	if _, has := have["claimed_at"]; has {
+		t.Fatalf("test setup wrong: legacy table already has claimed_at")
+	}
+
+	// ApplySchema must add the missing column without error. CREATE TABLE
+	// IF NOT EXISTS sees the existing table and is a no-op; the migration
+	// path then notices claimed_at is missing and issues an ALTER.
+	if err := idx.ApplySchema(); err != nil {
+		t.Fatalf("ApplySchema: %v", err)
+	}
+
+	have, err = idx.tableColumns("issues")
+	if err != nil {
+		t.Fatalf("tableColumns post-migrate: %v", err)
+	}
+	if _, has := have["claimed_at"]; !has {
+		t.Fatalf("claimed_at column not added by migration: have=%v", have)
+	}
+
+	// A write that references claimed_at must now succeed. This is the
+	// regression — pre-fix this errors with "table issues has no column
+	// named claimed_at".
+	state := &fold.IssueState{
+		ID: "act-mig0",
+		Fields: map[string]any{
+			"title":      "post-migrate write",
+			"type":       "task",
+			"status":     "claimed",
+			"created_at": "2026-05-19T00:00:00Z",
+			"claimed_at": "2026-05-19T00:00:01Z",
+		},
+		LastHLC: map[string]hlc.Stamp{},
+	}
+	if err := idx.Upsert(state); err != nil {
+		t.Fatalf("Upsert after migration: %v", err)
+	}
+
+	row, err := idx.Get("act-mig0")
+	if err != nil {
+		t.Fatalf("Get post-migrate: %v", err)
+	}
+	if row.ClaimedAt != "2026-05-19T00:00:01Z" {
+		t.Fatalf("ClaimedAt = %q, want 2026-05-19T00:00:01Z", row.ClaimedAt)
+	}
+
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestApplySchema_NoOpOnCurrent confirms ApplySchema is a no-op (no spurious
+// ALTERs) on an index.db whose schema already matches. We apply the schema
+// twice and verify the second call leaves the column set unchanged.
+func TestApplySchema_NoOpOnCurrent(t *testing.T) {
+	idx, _ := newTempIndex(t) // newTempIndex already calls ApplySchema once.
+
+	before, err := idx.tableColumns("issues")
+	if err != nil {
+		t.Fatalf("tableColumns: %v", err)
+	}
+	if err := idx.ApplySchema(); err != nil {
+		t.Fatalf("ApplySchema (second call): %v", err)
+	}
+	after, err := idx.tableColumns("issues")
+	if err != nil {
+		t.Fatalf("tableColumns: %v", err)
+	}
+	if len(before) != len(after) {
+		t.Fatalf("column count changed: %d -> %d", len(before), len(after))
+	}
+	for name := range before {
+		if _, ok := after[name]; !ok {
+			t.Fatalf("column %q lost across no-op ApplySchema", name)
+		}
+	}
+}
