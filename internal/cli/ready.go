@@ -30,6 +30,10 @@ type ReadyOptions struct {
 	// and `--as <id>` (which sets it to an explicit override). The filter
 	// is a post-pass on the already-computed ready set; --under composes.
 	AssigneeFilter string
+	// Fresh, when true, forces the read-path cache layer to fetch+rebase
+	// before reading state, regardless of FETCH_HEAD freshness. Wired by
+	// `act ready --fresh` and the `--no-cache` alias (Phase 2 ticket 5).
+	Fresh bool
 }
 
 // ReadyIssue is one row of the ready set.
@@ -94,6 +98,13 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 			Message: fmt.Sprintf("act ready: stat %s: %v", paths.Root, err),
 		}, 3
 	}
+
+	// Phase 2 ticket 5: read-path cache check. Fetch+rebase if FETCH_HEAD
+	// is stale or a bypass is set; no-op silently when there's no remote
+	// or no nested .git yet. Errors here are non-fatal — the underlying
+	// command falls through to read whatever state is currently on disk
+	// so a transient network failure doesn't break read-only commands.
+	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
 
 	// Step 2: open + rebuild the index.
 	idx, err := index.Open(paths.IndexDB)

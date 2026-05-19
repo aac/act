@@ -49,6 +49,24 @@ type checkpointFile struct {
 	Issues        map[string]IssueCheckpoint `json:"issues"`
 }
 
+// InvalidateCheckpoint removes the fold-checkpoint at path. A missing file
+// is not an error — invalidation is idempotent so callers can invoke it
+// blindly after any operation that may have added new ops (e.g. the
+// read-path cache layer's post-rebase invariant per Phase 2 ticket 5).
+//
+// A non-NotExist error (permission denied, busy file on Windows, etc.) is
+// returned so the caller can decide whether to surface it. Production
+// callers in v0.1 treat a stray .act/fold-checkpoint.json as a cold-start
+// trigger anyway (the schema-version mismatch path), so even a transient
+// failure here doesn't risk serving stale fold output.
+func InvalidateCheckpoint(path string) error {
+	err := os.Remove(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("fold: invalidate checkpoint %s: %w", path, err)
+	}
+	return nil
+}
+
 // ReadCheckpoint loads a checkpoint from path. If the file is missing or its
 // schema version does not match this binary's, ReadCheckpoint returns
 // (nil, nil) — the caller treats that as cold-start.

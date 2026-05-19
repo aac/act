@@ -28,6 +28,10 @@ type SearchOptions struct {
 	// AsJSON is reserved for compatibility with the parent renderer; the
 	// returned `output` shape is the same map either way.
 	AsJSON bool
+	// Fresh, when true, forces the read-path cache layer to fetch+rebase
+	// before reading state (Phase 2 ticket 5). Not surfaced as a CLI
+	// flag on `act search` in this phase.
+	Fresh bool
 }
 
 // SearchMatch is one row in the search results.
@@ -125,6 +129,9 @@ func RunSearch(repoRoot, query string, opts SearchOptions) (output any, exitCode
 			Message: fmt.Sprintf("act search: %v", err),
 		}, 2
 	}
+
+	// Phase 2 ticket 5: read-path cache check.
+	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
 
 	// 2. Open the index and rebuild for freshness.
 	paths := config.Layout(repoRoot)

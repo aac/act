@@ -34,6 +34,10 @@ type ListOptions struct {
 	// AsJSON controls the rendering layer; the function returns the same
 	// data shape regardless and main.go decides how to render.
 	AsJSON bool
+	// Fresh, when true, forces the read-path cache layer to fetch+rebase
+	// before reading state (Phase 2 ticket 5). Not surfaced as a CLI
+	// flag on `act list` in this phase.
+	Fresh bool
 }
 
 // ListedIssue is one row of the JSON output. JSON tags match the v0.1 spec
@@ -121,6 +125,9 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 			Message: err.Error(),
 		}, 2
 	}
+
+	// Phase 2 ticket 5: read-path cache check.
+	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
 
 	// Step 3: open + rebuild the index. v0.1 unconditionally rebuilds; the
 	// fold-checkpoint short-circuit is a future optimisation (see act-a1f6).

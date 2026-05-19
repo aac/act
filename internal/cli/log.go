@@ -57,6 +57,11 @@ func RunLog(repoRoot, idOrPrefix string, asJSON bool) (output any, exitCode int)
 		}, 3
 	}
 
+	// Phase 2 ticket 5: read-path cache check. RunLog has no Fresh
+	// option struct today, so only env-based ACT_DISPATCH_MODE bypass
+	// applies; the default TTL gate still fires.
+	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{})
+
 	opsDir := filepath.Join(actDir, "ops")
 	allIDs, err := listIssueIDs(opsDir)
 	if err != nil {

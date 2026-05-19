@@ -1220,3 +1220,22 @@ re-installed from the same skeleton).
 `act remote enable` MUST run `act doctor` after the writes complete
 and return non-zero if doctor reports any error-severity finding. This
 catches enable runs that would leave a half-configured repo.
+
+### Read-cache
+
+Read-path commands (`act show`, `act ready`, `act log`, `act list`, `act search`) consult a TTL-bounded freshness gate before invoking `git fetch + git rebase` against the nested `.act/.git`. The gate exists so the canonical work loop's frequent reads do not pay the cost of a round-trip on every invocation — but it has explicit bypass paths for the cases (dispatcher fan-out, ad-hoc cache-bust) where staleness is unacceptable.
+
+**TTL.** A 5-second TTL bounds the freshness window, measured against the mtime of `.act/.git/FETCH_HEAD`. Within the window, the read command reads on-disk state directly. Outside the window, the command calls `gitops.FetchAndRebase(branch)` first, then reads. A read on a cold cache (no `FETCH_HEAD` yet) is always a miss.
+
+The TTL is currently a constant (5 seconds). Phase 2 ticket 1a introduces the `act.readCacheTTLSeconds` config key that will replace this constant with a per-repo override; the default and semantics remain unchanged.
+
+**Bypass mechanisms.** Three paths force a fetch regardless of FETCH_HEAD age:
+
+- `ACT_DISPATCH_MODE=1` env var. Set by the dispatcher when fanning out coordinated agents; ensures the worker's first read observes the dispatcher's latest push. The check is strict-literal: only the exact value `1` triggers the bypass.
+- `--fresh` / `--no-cache` flag on `act ready`. Ad-hoc cache-bust for a single invocation; the two spellings are aliases with identical dispatch (both flags resolve to the same boolean at the cli boundary). The dual surface exists so agents reaching for the "no cache" idiom find a working flag without having to learn act's preferred spelling.
+
+**Post-rebase invariant.** If a fetch-then-rebase advanced HEAD (i.e. the rebase added new ops to the nested `.act/.git`'s log), the cache layer invalidates the fold cache: `.act/fold-checkpoint.json` and `.act/index.db` are removed. The next read-path command's existing open+rebuild flow regenerates both from scratch over the new op set. The fold-checkpoint.json does not survive a rebase that adds ops. A no-op rebase (HEAD unchanged) leaves both files in place — otherwise every read on a quiet remote would defeat the cache.
+
+**No-remote repos.** A repo with no `origin` configured on the nested `.act/.git` is a silent no-op for the cache layer: there is nothing to fetch from, so the freshness check is skipped and the read proceeds directly. This keeps single-machine / local-only flows unchanged.
+
+**Failure modes.** A fetch error inside the cache layer (network unreachable, branch missing, rebase conflict) is non-fatal for the read-path command: the command falls through to read whatever state is currently on disk so a transient network failure does not break read-only commands. The write-path retry helpers (`PushWithRetry`, `FetchAndRebase` consumed by `--claim`) continue to surface their failures verbatim.

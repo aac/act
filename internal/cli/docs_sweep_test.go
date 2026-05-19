@@ -194,6 +194,52 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "full or unique prefix",
 		testName:     "TestDocClaim_PrefixOk_TwoCharUniquePrefixResolves",
 	},
+	// cache-* (act-20c77e, Phase 2 ticket 5): the read-path TTL cache
+	// makes load-bearing claims in docs/spec-v2.md (Read-cache section)
+	// and in `act ready --help`. Each entry pins one such claim at the
+	// boundary a reader would consult.
+	{
+		name:         "cache-ttl-five-seconds",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "5-second TTL",
+		testName:     "TestDocClaim_ReadCache_TTLFiveSeconds",
+	},
+	{
+		name:         "cache-dispatch-mode-bypass",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "ACT_DISPATCH_MODE=1",
+		testName:     "TestDocClaim_ReadCache_DispatchModeEnvBypass",
+	},
+	{
+		name:         "cache-fresh-no-cache-alias",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`--fresh` / `--no-cache`",
+		testName:     "TestDocClaim_ReadCache_FreshNoCacheAlias",
+	},
+	{
+		name:         "cache-fold-invalidation",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "fold-checkpoint.json does not survive",
+		testName:     "TestDocClaim_ReadCache_FoldCheckpointInvalidation",
+	},
+	{
+		name:         "cache-noop-preserves-checkpoint",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "A no-op rebase (HEAD unchanged) leaves both files in place",
+		testName:     "TestDocClaim_ReadCache_NoRebaseLeavesCheckpoint",
+	},
+	{
+		name:         "read-cache-fetch-head-source",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: ".act/.git/FETCH_HEAD",
+		testName:     "TestDocClaim_ReadCache_FetchHeadPathLayout",
+	},
+	{
+		name:         "read-cache-fresh-flag-help",
+		docFile:      "cmd/act/ready.go",
+		claimPattern: "bypass the read-path TTL cache",
+		testName:     "TestDocClaim_ReadCache_FreshFlagInReadyHelp",
+	},
 	// skill-worker-* (act-9e7078): the worker-protocol section in the
 	// embedded SKILL.md tells dispatched sub-agents (a) that the
 	// orchestrator pre-seeds .act/ via bootstrap-worker before launch and
