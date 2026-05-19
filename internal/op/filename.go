@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// isoLayout is the fixed-width 24-char NTFS-safe variant of the ISO-8601
-// millisecond UTC layout used for op filenames per spec §Op file naming
-// (`YYYY-MM-DDTHH-MM-SS.sssZ`).
+// IsoLayout is the fixed-width 24-char NTFS-safe variant of the ISO-8601
+// millisecond UTC layout used for on-disk filenames per spec §Op file
+// naming (`YYYY-MM-DDTHH-MM-SS.sssZ`).
 //
 // The time component uses '-' (not ':') because ':' is reserved in NTFS
 // paths, breaking `git checkout` on Windows hosts before any Go code runs
@@ -23,7 +23,11 @@ import (
 //
 // Old-form names (with ':') remain readable: Parse accepts both layouts
 // (forward-only fix; existing ops are append-only and stay valid).
-const isoLayout = "2006-01-02T15-04-05.000Z"
+//
+// Exported so adjacent writers that need an NTFS-safe filename (e.g. the
+// importer's `.act/imports/<iso>.json` mapping files in act-561c63) can
+// reuse the constant rather than duplicating the layout string.
+const IsoLayout = "2006-01-02T15-04-05.000Z"
 
 // isoLayoutLegacy is the pre-act-2f3d form. Retained for Parse so that
 // existing op files (committed before this change) keep folding cleanly.
@@ -79,7 +83,7 @@ func filenameWithLen(env Envelope, hashLen int) (string, error) {
 	if hashLen <= 0 || hashLen > len(full) {
 		return "", fmt.Errorf("op: filename hash length %d out of range", hashLen)
 	}
-	iso := time.UnixMilli(env.HLC.Wall).UTC().Format(isoLayout)
+	iso := time.UnixMilli(env.HLC.Wall).UTC().Format(IsoLayout)
 	return fmt.Sprintf("%s-%s-%s.json", iso, full[:hashLen], env.OpType), nil
 }
 
@@ -203,7 +207,7 @@ func Parse(filename string) (timestamp time.Time, opHash string, opType string, 
 	if !ValidOpTypes[op] {
 		return time.Time{}, "", "", fmt.Errorf("op: parse %q: unknown op_type %q", base, op)
 	}
-	t, perr := time.ParseInLocation(isoLayout, iso, time.UTC)
+	t, perr := time.ParseInLocation(IsoLayout, iso, time.UTC)
 	if perr != nil {
 		// Fall back to the legacy colon form. Existing op files on disk
 		// (pre-act-2f3d) use ':' in the time component; the layouts are

@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aac/act/internal/canonicaljson"
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/op"
 )
 
 // fakeGitOps records the calls made by the importer without invoking git.
@@ -362,5 +364,38 @@ func TestRun_NoCommit(t *testing.T) {
 	// Mapping file still written.
 	if _, err := os.Stat(res.MappingFile); err != nil {
 		t.Fatalf("mapping file missing: %v", err)
+	}
+}
+
+// TestImporterMappingFilename_NoColon is the regression test for act-561c63.
+// The importer used to emit `.act/imports/<iso>.json` mapping filenames with
+// colons in the time component, which break `git checkout` on NTFS hosts
+// before any Go code runs (same class of bug as the op-filename fix in
+// act-2f3d). New mapping filenames must use the dash form (op.IsoLayout).
+//
+// User-visible boundary: the file basename on disk, not the in-memory format
+// string — this is what `git checkout` actually sees on Windows.
+func TestImporterMappingFilename_NoColon(t *testing.T) {
+	root := setup(t)
+	jsonl := authorJSONL(t, root)
+
+	res, err := Run(root, Options{JSONLPath: jsonl}, &fakeGitOps{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.MappingFile == "" {
+		t.Fatalf("mapping file empty")
+	}
+	base := filepath.Base(res.MappingFile)
+	if strings.ContainsRune(base, ':') {
+		t.Fatalf("mapping filename %q contains ':' (NTFS-unsafe); want dash-form ISO layout per op.IsoLayout", base)
+	}
+	if !strings.HasSuffix(base, ".json") {
+		t.Fatalf("mapping filename %q missing .json suffix", base)
+	}
+	// Confirm the dash-form layout: `YYYY-MM-DDTHH-MM-SS.sssZ.json`.
+	stem := strings.TrimSuffix(base, ".json")
+	if _, perr := time.ParseInLocation(op.IsoLayout, stem, time.UTC); perr != nil {
+		t.Fatalf("mapping filename stem %q does not parse as op.IsoLayout: %v", stem, perr)
 	}
 }

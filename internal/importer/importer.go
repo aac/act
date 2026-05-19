@@ -255,8 +255,14 @@ func Run(repoRoot string, opts Options, gitops gitOpsCommitter) (Result, error) 
 
 	// Step 5: write the mapping file via canonical JSON.
 	importedAtStamp := clock.Send()
+	// The HLC field inside the mapping JSON body keeps the canonical colon
+	// form (matches the op-envelope HLC contract; only filenames vary, per
+	// op.IsoLayout's doc comment). The mapping filename itself uses the
+	// NTFS-safe dash form — colons in path components break `git checkout`
+	// on Windows hosts (act-561c63, mirroring the op filename fix in
+	// act-2f3d).
 	importedAtHLC := time.UnixMilli(importedAtStamp.Wall).UTC().Format("2006-01-02T15:04:05.000Z")
-	mappingFileName := time.Now().UTC().Format("2006-01-02T15:04:05.000Z") + ".json"
+	mappingFileName := time.Now().UTC().Format(op.IsoLayout) + ".json"
 	mappingPath := filepath.Join(paths.Imports, mappingFileName)
 
 	mf := mappingFile{
