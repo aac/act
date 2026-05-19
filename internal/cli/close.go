@@ -51,22 +51,16 @@ type CloseOptions struct {
 // CloseResult is the JSON-serialisable success envelope for a write that
 // actually emitted a new close op.
 //
-// Committed and StagedForCommit are mutually exclusive:
-//   - Committed=true, StagedForCommit=false: act close created its own commit
-//     (clean working tree outside .act/, or per_op strategy).
-//   - Committed=false, StagedForCommit=true: the close op file is staged but
-//     not yet committed; the agent's next git commit will subsume it together
-//     with their working-tree changes (act-a659).
-//   - Committed=false, StagedForCommit=false: --no-commit was set; nothing is
-//     staged.
+// Under Phase 1, every close that commits does so standalone in the nested
+// .act/ git repo. Committed=true on a successful commit; Committed=false
+// only when --no-commit was set (op file written but not staged).
 type CloseResult struct {
-	ID              string `json:"id"`
-	ShortID         string `json:"short_id"`
-	OpsWritten      int    `json:"ops_written"`
-	Committed       bool   `json:"committed"`
-	StagedForCommit bool   `json:"staged_for_commit,omitempty"`
-	CommitMarker    string `json:"commit_marker,omitempty"`
-	Reason          string `json:"reason"`
+	ID           string `json:"id"`
+	ShortID      string `json:"short_id"`
+	OpsWritten   int    `json:"ops_written"`
+	Committed    bool   `json:"committed"`
+	CommitMarker string `json:"commit_marker,omitempty"`
+	Reason       string `json:"reason"`
 }
 
 // CloseAlreadyClosed is the JSON-serialisable envelope returned when the
@@ -106,21 +100,12 @@ const closeReasonMaxBytes = 4096
 //  4. Build a close envelope carrying ClosePayload{Reason: opts.Reason}.
 //
 //  5. Write the op file; run the post-close hook (pre-commit per the
-//     hooks contract); stage the op file. Then decide whether to commit:
+//     hooks contract); stage the op file. Then commit standalone in the
+//     nested .act/ git repo (or skip the commit entirely when --no-commit
+//     was set).
 //
-//     - `--no-commit`: skip staging+commit entirely (op file written only).
-//     - `per_op` strategy: always commit standalone.
-//     - `per_session` strategy (default): if the working tree has any
-//     non-.act changes the agent's next `git commit -am '<msg>
-//     (act-XXXX)'` will subsume the staged close op (act-a659); this
-//     yields one work-commit-with-close instead of work + close. If the
-//     working tree is clean outside .act/, commit standalone (preserves
-//     the no-code-close UX).
-//
-//     The commit subject (when we commit) contains `(<short_id>)` so
-//     doctor's orphan-close grep can correlate. When the agent subsumes
-//     the staged op, their work-commit subject must carry the same
-//     marker — the FormatCloseHuman hint reminds them.
+//     The commit subject contains `(<short_id>)` so doctor's orphan-close
+//     grep can correlate.
 //
 //  6. Return CloseResult on success.
 //
@@ -323,62 +308,14 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	// Determine whether we should bundle pending op files (per_session strategy).
-	// In per_session mode the close commit collects all deferred op files that
-	// were written during the claim→close window for this specific issue (they
-	// were written to disk but not committed, per InClaimWindowForNode semantics).
-	var pendingPaths []string
-	if cfg.EffectiveBundleStrategy() == config.BundleStrategyPerSession && !opts.NoCommit {
-		pp, perr := ListPendingOpFilesForIssue(repoRoot, paths.Ops, full)
-		if perr != nil {
-			_ = os.Remove(opPath)
-			return CloseErrorOutput{
-				Error:   "pending_ops_scan_failed",
-				Message: perr.Error(),
-			}, 1
-		}
-		// pendingPaths may include the close op file we just wrote (it is
-		// untracked). Filter it out so we stage it explicitly below and
-		// avoid double-staging.
-		for _, p := range pp {
-			if p != opPath {
-				pendingPaths = append(pendingPaths, p)
-			}
-		}
-	}
-
 	committed := false
-	stagedForCommit := false
 	if !opts.NoCommit {
-		// Phase 1: writes target the nested .act/ git repo. Under this
-		// reframe, the close commit is in the nested repo and invisible
-		// to the host repo's log, so the bundle-into-host-work-commit
-		// machinery (act-a659) no longer applies — close always commits
-		// standalone in the nested repo. The HasNonActChanges branch
-		// below stays dead code under Phase 1 because nested-repo cwd
-		// has no non-.act paths by construction.
+		// Phase 1: writes target the nested .act/ git repo. Close
+		// always commits standalone in the nested repo.
 		gops := gitops.NewActGitOps(paths.Root)
 
-		// Stage any deferred op files first (they have no associated hook).
-		rollbackPending := func() {
-			for _, p := range pendingPaths {
-				_ = runUnstage(gops.RepoRoot, p)
-			}
-		}
-		for _, p := range pendingPaths {
-			if err := gops.StageOpFile(p); err != nil {
-				rollbackPending()
-				_ = os.Remove(opPath)
-				return CloseErrorOutput{
-					Error:   "stage_failed",
-					Message: fmt.Sprintf("stage pending op %s: %v", p, err),
-				}, 1
-			}
-		}
-
-		// Stage the close op file itself.
+		// Stage the close op file.
 		if err := gops.StageOpFile(opPath); err != nil {
-			rollbackPending()
 			return CloseErrorOutput{
 				Error:   "stage_failed",
 				Message: err.Error(),
@@ -386,12 +323,9 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}
 
 		// Pre-commit hook: post-close per spec §Hooks contract.
-		// Runs even when we end up not committing (the close-op is staged
-		// either way) so .act/hooks/close still gates the close decision.
 		if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
 			opID, herr := env.Hash()
 			if herr != nil {
-				rollbackPending()
 				_ = runUnstage(gops.RepoRoot, opPath)
 				return CloseErrorOutput{
 					Error:   "hash_failed",
@@ -411,7 +345,6 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 				ActStatePath: paths.Root,
 			}
 			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
-				rollbackPending()
 				_ = runUnstage(gops.RepoRoot, opPath)
 				_ = os.Remove(opPath)
 				msg, details, _ := HookFailureDetails(err)
@@ -423,99 +356,60 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}
 		}
 
-		// Commit decision under Phase 1 (docs/coordination-plane-design.md
-		// "Consequence for act-a659"): the close commit lives in the
-		// nested .act/ repo, which is invisible to the host repo's log,
-		// so the bundle-into-host-work-commit machinery that justified
-		// per_session's deferred-close path no longer applies. Close
-		// always commits standalone in the nested repo regardless of
-		// strategy; the per_session config knob is dead under Phase 1
-		// and slated for removal in a follow-up.
-		commitNow := true
+		// Commit standalone in the nested .act/ repo. The bundle-into-
+		// host-work-commit machinery (formerly per_session, act-a659) no
+		// longer applies under Phase 1 because the close commit lives in
+		// the nested repo and is invisible to the host repo's log.
+		msg := BuildOpCommitMessage(env)
+		// Phase 2 ticket 3b: timed via CommitOp so slow-write
+		// observation fires on close commits too. op_id is the
+		// close envelope's hash; op_type is "close".
+		opIDForSlow, _ := env.Hash()
+		swCtx := gitops.SlowWriteContext{
+			OpType:    env.OpType,
+			OpID:      opIDForSlow,
+			StateRoot: gops.RepoRoot,
+		}
+		if err := gops.CommitOp(msg, swCtx); err != nil {
+			_ = runUnstage(gops.RepoRoot, opPath)
+			return CloseErrorOutput{
+				Error:   "commit_failed",
+				Message: err.Error(),
+			}, 1
+		}
+		committed = true
 
-		if commitNow {
-			// Commit subject is built by BuildOpCommitMessage; canonical
-			// format is `act-op: (act-XXXX) close`. Doctor's orphan-close
-			// grep keys on the parenthesized short id. See act-d3a5.
-			// When bundling, include the count of bundled ops in the message
-			// (including the close op itself).
-			var msg string
-			if len(pendingPaths) > 0 {
-				msg = BuildBatchCommitMessage(env, len(pendingPaths)+1)
-			} else {
-				msg = BuildOpCommitMessage(env)
-			}
-			// Phase 2 ticket 3b: timed via CommitOp so slow-write
-			// observation fires on close commits too. op_id is the
-			// close envelope's hash; op_type is "close".
-			opIDForSlow, _ := env.Hash()
-			swCtx := gitops.SlowWriteContext{
-				OpType:    env.OpType,
-				OpID:      opIDForSlow,
-				StateRoot: gops.RepoRoot,
-			}
-			if err := gops.CommitOp(msg, swCtx); err != nil {
-				rollbackPending()
-				_ = runUnstage(gops.RepoRoot, opPath)
+		// Phase 2 ticket 3b: --offline → defer the publish via a
+		// pending-push record. The next non-offline write flushes
+		// the entry before its own push.
+		if opts.Offline {
+			if err := RecordPendingPush(gops, gops.RepoRoot, env.OpType); err != nil {
 				return CloseErrorOutput{
-					Error:   "commit_failed",
+					Error:   "record_pending_push_failed",
 					Message: err.Error(),
 				}, 1
 			}
-			committed = true
-
-			// Phase 2 ticket 3b: --offline → defer the publish via a
-			// pending-push record. The next non-offline write flushes
-			// the entry before its own push.
-			if opts.Offline {
-				if err := RecordPendingPush(gops, gops.RepoRoot, env.OpType); err != nil {
-					return CloseErrorOutput{
-						Error:   "record_pending_push_failed",
-						Message: err.Error(),
-					}, 1
-				}
-			} else {
-				// Phase 2 ticket 3b: flush any prior --offline backlog
-				// before this close's own push.
-				if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
-					return closeErrorForPushFailure(err)
-				}
-				// Phase 2 ticket 3a: synchronous publish on every close that
-				// commits. If origin is configured, AutoPushAfterCommit invokes
-				// PushWithRetry. On *PushExhaustedError we surface envelope
-				// `push_exhausted` (exit 4 per spec §error-envelope) with
-				// details.retry_count / shallow_unshallow_attempted populated
-				// from the structured error. On ErrFetchFailed (and only that
-				// sentinel) we surface envelope `remote_unreachable` (also exit
-				// 4). Other push errors surface as the legacy `push_failed`
-				// (exit 1) so the test suite for pre-3a behavior keeps passing.
-				// The commit has already landed; on push failure we do NOT roll
-				// it back — the close op is on disk locally and recoverable
-				// via the harvest path.
-				if err := gops.AutoPushAfterCommit(); err != nil {
-					return closeErrorForPushFailure(err)
-				}
-			}
 		} else {
-			// Close op is staged; the agent's next `git commit -am` will
-			// pick it up alongside their code changes (one work commit
-			// instead of work + close). Push is meaningless here — there's
-			// nothing new on HEAD yet — so we surface a flag-conflict
-			// error to keep the contract crisp. Full rollback (unstage +
-			// remove the op file) so the issue is NOT folded as closed
-			// from on-disk ops; otherwise re-running `act close` would
-			// short-circuit to {already_closed:true} and the agent would
-			// have no way to recover.
-			if opts.Push {
-				rollbackPending()
-				_ = runUnstage(gops.RepoRoot, opPath)
-				_ = os.Remove(opPath)
-				return CloseErrorOutput{
-					Error:   "push_without_commit",
-					Message: "act close: --push requires the close to commit standalone, but the working tree has uncommitted non-.act changes. Commit your work first (git commit -am '<msg> (act-XXXX)'), then re-run `act close <id> --push` (or omit --push and push manually after the commit subsumes the close op).",
-				}, 2
+			// Phase 2 ticket 3b: flush any prior --offline backlog
+			// before this close's own push.
+			if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
+				return closeErrorForPushFailure(err)
 			}
-			stagedForCommit = true
+			// Phase 2 ticket 3a: synchronous publish on every close that
+			// commits. If origin is configured, AutoPushAfterCommit invokes
+			// PushWithRetry. On *PushExhaustedError we surface envelope
+			// `push_exhausted` (exit 4 per spec §error-envelope) with
+			// details.retry_count / shallow_unshallow_attempted populated
+			// from the structured error. On ErrFetchFailed (and only that
+			// sentinel) we surface envelope `remote_unreachable` (also exit
+			// 4). Other push errors surface as the legacy `push_failed`
+			// (exit 1) so the test suite for pre-3a behavior keeps passing.
+			// The commit has already landed; on push failure we do NOT roll
+			// it back — the close op is on disk locally and recoverable
+			// via the harvest path.
+			if err := gops.AutoPushAfterCommit(); err != nil {
+				return closeErrorForPushFailure(err)
+			}
 		}
 	}
 
@@ -532,41 +426,31 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	}
 
 	return CloseResult{
-		ID:              full,
-		ShortID:         short,
-		OpsWritten:      1,
-		Committed:       committed,
-		StagedForCommit: stagedForCommit,
-		CommitMarker:    WorkCommitMarker(full),
-		Reason:          opts.Reason,
+		ID:           full,
+		ShortID:      short,
+		OpsWritten:   1,
+		Committed:    committed,
+		CommitMarker: WorkCommitMarker(full),
+		Reason:       opts.Reason,
 	}, 0
 }
 
 // FormatCloseHuman renders a CloseResult as a one-or-two-line human message.
 //
-// Three cases (mutually exclusive on Committed/StagedForCommit/neither):
-//   - Committed: "Closed act-XXXX[: reason]" (legacy single-commit close).
-//   - StagedForCommit: "Closed act-XXXX[: reason]" plus a hint line telling
-//     the agent to subsume the staged close op into the work commit, with
-//     the `Act-Id: act-XXXXXX` trailer in the commit body. Two `-m` flags
-//     produce the subject and trailer paragraphs. This is the act-a659
-//     work-commit-with-close path; act-c4c5 switched the marker form from
-//     subject-line `(act-XXXX)` to body-trailer `Act-Id: act-XXXXXX`.
-//   - Neither (--no-commit): "Closed act-XXXX[: reason] (op file written, not
-//     staged)" so the user knows downstream staging is on them.
+// Two cases:
+//   - Committed: "Closed act-XXXX[: reason]" (standalone close commit in
+//     the nested .act/ repo).
+//   - !Committed (--no-commit): "Closed act-XXXX[: reason] (op file written,
+//     not staged)" so the caller knows downstream staging is on them.
 func FormatCloseHuman(res CloseResult) string {
 	head := fmt.Sprintf("Closed %s", res.ShortID)
 	if res.Reason != "" {
 		head = fmt.Sprintf("Closed %s: %s", res.ShortID, res.Reason)
 	}
-	switch {
-	case res.StagedForCommit:
-		return fmt.Sprintf("%s\n  Close op staged. Include in your next commit:\n  git commit -a -m '<subject>' -m '%s'\n", head, res.CommitMarker)
-	case !res.Committed:
+	if !res.Committed {
 		return fmt.Sprintf("%s (op file written, not staged)\n", head)
-	default:
-		return head + "\n"
 	}
+	return head + "\n"
 }
 
 // FormatCloseAlreadyClosedHuman renders a CloseAlreadyClosed envelope.

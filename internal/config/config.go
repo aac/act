@@ -22,51 +22,15 @@ type HLCState struct {
 	Logical uint32 `json:"logical"`
 }
 
-// BundleStrategy controls when act-op files are committed to git.
-//
-//   - "per_op"      — every op write auto-commits immediately (original
-//     behavior; default for repos initialized before this feature). One
-//     standalone commit per op.
-//
-//   - "per_session" — claim auto-commits and pushes (cross-agent visibility
-//     is non-negotiable). Intermediate ops written during a claim→close
-//     window are written to disk but not committed. At close time, all
-//     deferred ops + the close op are staged together; whether they
-//     commit standalone or wait for the agent's next git commit depends
-//     on whether the working tree has uncommitted non-.act changes:
-//
-//   - Clean outside .act/    → standalone act-op commit.
-//
-//   - Has work changes       → leave staged. Agent's next `git commit
-//     -am '<msg> (act-XXXX)'` subsumes the close op into the work
-//     commit (act-a659). One work-commit-with-close instead of two
-//     commits (work + close).
-//
-//     Default for newly-initialized repos.
-const (
-	BundleStrategyPerOp      = "per_op"
-	BundleStrategyPerSession = "per_session"
-)
-
 // Config is the on-disk shape of .act/config.json.
 //
 // Field order in this struct does not matter for serialization: writes use
 // canonicaljson which sorts keys lexicographically.
 type Config struct {
-	NodeID         string   `json:"node_id"`
-	BundleStrategy string   `json:"bundle_strategy,omitempty"`
-	CreatedAt      string   `json:"created_at"`
-	Version        string   `json:"version"`
-	LastHLC        HLCState `json:"last_hlc"`
-}
-
-// EffectiveBundleStrategy returns the resolved bundle strategy, defaulting to
-// BundleStrategyPerOp when the field is empty (pre-feature repos).
-func (c Config) EffectiveBundleStrategy() string {
-	if c.BundleStrategy == "" {
-		return BundleStrategyPerOp
-	}
-	return c.BundleStrategy
+	NodeID    string   `json:"node_id"`
+	CreatedAt string   `json:"created_at"`
+	Version   string   `json:"version"`
+	LastHLC   HLCState `json:"last_hlc"`
 }
 
 // LayoutPaths holds absolute paths for every .act/ artifact a writer touches.
