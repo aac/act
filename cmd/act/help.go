@@ -208,6 +208,18 @@ HARVESTING A WORKER'S OPS BACK
   silent overwrite). Harvest does NOT push the host's commit to its git
   remote — that's the orchestrator's responsibility.
 
+  Phase 2 push-attached workers (act-e31aa1): when the worker's
+  .act/.git/config has act.role=worker AND its remote.origin.url
+  matches the orchestrator's canonical .act/.git path (resolved from
+  cwd of the act harvest invocation), harvest short-circuits with
+  the literal stderr line "harvest skipped, worker was push-attached"
+  and emits an empty envelope (harvested_ops=[], skipped_ops=[],
+  skipped=true, skip_reason=worker_push_attached). The worker pushed
+  its ops directly to the orchestrator during execution; there is
+  nothing left to copy. Phase 1.5 sandboxed workers (no act.role
+  config, or origin doesn't match) fall through to the file-diff-
+  and-copy path described above — the safe default.
+
   The --json envelope carries:
 
     harvested_ops      list of op file paths (relative to .act/ops/) that

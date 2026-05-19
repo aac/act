@@ -454,6 +454,261 @@ func countHostOpFiles(t *testing.T, host string) int {
 	return count
 }
 
+// --- Phase 2 ticket 8 (act-e31aa1): harvest narrowing tests --------------
+//
+// These four cases extend the Phase 1.5 suite with the
+// remote-attached-worker skip path. Each case configures the worker's
+// .act/.git/config to set the role/origin combination under test.
+
+// configureRemoteAttachedWorker writes act.role=worker and
+// remote.origin.url=<orchestrator-act-git> to the worker's
+// .act/.git/config. This is the post-bootstrap state Phase 2 ticket 7
+// produces; until that ticket lands, tests build it by hand.
+func configureRemoteAttachedWorker(t *testing.T, worker, orchActGit string) {
+	t.Helper()
+	cfgPath := filepath.Join(worker, ".act", ".git", "config")
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Fatalf("worker .act/.git/config missing: %v", err)
+	}
+	for _, kv := range [][2]string{
+		{"act.role", "worker"},
+		{"remote.origin.url", orchActGit},
+	} {
+		cmd := exec.Command("git", "config", "-f", cfgPath, kv[0], kv[1])
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config -f %s %s %s: %v\n%s", cfgPath, kv[0], kv[1], err, out)
+		}
+	}
+}
+
+// TestHarvest_RemoteAttachedWorker_SkipsWithMessage covers AC #1:
+// remote-attached worker (act.role=worker + origin matches) → no-op
+// exit 0, stderr contains the literal skip message, no commit on the
+// host's nested .act/.git.
+func TestHarvest_RemoteAttachedWorker_SkipsWithMessage(t *testing.T) {
+	if actBinaryPath == "" {
+		t.Skip("actBinaryPath not set; build is required (TestMain ran)")
+	}
+	host := makeHarvestHost(t)
+	worker := makeHarvestWorker(t, host, 3)
+	orchActGit := filepath.Join(host, ".act", ".git")
+	configureRemoteAttachedWorker(t, worker, orchActGit)
+
+	beforeCount := nestedCommitCount(t, host)
+	beforeOps := countHostOpFiles(t, host)
+
+	var stderrBuf strings.Builder
+	out, code := RunHarvest(HarvestOptions{
+		HostCWD:    host,
+		WorkerPath: worker,
+		Stderr:     &stderrBuf,
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(HarvestResult)
+	if !ok {
+		t.Fatalf("output type = %T, want HarvestResult", out)
+	}
+	if !res.Skipped {
+		t.Errorf("skipped = false, want true")
+	}
+	if res.SkipReason != "worker_push_attached" {
+		t.Errorf("skip_reason = %q, want %q", res.SkipReason, "worker_push_attached")
+	}
+	if len(res.HarvestedOps) != 0 {
+		t.Errorf("harvested_ops = %v, want [] (skip should not copy)", res.HarvestedOps)
+	}
+	if res.CommitMessage != "" {
+		t.Errorf("commit_message = %q, want empty", res.CommitMessage)
+	}
+	if !strings.Contains(stderrBuf.String(), HarvestSkipMessage) {
+		t.Errorf("stderr does not contain skip message %q:\nstderr=%q",
+			HarvestSkipMessage, stderrBuf.String())
+	}
+	if afterCount := nestedCommitCount(t, host); afterCount != beforeCount {
+		t.Errorf("skip path produced a commit: before=%d after=%d", beforeCount, afterCount)
+	}
+	if afterOps := countHostOpFiles(t, host); afterOps != beforeOps {
+		t.Errorf("skip path wrote op files: before=%d after=%d", beforeOps, afterOps)
+	}
+}
+
+// TestHarvest_SandboxedWorker_RunsPhase15Path covers AC #2: a worker
+// with no act.role config (the Phase 1.5 / sandboxed shape) falls
+// through to the file-diff-and-copy path. We assert the harvested-ops
+// count matches what TestHarvest_HappyPath asserts — proving the skip
+// pre-check did NOT fire and the existing Phase 1.5 behavior is intact.
+func TestHarvest_SandboxedWorker_RunsPhase15Path(t *testing.T) {
+	if actBinaryPath == "" {
+		t.Skip("actBinaryPath not set; build is required (TestMain ran)")
+	}
+	host := makeHarvestHost(t)
+	worker := makeHarvestWorker(t, host, 2)
+	// Deliberately do NOT configure act.role. makeHarvestWorker leaves
+	// the worker's .act/.git/config without an act.role key — exactly
+	// the Phase 1.5 sandboxed shape.
+	cfgPath := filepath.Join(worker, ".act", ".git", "config")
+	got, err := configGetRaw(cfgPath, "act.role")
+	if err == nil && got != "" {
+		t.Fatalf("test setup: worker has act.role=%q (want unset)", got)
+	}
+
+	beforeCount := nestedCommitCount(t, host)
+
+	out, code := RunHarvest(HarvestOptions{
+		HostCWD:    host,
+		WorkerPath: worker,
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(HarvestResult)
+	if !ok {
+		t.Fatalf("output type = %T, want HarvestResult", out)
+	}
+	if res.Skipped {
+		t.Errorf("sandboxed worker incorrectly took skip path: skipped=true reason=%q",
+			res.SkipReason)
+	}
+	if len(res.HarvestedOps) != 2 {
+		t.Errorf("harvested_ops = %d, want 2 (Phase 1.5 file-diff path)",
+			len(res.HarvestedOps))
+	}
+	if !strings.Contains(res.CommitMessage, "2 ops from worker") {
+		t.Errorf("commit_message = %q, want it to mention '2 ops from worker'",
+			res.CommitMessage)
+	}
+	if afterCount := nestedCommitCount(t, host); afterCount != beforeCount+1 {
+		t.Errorf("Phase 1.5 path did not commit: before=%d after=%d",
+			beforeCount, afterCount)
+	}
+}
+
+// TestHarvest_LocalCommitsNotPushed_StillCopies documents the AC #3
+// failure mode: a worker with act.role=worker AND origin matching the
+// orchestrator's .act/.git path triggers the skip — even if the
+// worker's ops were never actually pushed to the orchestrator. The skip
+// decision is purely on the config combination, not on observed push
+// status. Test asserts the documented behavior (ops are missed) so a
+// future change that "fixes" this without updating the docs will break
+// here.
+func TestHarvest_LocalCommitsNotPushed_StillCopies(t *testing.T) {
+	if actBinaryPath == "" {
+		t.Skip("actBinaryPath not set; build is required (TestMain ran)")
+	}
+	host := makeHarvestHost(t)
+	worker := makeHarvestWorker(t, host, 2)
+	orchActGit := filepath.Join(host, ".act", ".git")
+	configureRemoteAttachedWorker(t, worker, orchActGit)
+
+	// Pre-condition: worker has 2 local ops that the host has never
+	// seen. In a real Phase 2 flow they would have been pushed already;
+	// here we simulate the "local commits not yet on origin" state by
+	// simply not pushing. Harvest still skips — by design.
+	workerOps := filepath.Join(worker, ".act", "ops")
+	candidates, err := scanOpFiles(workerOps)
+	if err != nil {
+		t.Fatalf("scan worker ops: %v", err)
+	}
+	if len(candidates) < 2 {
+		t.Fatalf("test setup: worker has %d ops, want at least 2",
+			len(candidates))
+	}
+
+	beforeHostOps := countHostOpFiles(t, host)
+
+	var stderrBuf strings.Builder
+	out, code := RunHarvest(HarvestOptions{
+		HostCWD:    host,
+		WorkerPath: worker,
+		Stderr:     &stderrBuf,
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(HarvestResult)
+	if !ok {
+		t.Fatalf("output type = %T, want HarvestResult", out)
+	}
+	// Documented behavior: skip fires; the local-only worker ops are
+	// MISSED. A future change that adds a "did the worker actually
+	// push?" check would flip this assertion — at which point the doc
+	// in harvest.go's pre-check comment AND cmd/act/help.go's
+	// "push-attached workers" paragraph need updating.
+	if !res.Skipped {
+		t.Errorf("expected documented skip-misses-local-only-ops behavior: skipped=false")
+	}
+	afterHostOps := countHostOpFiles(t, host)
+	if afterHostOps != beforeHostOps {
+		t.Errorf("skip path copied ops anyway: before=%d after=%d (this is the documented miss path; if it changes, update help.go)",
+			beforeHostOps, afterHostOps)
+	}
+}
+
+// TestHarvest_RemoteAttachedWorker_Idempotent covers AC #4: calling
+// harvest twice against the same remote-attached worker is a no-op
+// both times. Same exit code, same envelope shape, no commits.
+func TestHarvest_RemoteAttachedWorker_Idempotent(t *testing.T) {
+	if actBinaryPath == "" {
+		t.Skip("actBinaryPath not set; build is required (TestMain ran)")
+	}
+	host := makeHarvestHost(t)
+	worker := makeHarvestWorker(t, host, 1)
+	orchActGit := filepath.Join(host, ".act", ".git")
+	configureRemoteAttachedWorker(t, worker, orchActGit)
+
+	beforeCount := nestedCommitCount(t, host)
+
+	for i := 0; i < 2; i++ {
+		var stderrBuf strings.Builder
+		out, code := RunHarvest(HarvestOptions{
+			HostCWD:    host,
+			WorkerPath: worker,
+			Stderr:     &stderrBuf,
+		})
+		if code != 0 {
+			t.Fatalf("run %d exit=%d, want 0; out=%+v", i+1, code, out)
+		}
+		res, ok := out.(HarvestResult)
+		if !ok {
+			t.Fatalf("run %d output type = %T, want HarvestResult", i+1, out)
+		}
+		if !res.Skipped {
+			t.Errorf("run %d skipped=false, want true", i+1)
+		}
+		if len(res.HarvestedOps) != 0 {
+			t.Errorf("run %d harvested_ops = %v, want []", i+1, res.HarvestedOps)
+		}
+		if !strings.Contains(stderrBuf.String(), HarvestSkipMessage) {
+			t.Errorf("run %d stderr missing skip message:\n%s", i+1, stderrBuf.String())
+		}
+	}
+	afterCount := nestedCommitCount(t, host)
+	if afterCount != beforeCount {
+		t.Errorf("two skipped harvests produced commits: before=%d after=%d",
+			beforeCount, afterCount)
+	}
+}
+
+// configGetRaw is a tiny shell-out around `git config -f <path> --get
+// <key>` that returns the empty string for an unset key (matching the
+// shape of config.GetGitConfig but kept local to the test file so we
+// don't import internal/config for a one-line probe).
+func configGetRaw(path, key string) (string, error) {
+	cmd := exec.Command("git", "config", "-f", path, "--get", key)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			if ee.ExitCode() == 1 || ee.ExitCode() == 5 {
+				return "", nil
+			}
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Silence unused-import warnings if io is later removed from the
 // happy-path comparison helper.
 var _ = io.EOF

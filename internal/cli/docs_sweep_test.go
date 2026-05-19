@@ -399,6 +399,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`target_not_empty`",
 		testName:     "TestDocClaim_BootstrapFromRemote_TargetNotEmptyEnvelope",
 	},
+	// harvest-narrow-* (Phase 2 ticket 8, act-e31aa1): when the worker's
+	// .act/.git has act.role=worker AND its remote.origin.url matches the
+	// orchestrator's canonical .act/.git path, harvest short-circuits with
+	// a stable stderr message and an empty envelope. The skip-message
+	// literal is the load-bearing claim in cmd/act/help.go; if the help
+	// text drifts away from the constant in internal/cli/harvest.go (or
+	// vice versa), agents reading either surface get misled about the
+	// observable signal.
+	{
+		name:         "harvest-narrow-skip-message",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "harvest skipped, worker was push-attached",
+		testName:     "TestDocClaim_HarvestNarrow_SkipMessage",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
