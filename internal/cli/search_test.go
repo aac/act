@@ -183,21 +183,100 @@ func TestRunSearch_EmptyResult(t *testing.T) {
 	}
 }
 
-func TestRunSearch_BadFTSSyntaxExit2(t *testing.T) {
+func TestRunSearch_EmptyQueryExit2(t *testing.T) {
 	root := seedSearchRepo(t, []struct{ id, title, desc string }{
 		{"act-aaaa", "hello", ""},
 	}, nil)
 
-	// Unmatched paren — caught by the pre-flight validator.
-	_, code := RunSearch(root, "hello (world", SearchOptions{})
+	// Empty / whitespace-only queries error with usage exit code.
+	_, code := RunSearch(root, "", SearchOptions{})
 	if code != 2 {
-		t.Fatalf("unmatched paren: exit = %d, want 2", code)
+		t.Fatalf("empty query: exit = %d, want 2", code)
+	}
+	_, code = RunSearch(root, "   \t  ", SearchOptions{})
+	if code != 2 {
+		t.Fatalf("whitespace query: exit = %d, want 2", code)
+	}
+}
+
+// TestRunSearch_PreviouslyBadFTSChars exercises the act-ad52d9 fix: input
+// characters that used to confuse FTS5 (hyphens, periods, colons, unbalanced
+// quotes/parens) are now safely quoted as literal phrase content, so they
+// never produce parse errors.
+func TestRunSearch_PreviouslyBadFTSChars(t *testing.T) {
+	root := seedSearchRepo(t, []struct{ id, title, desc string }{
+		{"act-aaaa", "post-receive hook design", "details about the post-receive hook"},
+		{"act-bbbb", "index.db dirty after crash", "the index.db file goes stale"},
+		{"act-cccc", "phase-2 rollout plan", "phase-2 is the coordination plane"},
+		{"act-dddd", "regular benign content", "nothing special here"},
+	}, nil)
+
+	cases := []struct {
+		name        string
+		query       string
+		wantMin     int
+		wantMatchID string // optional: assert at least one match has this id
+	}{
+		{name: "hyphen_phrase", query: "post-receive hook", wantMin: 1, wantMatchID: "act-aaaa"},
+		{name: "period_token", query: "index.db", wantMin: 1, wantMatchID: "act-bbbb"},
+		{name: "period_two_tokens", query: "index.db dirty", wantMin: 1, wantMatchID: "act-bbbb"},
+		{name: "hyphen_token", query: "phase-2", wantMin: 1, wantMatchID: "act-cccc"},
+		{name: "unmatched_paren_literal", query: "hello (world", wantMin: 0},
+		{name: "unmatched_quote_literal", query: `"unbalanced`, wantMin: 0},
+		{name: "multi_word_simple", query: "regular benign", wantMin: 1, wantMatchID: "act-dddd"},
 	}
 
-	// Unmatched quote.
-	_, code = RunSearch(root, `"unbalanced`, SearchOptions{})
-	if code != 2 {
-		t.Fatalf("unmatched quote: exit = %d, want 2", code)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := RunSearch(root, tc.query, SearchOptions{})
+			if code != 0 {
+				t.Fatalf("query %q: exit = %d, want 0; out=%+v", tc.query, code, out)
+			}
+			res, ok := out.(SearchResult)
+			if !ok {
+				t.Fatalf("output type = %T", out)
+			}
+			if res.Count < tc.wantMin {
+				t.Fatalf("query %q: count = %d, want >= %d; matches=%+v", tc.query, res.Count, tc.wantMin, res.Matches)
+			}
+			if tc.wantMatchID != "" {
+				found := false
+				for _, m := range res.Matches {
+					if m.ID == tc.wantMatchID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("query %q: missing expected match %s; matches=%+v", tc.query, tc.wantMatchID, res.Matches)
+				}
+			}
+		})
+	}
+}
+
+// TestQuoteFTSTokens exercises the token-quoting helper in isolation. The
+// expected outputs are pasteable into an FTS5 MATCH expression.
+func TestQuoteFTSTokens(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{in: "", want: ""},
+		{in: "   ", want: ""},
+		{in: "foo", want: `"foo"`},
+		{in: "foo bar", want: `"foo" "bar"`},
+		{in: "post-receive hook", want: `"post-receive" "hook"`},
+		{in: "index.db", want: `"index.db"`},
+		{in: "phase-2", want: `"phase-2"`},
+		{in: "col:value", want: `"col:value"`},
+		{in: `say "hi"`, want: `"say" """hi"""`},
+		{in: "  spaced   out  ", want: `"spaced" "out"`},
+	}
+	for _, tc := range cases {
+		got := quoteFTSTokens(tc.in)
+		if got != tc.want {
+			t.Errorf("quoteFTSTokens(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

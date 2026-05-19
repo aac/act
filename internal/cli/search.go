@@ -286,57 +286,62 @@ func splitCSV(s string) []string {
 	return out
 }
 
-// validateFTSQuery performs a lightweight pre-flight check on the user query
-// before handing it to SQLite. Catches the common syntactic errors (unbalanced
-// quotes / parens) so we can surface a usage error without a partial DB
-// roundtrip.
+// validateFTSQuery checks that the user query is non-empty after trimming.
+// The query string itself is never handed to FTS5 raw — quoteFTSTokens
+// always wraps each whitespace-separated token in double quotes — so we no
+// longer pre-validate parentheses or quote balance. Those characters become
+// literal content inside a quoted phrase and cannot produce a parse error.
+//
+// See ticket act-ad52d9: common agent queries contain hyphens, periods,
+// and colons (`post-receive hook`, `index.db`, `phase-2`) which FTS5
+// interprets as column filters or token boundaries unless quoted.
 func validateFTSQuery(q string) error {
 	if strings.TrimSpace(q) == "" {
 		return errors.New("empty FTS5 query")
 	}
-	depth := 0
-	inQuote := false
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		if inQuote {
-			if c == '"' {
-				inQuote = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inQuote = true
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth < 0 {
-				return errors.New("unbalanced parentheses in FTS5 query")
-			}
-		}
-	}
-	if inQuote {
-		return errors.New("unbalanced quote in FTS5 query")
-	}
-	if depth != 0 {
-		return errors.New("unbalanced parentheses in FTS5 query")
-	}
 	return nil
 }
 
-// composeFTSQuery wraps the user query with a column qualifier when
-// requested. The user query is already pre-validated; we still escape any
-// embedded double-quotes if we need to wrap the whole thing as a quoted
-// string.
+// quoteFTSTokens turns the user's free-form query into a safe FTS5 MATCH
+// expression by splitting on whitespace, escaping embedded double-quotes
+// (FTS5's convention is to double them), and wrapping each token in double
+// quotes. Tokens are joined with spaces, which FTS5 treats as implicit AND
+// over the quoted phrases.
 //
-// For "all" we pass the query through unmodified, so users can write FTS5
-// expressions (AND/OR/NOT, "phrase queries", column filters) directly.
+// Examples:
 //
-// For "title"/"desc" we build `<col>:(<query>)` so the user's expression is
-// scoped to a single column without losing its internal grammar.
+//	input              -> output
+//	"post-receive hook" -> `"post-receive" "hook"`
+//	"index.db"          -> `"index.db"`
+//	`he said "hi"`      -> `"he" "said" """hi"""`
+//
+// The user gives up FTS5's expression grammar (AND/OR/NOT, column filters,
+// parens) in exchange for queries that always parse. Per ticket act-ad52d9,
+// that's the right tradeoff: agents reflexively search for verbatim phrases
+// from ticket text, not FTS5 expressions.
+func quoteFTSTokens(q string) string {
+	fields := strings.Fields(q)
+	if len(fields) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(fields))
+	for i, f := range fields {
+		quoted[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+	}
+	return strings.Join(quoted, " ")
+}
+
+// composeFTSQuery builds the FTS5 MATCH expression. The user query is first
+// tokenized and quoted via quoteFTSTokens so hyphens, periods, colons, and
+// other FTS5-special characters in the input cannot trigger parse errors.
+//
+// For "title"/"desc" we wrap the quoted tokens in `<col>:(...)` so the scope
+// applies to every phrase in the expression.
 func composeFTSQuery(in, query string) (string, error) {
-	q := strings.TrimSpace(query)
+	q := quoteFTSTokens(query)
+	if q == "" {
+		return "", errors.New("empty FTS5 query")
+	}
 	switch in {
 	case "all":
 		return q, nil
