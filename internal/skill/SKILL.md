@@ -104,6 +104,14 @@ If the project has `.act/hooks/close` (an executable script), it runs before eve
 
 When you start work in a new project, look for `.act/hooks/close`. If it exists, every close runs through it. If it doesn't and the project has a CI suite, consider creating one — it makes "broke CI on push" failures locally-detectable before they fan out across multiple close commits.
 
+## Working in a worktree or sandbox
+
+If you've been dispatched as a sub-agent into a git worktree (or any other isolated sandbox) by an orchestrator, `act` works normally in your environment because the orchestrator pre-seeds a `.act/` copy via `act bootstrap-worker <your-path>` before launching you. The seeded `.act/` mirrors the orchestrator's view of the backlog at dispatch time — you can call `act ready`, `act update --claim`, `act create`, `act close`, etc. exactly as you would in the main checkout.
+
+**You do NOT need to coordinate with main during execution.** No mid-flight pushes, no syncing, no checking whether another worker has landed work. Run the canonical loop locally. The orchestrator runs `act harvest <your-path>` against your worktree at teardown (or at failure-cleanup) to copy any ops you wrote back into the main `.act/` and commit them there. Harvest is one-way append and idempotent, so the orchestrator's `act create` calls during your run, your `act close`, and any follow-ups you filed all make it back — even if the headline task fails.
+
+**Staleness window.** Your view of the tracker is frozen at dispatch time. If another worker dispatched in the same pass files an issue or closes one mid-flight, you won't see it; cross-worker visibility is at-merge-back, not real-time. This is acceptable for the Phase 1.5 dispatcher model — workers are typically scoped to disjoint units of work and the orchestrator sequences shape-changing work into single-unit waves. Phase 2 closes the staleness window with a streaming coordination plane; see `docs/coordination-plane-phase2-design.md` once it lands in your project.
+
 ## Per-project overrides
 
 Project-specific rules live in the repo's `CLAUDE.md`. That file is for deviations and rationale, not duplication of this skill. If a rule belongs in every project that uses act, it lives here; if it belongs in just one project, it lives in that project's CLAUDE.md.

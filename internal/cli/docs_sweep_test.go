@@ -130,6 +130,44 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "full or unique prefix",
 		testName:     "TestDocClaim_PrefixOk_TwoCharUniquePrefixResolves",
 	},
+	// skill-worker-* (act-9e7078): the worker-protocol section in the
+	// embedded SKILL.md tells dispatched sub-agents (a) that the
+	// orchestrator pre-seeds .act/ via bootstrap-worker before launch and
+	// (b) that the orchestrator harvests ops at teardown — so workers can
+	// run the canonical loop locally without mid-flight coordination. If
+	// either subcommand reference is dropped from the skill, a cold-start
+	// worker reads no doc and might invent its own coordination protocol
+	// (push from worktree, mid-flight rsync, etc.) — exactly the kind of
+	// drift the sweep catches.
+	//
+	// The orchestrate command itself (~/.claude/commands/orchestrate.md)
+	// ALSO makes load-bearing claims about bootstrap-on-dispatch and
+	// harvest-on-teardown, but that file lives OUTSIDE this repo
+	// (claude-config). The sweep harness resolves docFile relative to
+	// the act repo root only (see repoRootForDocClaim in
+	// docclaim_test.go) and has no mechanism to reach into another git
+	// repo. Adding outside-repo entries would either silently no-op or
+	// blow up filepath.Join. The claude-config repo would need its own
+	// equivalent sweep to enforce those claims; cross-repo doc-claim
+	// enforcement is out of scope for this registry.
+	{
+		name:         "skill-worker-bootstrap-ref",
+		docFile:      "internal/skill/SKILL.md",
+		claimPattern: "bootstrap-worker",
+		testName:     "TestDocClaim_Skill_MentionsBootstrapWorker",
+	},
+	{
+		name:         "skill-worker-harvest-ref",
+		docFile:      "internal/skill/SKILL.md",
+		claimPattern: "harvest",
+		testName:     "TestDocClaim_Skill_MentionsHarvest",
+	},
+	{
+		name:         "skill-worker-section",
+		docFile:      "internal/skill/SKILL.md",
+		claimPattern: "Working in a worktree or sandbox",
+		testName:     "TestDocClaim_Skill_WorkerProtocolSection",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
