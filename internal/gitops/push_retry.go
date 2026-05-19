@@ -86,23 +86,33 @@ func pushOptsDefaults(o PushOpts) PushOpts {
 	return o
 }
 
-// ACT_TEST_FAIL_PUSH_AFTER is a test-only env var that forces the FIRST
-// push attempt to fail (silently — as if `updateInstead` had rejected the
-// receive) on the Nth call. The env var's value is the integer N
+// ACT_TEST_FAIL_PUSH_AFTER is a test-only env var that forces push
+// attempts at-or-after the Nth call to fail silently — as if
+// `receive.denyCurrentBranch=updateInstead` had rejected the receive
+// against a dirty working tree. The env var's value is the integer N
 // (1-indexed). When set, the helper increments a per-process counter on
-// each push attempt and, when the counter equals N, suppresses the
+// each push attempt and, when the counter is >= N, suppresses the
 // underlying `git push` and synthesises a "silent rejection" outcome —
 // the push command exits 0 but the reachability check below detects
 // local HEAD is not an ancestor of origin and triggers fetch-and-rebase.
 //
-// This hook exists so ticket 3a's integration tests can drive
-// exhaustion deterministically without standing up a contending writer
-// for every attempt. The hook is consulted on every call into
-// PushWithRetry's inner attempt loop, NOT just on first invocation —
-// "Nth attempt across the whole process" is the contract.
+// Sticky semantics: once the counter crosses the threshold every
+// subsequent attempt in this process fails too. This drives exhaustion
+// deterministically — setting N=1 causes all 5 default retries to be
+// silently rejected and PushWithRetry returns *PushExhaustedError{
+// RetryCount=5}. The previous one-shot semantics (`counter == N`) made
+// the env var useful only for "one fail then succeed" scenarios; ticket
+// 3a's integration tests need every attempt to fail to assert the
+// exhaustion envelope, hence the switch to >=.
 //
-// Setting N=999 (or any value beyond the retry cap) is a no-op; the
-// hook is a fault-injector, not a forcing function.
+// This hook is consulted on every call into PushWithRetry's inner
+// attempt loop. Setting N=999 (or any value beyond the retry cap) is a
+// no-op; the hook is a fault-injector, not a forcing function.
+//
+// Tests that want the one-shot "first attempt fails, rest succeed"
+// pattern unset the env var inside their Sleep hook so the second
+// attempt sees no fault — see TestPushWithRetry_SilentRejection_
+// RecoversWithinCap for the canonical idiom.
 const envFailPushAfter = "ACT_TEST_FAIL_PUSH_AFTER"
 
 // pushAttemptCounter tracks the global push-attempt count for the
@@ -307,11 +317,14 @@ func backoffFor(base, cap time.Duration, retry int) time.Duration {
 }
 
 // shouldFaultInjectPush consults the ACT_TEST_FAIL_PUSH_AFTER env var on
-// every push attempt. Returns true exactly when the current attempt
-// counter equals the configured value, simulating a silent-reject.
+// every push attempt. Returns true when the current attempt counter is
+// at-or-above the configured value, simulating a silent-reject (sticky;
+// every subsequent attempt also fails).
 //
 // Counter increments unconditionally; setting the env var to "0" or an
-// invalid value disables the hook.
+// invalid value disables the hook. Tests that want one-shot behavior
+// unset the env var inside their Sleep callback so the second attempt
+// sees no fault.
 func shouldFaultInjectPush() bool {
 	pushAttemptCounter++
 	v := os.Getenv(envFailPushAfter)
@@ -322,7 +335,7 @@ func shouldFaultInjectPush() bool {
 	if err != nil || n <= 0 {
 		return false
 	}
-	return pushAttemptCounter == n
+	return pushAttemptCounter >= n
 }
 
 // ResetPushAttemptCounter resets the global fault-injection counter to

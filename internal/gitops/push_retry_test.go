@@ -124,6 +124,12 @@ func TestPushWithRetry_TwoParallelProcesses_BothSucceed(t *testing.T) {
 // ACT_TEST_FAIL_PUSH_AFTER fault-injection hook makes the FIRST push
 // look like a silent rejection. The reachability check catches it, the
 // helper fetch-rebases and retries; the second attempt succeeds.
+//
+// Under the post-ticket-3a sticky semantics, ACT_TEST_FAIL_PUSH_AFTER=N
+// fails every attempt at-or-after N. To get one-shot behavior the test
+// unsets the env var inside the Sleep callback, which fires between
+// retries — so by the time the second push attempt consults the env,
+// the fault is gone.
 func TestPushWithRetry_SilentRejection_RecoversWithinCap(t *testing.T) {
 	ResetPushAttemptCounter()
 	t.Setenv(envFailPushAfter, "1")
@@ -134,8 +140,14 @@ func TestPushWithRetry_SilentRejection_RecoversWithinCap(t *testing.T) {
 	runGit(t, work, "add", "silent.txt")
 	runGit(t, work, "commit", "-q", "--no-verify", "-m", "silent")
 
+	// One-shot via Sleep callback: clear the env after the first
+	// (failed) attempt so the second attempt sees no fault.
+	clearOnceSleep := func(d time.Duration) {
+		_ = os.Unsetenv(envFailPushAfter)
+	}
+
 	g := NewGitOps(work)
-	if err := g.PushWithRetry("main", PushOpts{MaxRetries: 3, Sleep: noSleep}); err != nil {
+	if err := g.PushWithRetry("main", PushOpts{MaxRetries: 3, Sleep: clearOnceSleep}); err != nil {
 		t.Fatalf("PushWithRetry silent rejection: %v", err)
 	}
 	out := runGit(t, remote.Path, "log", "-1", "--format=%s", "main")

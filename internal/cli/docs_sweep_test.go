@@ -161,6 +161,33 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "(prefix ok)",
 		testName:     "TestDocClaim_PrefixOk_TwoCharUniquePrefixResolves",
 	},
+	// pushwrite-* (act-65a7d5): Phase 2 ticket 3a wires PushWithRetry into
+	// the write-helpers so every successful commit on a remote-configured
+	// project pushes synchronously. The spec sentences in docs/spec-v2.md
+	// are the load-bearing contract — agents reading the spec cold must
+	// learn (a) that auto-publish is on by default when origin is set,
+	// (b) that no-origin repos remain local-only, and (c) that retry
+	// exhaustion surfaces envelope push_exhausted exit 4. Behavioral
+	// assertions live in push_integration_test.go; these entries lock the
+	// doc claims that the behavior is supposed to match.
+	{
+		name:         "pushwrite-auto-publish-on-remote",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "synchronous `git push`",
+		testName:     "TestDocClaim_PushOnWrite_AutoPublishOnRemote",
+	},
+	{
+		name:         "pushwrite-no-origin-local-only",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "No-origin repos skip the publish step silently",
+		testName:     "TestDocClaim_PushOnWrite_NoOriginIsLocalOnly",
+	},
+	{
+		name:         "pushwrite-exhaustion-envelope",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "exits 4 with envelope `push_exhausted`",
+		testName:     "TestDocClaim_PushOnWrite_ExhaustionSurfaceIsPushExhausted",
+	},
 	{
 		name:         "prefix-ok-create-parent",
 		docFile:      "cmd/act/create.go",
