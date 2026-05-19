@@ -2,6 +2,7 @@ package claim
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -496,6 +497,40 @@ func TestRunClaim_PullRebaseOtherErrorStillFails(t *testing.T) {
 	}
 	if !errors.Is(err, boom) {
 		t.Fatalf("RunClaim err=%v, want wrap of %v", err, boom)
+	}
+}
+
+// TestRunClaim_PullRebaseSoftFailIsNoopSuccess (act-68f08b): when the
+// PullRebase implementation reports ErrPullRebaseSoftFail (the canonical
+// case is a dirty working tree from a prior read mutating
+// `.act/index.db`), RunClaim must swallow the error and complete the
+// claim as a win. By the time PullRebase fires the new claim op is
+// already on disk and committed locally, so the local state is durable;
+// the op log is convergent and the next read/write will reconcile.
+func TestRunClaim_PullRebaseSoftFailIsNoopSuccess(t *testing.T) {
+	root := t.TempDir()
+	initRepo(t, root)
+	clock := newClock(t, "abcdef01", 1_700_000_000_000)
+	// Wrap the sentinel like the gitops layer does, to exercise the
+	// errors.Is unwrap path the dispatch uses.
+	wrapped := fmt.Errorf("%w: git pull --rebase: exit status 128 (stderr: error: cannot pull with rebase: You have unstaged changes.)", ErrPullRebaseSoftFail)
+	git := &FakeGitOps{PullRebaseErr: wrapped}
+
+	res, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)
+	if err != nil {
+		t.Fatalf("RunClaim: %v", err)
+	}
+	if !res.Claimed {
+		t.Fatalf("Claimed=false, want true; result=%+v", res)
+	}
+	if res.Winner != "alice" {
+		t.Errorf("Winner=%q, want alice", res.Winner)
+	}
+	if git.PullRebaseCalls != 1 {
+		t.Errorf("PullRebaseCalls=%d, want 1 (called, soft-fail swallowed)", git.PullRebaseCalls)
+	}
+	if git.CommitCalls != 1 {
+		t.Errorf("CommitCalls=%d, want 1 (commit landed before PullRebase)", git.CommitCalls)
 	}
 }
 

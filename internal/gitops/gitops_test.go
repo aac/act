@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/testfixtures"
 )
 
 // initRepo creates a fresh git repo in a tempdir and returns its path.
@@ -153,6 +155,43 @@ func TestPullRebaseNoUpstream(t *testing.T) {
 	err := g.PullRebase()
 	if !errors.Is(err, ErrNoRemote) {
 		t.Fatalf("PullRebase without upstream: want ErrNoRemote, got %v", err)
+	}
+}
+
+// TestPullRebase_DirtyTreeReturnsSoftFail (act-68f08b regression): when
+// `git pull --rebase` refuses because the working tree has unstaged
+// changes to a tracked file (the canonical case is `.act/index.db`
+// dirtied by a prior read), PullRebase must return ErrPullRebaseDirtyTree
+// so callers that have already committed a durable local op can demote
+// the failure to a soft no-op rather than bubbling raw `cannot pull with
+// rebase` stderr that misleads the agent into thinking the write failed.
+func TestPullRebase_DirtyTreeReturnsSoftFail(t *testing.T) {
+	remote := testfixtures.NewBareRemote(t)
+	work := cloneAndConfigure(t, remote.URL)
+
+	// Track a file in the working tree, then leave an unstaged
+	// modification — this mimics the `.act/index.db` situation where
+	// the file is tracked but rewritten outside the commit boundary.
+	tracked := filepath.Join(work, "cache.bin")
+	writeFile(t, tracked, "v1\n")
+	runGit(t, work, "add", "cache.bin")
+	runGit(t, work, "commit", "-q", "--no-verify", "-m", "track cache")
+	runGit(t, work, "push", "-q", "-u", "origin", "main")
+
+	// Peer advances the remote so there's something to rebase against —
+	// otherwise modern git short-circuits before the dirty-tree check.
+	remote.AdvanceCommits(1)
+
+	// Dirty the tracked file.
+	writeFile(t, tracked, "v2-uncommitted\n")
+
+	g := NewGitOps(work)
+	err := g.PullRebase()
+	if err == nil {
+		t.Fatalf("PullRebase with dirty tracked file: want error, got nil")
+	}
+	if !errors.Is(err, ErrPullRebaseDirtyTree) {
+		t.Fatalf("PullRebase: want ErrPullRebaseDirtyTree, got %v", err)
 	}
 }
 

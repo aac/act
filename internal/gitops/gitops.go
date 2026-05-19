@@ -70,6 +70,22 @@ var _ claim.GitOps = (*GitOps)(nil)
 // package having to expose a second sentinel.
 var ErrNoRemote = claim.ErrNoUpstream
 
+// ErrPullRebaseDirtyTree is returned by PullRebase when `git pull --rebase`
+// refuses because the working tree has unstaged changes (`error: cannot pull
+// with rebase: You have unstaged changes.`). The most common cause under
+// Phase 1's nested-repo layout is `.act/index.db`: it is tracked in the
+// nested `.act/.git` but gets re-written on every read (the SQLite read
+// cache). A subsequent write's pre-step pull-rebase then trips this guard
+// even though the local write itself succeeds (act-68f08b).
+//
+// Aliased to claim.ErrPullRebaseSoftFail so the claim package can swallow
+// this specific failure mode the same way it swallows ErrNoUpstream — by
+// the time PullRebase fires the local commit is already durable on disk,
+// and the op log is convergent: the next read/write will re-fetch and
+// reconcile. Other PullRebase failures (rebase conflict on .act/ops/**,
+// network error, auth) remain hard errors.
+var ErrPullRebaseDirtyTree = claim.ErrPullRebaseSoftFail
+
 // GitOps is a concrete implementation of the git side-effects used by the
 // claim and write-op flows. The zero value is not safe; use NewGitOps.
 type GitOps struct {
@@ -620,14 +636,39 @@ func (g *GitOps) maybeFireOrchestratorSync() {
 // PullRebase runs `git pull --rebase`. If no upstream is configured the
 // method returns ErrNoRemote so the caller can decide whether to surface a
 // usage error or silently no-op (e.g. atomic claim with --isolated).
+//
+// Special-case classification: when `git pull --rebase` refuses because the
+// working tree has unstaged changes (the "cannot pull with rebase: You have
+// unstaged changes" message), PullRebase returns ErrPullRebaseDirtyTree so
+// callers that have already committed a durable local op can demote this to
+// a soft failure rather than misleading the user with raw git stderr
+// (act-68f08b). The check is intentionally conservative: we match only the
+// canonical refuse-due-to-dirty-tree message, leaving all other failure
+// modes (rebase conflict, network) to surface as before.
 func (g *GitOps) PullRebase() error {
 	if _, err := g.upstream(); err != nil {
 		return err
 	}
 	if _, err := g.run("pull", "--rebase"); err != nil {
+		if isDirtyTreeRebaseRefusal(err.Error()) {
+			return fmt.Errorf("%w: %v", ErrPullRebaseDirtyTree, err)
+		}
 		return err
 	}
 	return nil
+}
+
+// isDirtyTreeRebaseRefusal reports whether `git pull --rebase`'s stderr
+// matches the canonical refuse-due-to-unstaged-changes message. Two
+// equivalent phrasings appear across git versions:
+//
+//	error: cannot pull with rebase: You have unstaged changes.
+//	error: cannot pull with rebase: Your index contains uncommitted changes.
+//
+// Both share the "cannot pull with rebase" prefix; we anchor on that. Case-
+// insensitive to be robust to localized git builds (rare, but harmless).
+func isDirtyTreeRebaseRefusal(s string) bool {
+	return strings.Contains(strings.ToLower(s), "cannot pull with rebase")
 }
 
 // Push runs `git push -u origin <current-branch>`. Returns ErrNoRemote if
