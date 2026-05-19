@@ -198,6 +198,17 @@ HARVESTING A WORKER'S OPS BACK
   silent overwrite). Harvest does NOT push the host's commit to its git
   remote — that's the orchestrator's responsibility.
 
+  The --json envelope carries:
+
+    harvested_ops      list of op file paths (relative to .act/ops/) that
+                       were newly copied into the host this run. On
+                       --dry-run, the set that WOULD be copied.
+    skipped_ops        list of {path, reason} entries for worker ops the
+                       host already had (reason: already_present).
+    fold_diff_summary  {issues_indexed, ops_added} counts captured from
+                       the index rebuild after the harvest commit. Zero
+                       on --dry-run and on zero-op no-ops.
+
 INSTALLING THE SKILL
   The canonical Claude Code skill for act (SKILL.md plus reference
   docs) is embedded in this binary. To drop it into your skills
