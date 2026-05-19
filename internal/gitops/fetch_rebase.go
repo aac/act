@@ -1,7 +1,6 @@
 package gitops
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -254,11 +253,12 @@ func (g *GitOps) ancestryToOrigin(branch string) (upToDate, alreadyAhead bool, e
 		return true, false, nil
 	}
 	// Is origin/<branch> an ancestor of local HEAD? If so, local is ahead.
-	cmd := exec.Command("git", "merge-base", "--is-ancestor", remote, local)
-	cmd.Dir = g.RepoRoot
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if e := cmd.Run(); e == nil {
+	// Route through runCombined so the gitDir/work-tree override (when
+	// set by NewActGitOps) applies here too — otherwise an ActGitOps
+	// handle could leak into the host repo's discovery on this path
+	// (act-784b).
+	mbArgs := []string{"merge-base", "--is-ancestor", remote, local}
+	if _, e := g.runCombined(mbArgs...); e == nil {
 		return false, true, nil
 	}
 	return false, false, nil
@@ -268,12 +268,24 @@ func (g *GitOps) ancestryToOrigin(branch string) (upToDate, alreadyAhead bool, e
 // helper paths need stderr in the returned output for pattern-matching
 // shallow-clone failures (run() puts stderr only into the error
 // message, which is harder to inspect uniformly).
+//
+// When g.gitDir is non-empty (NewActGitOps), every invocation is prefixed
+// with `--git-dir=<gitDir> --work-tree=<RepoRoot>` so git's repo discovery
+// is pinned to the nested .act/.git and cannot walk up into the host repo
+// (act-784b). Mirrors the override in (*GitOps).run.
 func (g *GitOps) runCombined(args ...string) (string, error) {
 	r := g.runner
 	if r == nil {
 		r = exec.Command
 	}
-	cmd := r("git", args...)
+	finalArgs := args
+	if g.gitDir != "" {
+		finalArgs = append([]string{
+			"--git-dir=" + g.gitDir,
+			"--work-tree=" + g.RepoRoot,
+		}, args...)
+	}
+	cmd := r("git", finalArgs...)
 	cmd.Dir = g.RepoRoot
 	out, err := cmd.CombinedOutput()
 	return string(out), err

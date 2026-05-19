@@ -503,10 +503,10 @@ func ListPendingOpFilesForIssue(repoRoot, opsDir, issueID string) ([]string, err
 // unstage runs `git restore --staged <opPath>` via the gitops runner. The
 // operation is best-effort; failures are returned but typical callers
 // ignore the result because the original commit error is the user-facing
-// signal.
+// signal. Routes through runUnstage so the existing runUnstageFn test
+// seam (writeops_rollback_test.go) continues to record rollback calls;
+// runUnstageReal is responsible for the nested-repo --git-dir override
+// (act-784b).
 func unstage(g *gitops.ActGitOps, opPath string) error {
-	// We deliberately reuse the public StageOpFile-like indirection by
-	// running `git restore --staged` directly. To avoid extending the
-	// public API surface for one call site, we shell out via exec here.
 	return runUnstage(g.RepoRoot, opPath)
 }

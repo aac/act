@@ -97,6 +97,17 @@ type GitOps struct {
 	// pre-commit hooks run. Default (false) matches spec §5.B.
 	Verify bool
 
+	// gitDir, when non-empty, pins git's repo discovery: every invocation
+	// is prefixed with `--git-dir=<gitDir> --work-tree=<RepoRoot>` so git
+	// cannot walk up from RepoRoot and find an enclosing host repo. Set
+	// by NewActGitOps (and only by NewActGitOps) so the act-state handle
+	// is type-system AND argv-level isolated from the host repo. Leaving
+	// gitDir empty preserves the original cwd-discovery behavior for
+	// callers (HostGitOps; NewGitOps used by tests and the claim/squash/
+	// import paths whose RepoRoot is the host working tree itself, not a
+	// nested act state) — see act-784b.
+	gitDir string
+
 	// runner is an internal indirection so tests can assert the exact argv
 	// passed to git. Defaults to exec.Command. Exposed via WithRunner.
 	runner func(name string, args ...string) *exec.Cmd
@@ -123,10 +134,24 @@ func NewGitOps(repoRoot string) *GitOps {
 type ActGitOps = GitOps
 
 // NewActGitOps constructs an ActGitOps for the writer side of the dual-
-// handle split. Today this is the same construction as NewGitOps; the
-// distinct name documents the writer-vs-reader role at every call site.
-func NewActGitOps(repoRoot string) *ActGitOps {
-	return NewGitOps(repoRoot)
+// handle split. The actStateRoot is the nested .act/ working tree
+// (filepath.Join(<host>, ".act")); every git invocation is pinned to
+// `--git-dir=<actStateRoot>/.git --work-tree=<actStateRoot>` so git's
+// repo-discovery walk cannot escape upward into the host repo. This is
+// what makes the dual-handle split effective in practice: when the host
+// repo gitignores `.act/`, a stray cwd-based git invocation would
+// otherwise be rejected by the host's gitignore (act-784b). Forcing the
+// git-dir/work-tree at every call site closes that loophole.
+//
+// If `<actStateRoot>/.git` does not exist, git itself returns a clear
+// "fatal: not a git repository" error on the next invocation; we do not
+// pre-check here because (a) the existence check would race with `act
+// init` running concurrently in the same tree, and (b) git's error is
+// already user-actionable.
+func NewActGitOps(actStateRoot string) *ActGitOps {
+	g := NewGitOps(actStateRoot)
+	g.gitDir = filepath.Join(actStateRoot, ".git")
+	return g
 }
 
 // HostGitOps is the read-only handle act uses to scan the host repo's
@@ -201,12 +226,28 @@ func (h *HostGitOps) CheckIgnored(path string) (bool, error) {
 
 // run executes `git <args...>` with cwd=RepoRoot and returns stdout. stderr
 // is included in the error message on failure.
+//
+// When g.gitDir is non-empty (NewActGitOps), every invocation is prefixed
+// with `--git-dir=<gitDir> --work-tree=<RepoRoot>` so git's repo discovery
+// is pinned to the nested .act/.git and cannot walk up into an enclosing
+// host repo whose .gitignore would refuse the act-state path (act-784b).
 func (g *GitOps) run(args ...string) (string, error) {
 	r := g.runner
 	if r == nil {
 		r = exec.Command
 	}
-	cmd := r("git", args...)
+	finalArgs := args
+	if g.gitDir != "" {
+		// Prepend the discovery overrides. Order matters only insofar as
+		// these must precede the subcommand name; both forms must use `=`
+		// rather than two-arg form so the prefix is positionally robust
+		// against any subcommand-specific arg parsing.
+		finalArgs = append([]string{
+			"--git-dir=" + g.gitDir,
+			"--work-tree=" + g.RepoRoot,
+		}, args...)
+	}
+	cmd := r("git", finalArgs...)
 	cmd.Dir = g.RepoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -225,6 +266,20 @@ func (g *GitOps) StageOpFile(opPath string) error {
 		return fmt.Errorf("gitops: empty op path")
 	}
 	if _, err := g.run("add", "--", opPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// UnstageOpFile runs `git restore --staged -- <opPath>` against this
+// handle. Mirrors StageOpFile so rollback paths route through the same
+// git-dir/work-tree override (act-784b). opPath may be absolute or
+// relative to RepoRoot.
+func (g *GitOps) UnstageOpFile(opPath string) error {
+	if opPath == "" {
+		return fmt.Errorf("gitops: empty op path")
+	}
+	if _, err := g.run("restore", "--staged", "--", opPath); err != nil {
 		return err
 	}
 	return nil
