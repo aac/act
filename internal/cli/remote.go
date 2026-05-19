@@ -194,7 +194,7 @@ func runRemoteEnable(actRoot, hostRoot, configPath, hookPath string) (any, int) 
 			"message": fmt.Sprintf("act remote enable: mkdir hooks dir: %v", err),
 		}, 3
 	}
-	if err := os.WriteFile(hookPath, []byte(config.PostReceiveHookSkeleton), 0o755); err != nil {
+	if err := os.WriteFile(hookPath, []byte(config.PostReceiveHookBody), 0o755); err != nil {
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf("act remote enable: write %s: %v", hookPath, err),

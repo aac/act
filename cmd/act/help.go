@@ -216,8 +216,9 @@ ACT REMOTE (PHASE 2 COORDINATION PLANE)
   load-bearing 'act.role' key (orchestrator | worker) that closes v1
   open-question #4.
 
-    act remote enable               # set canonical keys + install hook skeleton
+    act remote enable               # set canonical keys + install post-receive hook
     act remote disable              # unset keys + remove post-receive hook
+    act remote sync                 # push .act/.git to origin-upstream (fail-soft)
     act remote enable --json        # machine-readable summary
 
   Enable writes the following keys to .act/.git/config:
@@ -231,12 +232,22 @@ ACT REMOTE (PHASE 2 COORDINATION PLANE)
     act.upstreamDriftThresholdCommits=50
     act.upstreamDriftThresholdSeconds=3600
 
-  Enable also installs .act/.git/hooks/post-receive (a documented no-op
-  skeleton; ticket 6a fills in the body) and runs 'act doctor' as a
-  verification pass. Disable unsets every key and removes the hook
-  file. Both verbs are idempotent: running disable twice exits zero
-  both times; running enable on an already-enabled repo re-writes the
-  keys to defaults.
+  Enable also installs .act/.git/hooks/post-receive (Phase 2 ticket 6a
+  body: detaches a background 'act remote sync' so each worker push to
+  the orchestrator is republished to origin-upstream) and runs
+  'act doctor' as a verification pass. Disable unsets every key and
+  removes the hook file. Both verbs are idempotent: running disable
+  twice exits zero both times; running enable on an already-enabled
+  repo re-writes the keys to defaults.
+
+  'act remote sync' pushes the orchestrator's .act/.git to the
+  'origin-upstream' remote if configured, and is a no-op when the
+  upstream ref already matches origin. Failure is fail-soft: an
+  unreachable upstream appends a JSON-line entry to .act/.sync-log and
+  the verb still exits zero, so the post-receive hook's background
+  invocation never blocks a worker push on upstream connectivity. The
+  only non-zero exit is configuration: 'no origin-upstream configured'
+  (exit 2, envelope upstream_not_configured).
 
   If 'act.role' is unset (legacy or hand-crafted repo), the default
   parsed value is 'worker' (safe — workers don't trigger upstream

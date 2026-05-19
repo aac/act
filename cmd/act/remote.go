@@ -10,15 +10,17 @@ import (
 	"github.com/aac/act/internal/cli"
 )
 
-// runRemote dispatches `act remote <enable|disable> [--json]`. Wraps
-// cli.RunRemote and renders either JSON or a small human-friendly
-// summary.
+// runRemote dispatches `act remote <enable|disable|sync> [--json]`.
+// Wraps cli.RunRemote / cli.RunRemoteSync and renders either JSON or a
+// small human-friendly summary.
 //
-// Phase 2 ticket 1a. The two verbs toggle a fixed set of
-// `act.*` config keys in `.act/.git/config` plus the post-receive
-// hook skeleton (filled in by ticket 6a). See cli.RunRemote for the
-// schema details and the rationale for why these live in the nested
-// `.git/config` rather than `.act/config.json`.
+// Phase 2 tickets 1a (enable/disable) + 6a (sync). The verbs toggle the
+// `act.*` config keys in `.act/.git/config` plus the post-receive hook
+// (1a installs the skeleton; 6a fills the body), and `sync` pushes the
+// orchestrator's `.act/.git` to `origin-upstream` (fail-soft on push
+// failure). See the respective Run* functions for schema details and
+// the rationale for why these knobs live in the nested `.git/config`
+// rather than `.act/config.json`.
 func runRemote(args []string) int {
 	// Parse the verb positional before constructing a FlagSet so
 	// that `act remote --help` and `act remote --json enable` both
@@ -42,8 +44,14 @@ func runRemote(args []string) int {
 	}
 
 	if verb == "" {
-		emitBadFlag(*asJSON, "act remote: usage: act remote <enable|disable> [--json]")
+		emitBadFlag(*asJSON, "act remote: usage: act remote <enable|disable|sync> [--json]")
 		return 2
+	}
+
+	// Dispatch on verb. `sync` has its own Run* function and result
+	// type; `enable`/`disable` continue to flow through cli.RunRemote.
+	if verb == "sync" {
+		return runRemoteSync(*asJSON)
 	}
 
 	out, code := cli.RunRemote(cli.RemoteOptions{
@@ -75,7 +83,7 @@ func runRemote(args []string) int {
 	case "enable":
 		fmt.Printf("Enabled act remote at %s\n", res.ActStateRoot)
 		fmt.Printf("  config:  %s\n", res.ConfigPath)
-		fmt.Printf("  hook:    %s (skeleton; filled in by ticket 6a)\n", res.HookPath)
+		fmt.Printf("  hook:    %s\n", res.HookPath)
 		fmt.Printf("  doctor:  %d finding(s)\n", res.DoctorFindings)
 	case "disable":
 		if res.Changed {
@@ -85,6 +93,45 @@ func runRemote(args []string) int {
 		}
 		fmt.Printf("  config:  %s\n", res.ConfigPath)
 		fmt.Printf("  hook:    %s (removed)\n", res.HookPath)
+	}
+	return 0
+}
+
+// runRemoteSync is the `act remote sync` subcommand path. Split from
+// runRemote so the result-type rendering doesn't have to juggle two
+// disjoint Result structs.
+func runRemoteSync(asJSON bool) int {
+	out, code := cli.RunRemoteSync(cli.RemoteSyncOptions{
+		AsJSON: asJSON,
+	})
+
+	if code != 0 {
+		emitEnvelope(asJSON, out)
+		return code
+	}
+
+	if asJSON {
+		data, jerr := json.Marshal(out)
+		if jerr != nil {
+			fmt.Fprintf(os.Stderr, "act remote sync: json marshal: %v\n", jerr)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	res, ok := out.(cli.RemoteSyncResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act remote sync: unexpected output type %T\n", out)
+		return 1
+	}
+	switch {
+	case res.Pushed:
+		fmt.Printf("act remote sync: pushed to origin-upstream\n")
+	case res.Logged:
+		fmt.Printf("act remote sync: upstream unreachable; logged to %s (exit 0)\n", res.SyncLogPath)
+	default:
+		fmt.Printf("act remote sync: upstream already up-to-date (no-op)\n")
 	}
 	return 0
 }

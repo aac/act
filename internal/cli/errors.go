@@ -56,6 +56,12 @@ const (
 	// `push_exhausted`, `details.shallow_unshallow_attempted`.
 	ErrPushExhausted     = "push_exhausted"
 	ErrRemoteUnreachable = "remote_unreachable"
+	// ErrUpstreamNotConfigured is emitted by `act remote sync` (Phase 2
+	// ticket 6a) when `origin-upstream` is not configured in the
+	// orchestrator's `.act/.git/config`. The envelope is paired with an
+	// exit-2 (bad input / configuration error) and the stderr line
+	// `no origin-upstream configured; run 'act remote add-upstream <url>'`.
+	ErrUpstreamNotConfigured = "upstream_not_configured"
 
 	// Internal/per-command error slugs in active use across cli/*.go.
 	// They are surfaced as the `error` field of the envelope; tests and
