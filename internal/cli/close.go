@@ -3,9 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aac/act/internal/canonicaljson"
@@ -17,6 +19,14 @@ import (
 	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
+
+// closeMarkerLookback is the number of most-recent host commits the
+// post-close commit-marker correlation check scans. 50 covers a normal
+// agent loop's recent work history without crawling the entire log; if
+// the marker isn't in the last 50 it almost certainly isn't there at
+// all, and emitting the warning earlier (rather than searching forever)
+// keeps close's latency budget intact.
+const closeMarkerLookback = 50
 
 // CloseOptions captures the flag knobs for `act close`.
 //
@@ -51,6 +61,20 @@ type CloseOptions struct {
 	// suppresses warnings for closes with this flag set. See
 	// docs/coordination-plane-design.md "Doctor reconciliation" (act-37f7).
 	NoCode bool
+	// NoDoctor skips the post-close single-issue commit-marker correlation
+	// check. Default (false) runs the check after a successful close and
+	// emits a stderr warning if no host commit in the last
+	// closeMarkerLookback carries an `Act-Id: act-XXXXXX` trailer for the
+	// closed issue. The check is informational — it never changes exit
+	// code. See act-f2ea: catching bare-id-slicing errors and marker-
+	// construction bugs locally is cheaper than discovering them at the
+	// next doctor run.
+	NoDoctor bool
+	// Stderr is the destination for the post-close marker-correlation
+	// warning. Default (nil) is os.Stderr; tests inject a bytes.Buffer to
+	// capture the emitted line. The cmd-level dispatcher leaves it nil
+	// because its own stderr is the right destination.
+	Stderr io.Writer
 }
 
 // CloseResult is the JSON-serialisable success envelope for a write that
@@ -445,6 +469,22 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}, 1
 	}
 
+	// Step 7 (act-f2ea): single-issue commit-marker correlation check.
+	// After a successful close, scan the host repo's recent log for an
+	// `Act-Id: act-XXXXXX` trailer matching this issue. The check is
+	// informational — the close itself has already succeeded — but
+	// catching marker-construction bugs (bare-id slicing, wrong-id
+	// trailer) here is cheaper than at the next doctor run.
+	//
+	// Skipped when:
+	//   - --no-doctor was passed (opt-out for trusted-fast paths).
+	//   - --no-commit was passed (op file written but not committed; the
+	//     agent's work commit hasn't been built yet either, so there is
+	//     nothing to correlate against).
+	if !opts.NoDoctor && committed {
+		emitMarkerCorrelationWarning(opts.Stderr, paths.Root, full, short)
+	}
+
 	return CloseResult{
 		ID:           full,
 		ShortID:      short,
@@ -453,6 +493,50 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		CommitMarker: WorkCommitMarker(full),
 		Reason:       opts.Reason,
 	}, 0
+}
+
+// emitMarkerCorrelationWarning runs the single-issue commit-marker
+// correlation check against the host repo and writes a warning to stderr
+// when no matching commit is found in the last closeMarkerLookback host
+// commits. The check is best-effort — a git invocation failure (no HEAD,
+// detached state, etc.) is silently ignored because the failure mode is
+// no different from "no marker found yet" and noisy false positives would
+// degrade the signal value of the warning itself.
+//
+// actStateRoot is the `.act/` directory (paths.Root); the host repo root
+// is its parent. shortID is the canonical `act-XXXXXX` short id from
+// ShortIssueID, used in the warning text; fullID is the full issue id,
+// from which we strip the `act-` prefix to get the hex tail the gitops
+// grep expects.
+func emitMarkerCorrelationWarning(stderr io.Writer, actStateRoot, fullID, shortID string) {
+	dst := stderr
+	if dst == nil {
+		dst = os.Stderr
+	}
+	hostRoot := filepath.Dir(actStateRoot)
+	host := gitops.NewHostGitOps(hostRoot)
+	// Strip the `act-` prefix; WorkCommitsForIssue keys on the hex tail.
+	// shortID is `act-` + MinShortHexLen hex chars, so the trim is total.
+	markerHex := strings.TrimPrefix(shortID, "act-")
+	if len(markerHex) < 4 {
+		// Defensive: a non-canonical id (shorter than the syntax floor)
+		// would make gitops return an error. Skip the check; the close
+		// itself already succeeded.
+		return
+	}
+	commits, err := host.WorkCommitsForIssue(markerHex, closeMarkerLookback)
+	if err != nil {
+		// Best-effort: ignore git errors. The close itself succeeded.
+		return
+	}
+	if len(commits) > 0 {
+		return
+	}
+	fmt.Fprintf(dst,
+		"act close: no host commit with '%s: %s' trailer found in last %d commits; consider amending or filing a follow-up\n",
+		WorkCommitTrailerKey, shortID, closeMarkerLookback,
+	)
+	_ = fullID
 }
 
 // FormatCloseHuman renders a CloseResult as a one-or-two-line human message.

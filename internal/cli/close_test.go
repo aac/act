@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,5 +234,89 @@ func TestRunClose_LiveIndexReflectsClosedStatus(t *testing.T) {
 		if f.Severity == "error" {
 			t.Errorf("doctor reported error finding after close: %+v", f)
 		}
+	}
+}
+
+// TestRunClose_MarkerCorrelationWarning_NoMatch is the regression test
+// for act-f2ea: a close with no matching `Act-Id: act-XXXXXX` trailer in
+// the host repo's recent commits emits a stderr warning. The close
+// itself still succeeds (exit 0, ops_written=1, committed=true). The
+// fixture's host repo has only the `init` commit, so there's nothing
+// matching the closed issue's trailer — the warning must fire.
+func TestRunClose_MarkerCorrelationWarning_NoMatch(t *testing.T) {
+	root, id := makeCloseRepoWithIssue(t)
+	var stderr bytes.Buffer
+
+	out, code := RunClose(root, CloseOptions{ID: id, Stderr: &stderr})
+	if code != 0 {
+		t.Fatalf("code = %d, out=%+v", code, out)
+	}
+	res, ok := out.(CloseResult)
+	if !ok {
+		t.Fatalf("type = %T, want CloseResult", out)
+	}
+	if !res.Committed {
+		t.Fatalf("Committed = false, want true (close should still succeed)")
+	}
+
+	got := stderr.String()
+	if !strings.Contains(got, "no host commit with '"+WorkCommitTrailerKey+": "+res.ShortID+"' trailer") {
+		t.Errorf("stderr missing expected warning for short id %s; got: %q", res.ShortID, got)
+	}
+	if !strings.Contains(got, fmt.Sprintf("last %d commits", closeMarkerLookback)) {
+		t.Errorf("stderr missing lookback window phrasing; got: %q", got)
+	}
+}
+
+// TestRunClose_MarkerCorrelationWarning_MatchSuppresses verifies that
+// when a host commit carrying the canonical `Act-Id: act-XXXXXX` trailer
+// already exists at close time, the post-close check finds it and emits
+// no warning. We synthesize the matching host commit before calling
+// RunClose so the grep has something to find.
+func TestRunClose_MarkerCorrelationWarning_MatchSuppresses(t *testing.T) {
+	root, id := makeCloseRepoWithIssue(t)
+	short := ShortIssueID(id)
+
+	// Synthesize a host commit carrying the canonical trailer for this
+	// issue so the post-close grep matches.
+	work := filepath.Join(root, "work.txt")
+	if err := os.WriteFile(work, []byte("done\n"), 0o644); err != nil {
+		t.Fatalf("write work file: %v", err)
+	}
+	mustGit(t, root, "add", "work.txt")
+	subject := "feat: do the thing"
+	body := WorkCommitTrailerKey + ": " + short
+	mustGit(t, root, "commit", "-q", "--no-verify", "-m", subject, "-m", body)
+
+	var stderr bytes.Buffer
+	out, code := RunClose(root, CloseOptions{ID: id, Stderr: &stderr})
+	if code != 0 {
+		t.Fatalf("code = %d, out=%+v", code, out)
+	}
+	if _, ok := out.(CloseResult); !ok {
+		t.Fatalf("type = %T, want CloseResult", out)
+	}
+	if got := stderr.String(); got != "" {
+		t.Errorf("expected no stderr warning when matching trailer exists; got: %q", got)
+	}
+}
+
+// TestRunClose_NoDoctorOptsOut verifies --no-doctor short-circuits the
+// post-close marker-correlation check: no host commit carries the
+// trailer (same setup as TestRunClose_MarkerCorrelationWarning_NoMatch)
+// but with NoDoctor=true the warning must not be emitted.
+func TestRunClose_NoDoctorOptsOut(t *testing.T) {
+	root, id := makeCloseRepoWithIssue(t)
+	var stderr bytes.Buffer
+
+	out, code := RunClose(root, CloseOptions{ID: id, NoDoctor: true, Stderr: &stderr})
+	if code != 0 {
+		t.Fatalf("code = %d, out=%+v", code, out)
+	}
+	if _, ok := out.(CloseResult); !ok {
+		t.Fatalf("type = %T, want CloseResult", out)
+	}
+	if got := stderr.String(); got != "" {
+		t.Errorf("--no-doctor must skip the check; got stderr: %q", got)
 	}
 }
