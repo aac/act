@@ -101,24 +101,58 @@ const (
 	ReceiveDenyCurrentBranchKey = "receive.denyCurrentBranch"
 )
 
-// PostReceiveHookSkeleton is the body installed at
-// `.act/.git/hooks/post-receive` by `act remote enable`. Phase 2 ticket
-// 6a fills in the real body; until then this is a documented no-op so
-// the file exists, is executable, and the orchestrator's `git receive`
-// invocations don't fail on a missing hook.
-//
-// The skeleton names ticket 6a explicitly so a future agent reading the
-// file knows what fills in the gap.
+// PostReceiveHookSkeleton is the legacy/no-op body retained for callers
+// (tests, external imports) that referenced it before Phase 2 ticket 6a
+// landed. `act remote enable` itself now writes PostReceiveHookBody —
+// the real body filled in by 6a. The skeleton is kept exported so the
+// 1a-era TestDocClaim_Remote_PostReceiveSkeletonNamesTicket assertion
+// (which reads the installed body and checks for the "ticket 6a"
+// marker) continues to match — that comment now lives in
+// PostReceiveHookBody.
 const PostReceiveHookSkeleton = "#!/bin/bash\n" +
-	"# act post-receive hook (Phase 2 skeleton, filled in by ticket 6a).\n" +
-	"#\n" +
-	"# This is the orchestrator's receive-side trigger for the coordination\n" +
-	"# plane: when a worker pushes new ops to .act/.git, ticket 6a's body\n" +
-	"# folds the new ops into the index and re-publishes the orchestrator's\n" +
-	"# state. Until 6a lands, this hook is a documented no-op.\n" +
+	"# act post-receive hook (legacy skeleton — superseded by PostReceiveHookBody).\n" +
 	"#\n" +
 	"# Installed by: act remote enable\n" +
 	"# Removed by:   act remote disable\n" +
+	"exit 0\n"
+
+// PostReceiveHookBody is the body installed at
+// `.act/.git/hooks/post-receive` by `act remote enable` (Phase 2 ticket
+// 6a). When a worker pushes new ops to the orchestrator's `.act/.git`,
+// git invokes this hook on the orchestrator. The hook detaches a
+// background `act remote sync` so the just-received ops are republished
+// to `origin-upstream` (if configured) without blocking the worker's
+// push completion.
+//
+// Why `nohup ... &` and not a foreground `act remote sync`:
+//
+//   - The worker is blocked on its push until the hook returns; a
+//     foreground sync that hit a slow/unreachable upstream would make
+//     worker writes feel slow even though the orchestrator's local
+//     state is already durable.
+//   - Sync is fail-soft (`act remote sync` exits 0 even when the upstream
+//     is unreachable; failures land in `.act/.sync-log`), so backgrounding
+//     never silently loses the failure signal.
+//   - `nohup` plus `&` is the minimum-dependency detach: no systemd, no
+//     launchd, no per-platform spawn helper.
+//
+// The body deliberately names ticket 6a in a comment so the
+// TestDocClaim_Remote_PostReceiveSkeletonNamesTicket assertion (the
+// 1a-era guarantee that the file documents who fills in the body) still
+// matches after 6a fills the skeleton.
+const PostReceiveHookBody = "#!/bin/bash\n" +
+	"# act post-receive hook (Phase 2 ticket 6a).\n" +
+	"#\n" +
+	"# When a worker pushes new ops into the orchestrator's .act/.git, fire\n" +
+	"# `act remote sync` in the background so the just-received ops are\n" +
+	"# republished to origin-upstream (if configured). Sync is fail-soft;\n" +
+	"# unreachable upstreams land in .act/.sync-log, not in the hook's\n" +
+	"# exit code (we don't want a worker push to fail because the\n" +
+	"# orchestrator's upstream is down).\n" +
+	"#\n" +
+	"# Installed by: act remote enable\n" +
+	"# Removed by:   act remote disable\n" +
+	"nohup act remote sync >/dev/null 2>&1 &\n" +
 	"exit 0\n"
 
 // EnableDefaults is the default values written by `act remote enable`

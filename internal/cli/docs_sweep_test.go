@@ -328,6 +328,46 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "default is `worker`",
 		testName:     "TestDocClaim_Config_ActRoleDefaultsToWorker",
 	},
+	// remote-sync-* and hook-* (Phase 2 ticket 6a, act-e29159): the
+	// `act remote sync` subcommand plus the post-receive hook body
+	// that invokes it. Help-text claim lives in cmd/act/help.go; the
+	// stderr-literal and sync-log schema claims live in
+	// docs/spec-v2.md; the hook-body claim lives in
+	// internal/config/remote.go (the constant the install path reads
+	// from). The drift shape: someone removes the `remote sync`
+	// listing from help, or changes the stderr literal, or changes
+	// the hook body to skip `act remote sync`, and a cold-start
+	// agent reading either surface gets misled.
+	{
+		name:         "remote-sync-help-listed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "remote sync",
+		testName:     "TestDocClaim_RemoteSync_HelpListed",
+	},
+	{
+		name:         "remote-sync-no-upstream-stderr",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "no origin-upstream configured",
+		testName:     "TestDocClaim_RemoteSync_NoUpstreamStderr",
+	},
+	{
+		name:         "hook-post-receive-body",
+		docFile:      "internal/config/remote.go",
+		claimPattern: "nohup act remote sync",
+		testName:     "TestDocClaim_Hook_PostReceiveInvokesSync",
+	},
+	{
+		name:         "remote-sync-log-reason-first-field",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "first JSON field on every line is `reason`",
+		testName:     "TestDocClaim_RemoteSync_SyncLogReasonFirstField",
+	},
+	{
+		name:         "remote-sync-log-schema-fields",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "| `reason` | string |",
+		testName:     "TestDocClaim_RemoteSync_SyncLogSchemaFields",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

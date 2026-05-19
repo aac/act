@@ -1200,11 +1200,13 @@ distinction. There is no filesystem-path heuristic.
 ### Post-receive hook
 
 `act remote enable` MUST install an executable file at
-`.act/.git/hooks/post-receive`. In Phase 2 ticket 1a the body is a
-documented no-op (`#!/bin/bash` + comment naming ticket 6a as the body
-owner + `exit 0`). Ticket 6a fills in the body in the same release
-window. `act remote disable` MUST remove the file (not merely
-truncate it).
+`.act/.git/hooks/post-receive`. Phase 2 ticket 6a fills in the body
+(co-shipped with 1a in the same release window): the hook detaches a
+background `act remote sync` via `nohup act remote sync >/dev/null 2>&1 &`
+plus `exit 0`. The body deliberately retains a comment that names
+ticket 6a so an agent reading the file knows who owns the body.
+
+`act remote disable` MUST remove the file (not merely truncate it).
 
 ### Idempotency
 
@@ -1239,3 +1241,47 @@ The TTL is currently a constant (5 seconds). Phase 2 ticket 1a introduces the `a
 **No-remote repos.** A repo with no `origin` configured on the nested `.act/.git` is a silent no-op for the cache layer: there is nothing to fetch from, so the freshness check is skipped and the read proceeds directly. This keeps single-machine / local-only flows unchanged.
 
 **Failure modes.** A fetch error inside the cache layer (network unreachable, branch missing, rebase conflict) is non-fatal for the read-path command: the command falls through to read whatever state is currently on disk so a transient network failure does not break read-only commands. The write-path retry helpers (`PushWithRetry`, `FetchAndRebase` consumed by `--claim`) continue to surface their failures verbatim.
+
+## `act remote sync` (Phase 2 ticket 6a)
+
+`act remote sync` pushes the orchestrator's `.act/.git` to its
+`origin-upstream` remote — the optional GitHub durability mirror
+configured by `act remote add-upstream <url>` (Phase 2 ticket 6b
+series). The subcommand is invoked two ways: directly by an agent at
+the orchestrator, and detached in the background by the post-receive
+hook (every worker push fires `nohup act remote sync &`).
+
+### Behavior
+
+- If `origin-upstream` is unset, exit 2 with envelope
+  `upstream_not_configured`. The stderr line MUST be the literal
+  `no origin-upstream configured; run 'act remote add-upstream <url>'`.
+- If `origin-upstream` is set and its ref matches the orchestrator's
+  local branch ref, exit 0 with no side effects (idempotent no-op).
+- Otherwise run `git push origin-upstream <branch>`. On success, exit 0.
+- On push failure (DNS, auth, unreachable bare path, …), exit 0 anyway
+  and append one JSON-line entry to `.act/.sync-log`. The failure path
+  is fail-soft so the post-receive hook never blocks a worker push on
+  upstream connectivity.
+
+### `.act/.sync-log` schema
+
+`.act/.sync-log` is an append-only JSON-lines file. Each line is one
+record. The fields are emitted in struct-declaration order so the
+first JSON field on every line is `reason`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `reason` | string | Short slug. Current values: `unreachable`. |
+| `timestamp` | RFC3339Nano | UTC time the failure was recorded. |
+| `error` | string | Trimmed combined-output of the failing `git push`, capped at 4096 bytes (tail-preserving). |
+
+The file is capped at 100 entries; older entries are dropped when an
+append would push the count past the cap. The pruning shape matches
+`.slow-writes` (ticket 8).
+
+### Error-code entry
+
+| Code | Exit | Where | Meaning |
+|------|------|-------|---------|
+| `upstream_not_configured` | 2 | `act remote sync` | No `origin-upstream` remote configured in `.act/.git/config`. Stderr line: `no origin-upstream configured; run 'act remote add-upstream <url>'`. |
