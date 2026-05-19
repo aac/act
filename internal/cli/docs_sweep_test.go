@@ -559,6 +559,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "upstream: origin-upstream is <N> commits behind origin; run 'act remote sync'",
 		testName:     "TestDocClaim_DoctorCase_H_UpstreamDriftStderr",
 	},
+	// op-filename-* (act-2f3d): op filenames use '-' rather than ':' in
+	// the time component so the on-disk tree is NTFS-safe (otherwise
+	// `git checkout` on Windows hosts fails before any Go code runs).
+	// The spec's "Op file naming" section is the load-bearing surface
+	// for the format claim; the test asserts the form is documented and
+	// that the writer produces no-colon filenames at the boundary.
+	{
+		name:         "op-filename-ntfs-safe-format",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`YYYY-MM-DDTHH-MM-SS.sssZ`",
+		testName:     "TestDocClaim_OpFilename_NoColon",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
