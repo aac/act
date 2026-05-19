@@ -145,7 +145,7 @@ DEEPER DIVES
     init version log list search ready mine show
     create close reopen delete update redact
     dep add doctor import mcp install-skill
-    bootstrap-worker
+    bootstrap-worker harvest
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
@@ -174,6 +174,29 @@ BOOTSTRAPPING A WORKER WORKTREE
   Phase 1.5 (current): cwd resolves the source repo. Phase 2 will add
   '--from-remote <url>' to clone from a remote instead; both modes will
   coexist for sandboxed-no-network workers.
+
+HARVESTING A WORKER'S OPS BACK
+  Mirror of bootstrap-worker. When a dispatched sub-agent finishes work
+  in its worktree, the orchestrator pulls the new ops back into the host
+  with 'act harvest':
+
+    act harvest <worker-path>            # copy new ops + commit + re-fold
+    act harvest <worker-path> --dry-run  # list what would be harvested
+    act harvest <worker-path> --json     # machine-readable summary
+
+  Identity is by op filename (HLC + content hash); harvest computes the
+  set difference between the worker's .act/ops/ and the host's .act/ops/,
+  copies new files into the host, stages them, and produces a single
+  commit on the nested .act/.git with message
+  'act harvest: <N> ops from <basename>'. Re-folds the index afterward;
+  a fold failure is surfaced in the JSON envelope but does not roll back
+  the copy or commit — harvest is one-way append.
+
+  Re-running harvest with no new ops is a no-op (zero ops, exit 0). A
+  worker op whose filename exists at the host with divergent content is
+  rejected with code op_filename_collision (a corruption signal, not a
+  silent overwrite). Harvest does NOT push the host's commit to its git
+  remote — that's the orchestrator's responsibility.
 
 INSTALLING THE SKILL
   The canonical Claude Code skill for act (SKILL.md plus reference

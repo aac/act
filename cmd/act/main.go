@@ -145,6 +145,8 @@ func main() {
 		os.Exit(runInstallSkill(args))
 	case "bootstrap-worker":
 		os.Exit(runBootstrapWorker(args))
+	case "harvest":
+		os.Exit(runHarvest(args))
 	case "-h", "--help":
 		usage()
 		os.Exit(0)
@@ -158,7 +160,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: act <subcommand> [flags]")
-	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker")
+	fmt.Fprintln(os.Stderr, "subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, redact, dep add, doctor, migrate-to-nested, import, mcp, mine, install-skill, bootstrap-worker, harvest")
 }
 
 // unknownSubcommandMsg returns the canonical "you typed a subcommand

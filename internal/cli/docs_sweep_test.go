@@ -89,6 +89,12 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_BootstrapWorker_HelpListsSubcommand",
 	},
 	{
+		name:         "act-help-harvest-subcommand",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act harvest <worker-path>",
+		testName:     "TestDocClaim_Harvest_HelpListsSubcommand",
+	},
+	{
 		name:         "canonical-loop-git-push",
 		docFile:      "cmd/act/help.go",
 		claimPattern: "git push",
