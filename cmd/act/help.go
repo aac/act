@@ -538,6 +538,14 @@ DOCTOR
   back-compat, the historical '(act-XXXX)' subject-line marker) is
   what doctor greps for; including the trailer in work-commit
   messages is what makes this check work.
+
+CWD ROBUSTNESS
+  All act commands resolve the host repo root from any working
+  directory inside the project tree, including from inside .act/
+  itself. Persistent-shell harnesses (tmux, Claude Code's Bash tool)
+  occasionally leave cwd inside .act/ after a cd; act skips the
+  nested .act/.git and finds the real host repo above it so commands
+  continue to work correctly (act-0852da).
 `
 
 const helpErrors = `act — error-envelope contract

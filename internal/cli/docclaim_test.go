@@ -631,6 +631,49 @@ func TestDocClaim_Description_CreateUpdateConsistencyNote(t *testing.T) {
 	}
 }
 
+// TestDocClaim_CWDRobustness_DocFromInsideActDir pins the cwd-robustness
+// claim in `act help ops-model`: all act commands resolve the host repo
+// root from any directory inside the project tree, including from inside
+// .act/ itself. The act-0852da bug was that findRepoRoot stopped at the
+// first .git it found, which under Phase 1 could be the nested .act/.git;
+// the fix delegates to gitops.FindHostRepoRoot which skips nested
+// .act/.git entries.
+//
+// The boundary asserted is `act doctor` exit code and stderr from cwd =
+// <host>/.act/ — the same surface a persistent-shell harness would hit
+// after a stray `cd .act`. The prior behaviour (exit 0 with "no act state"
+// message) is the negative assertion; any real doctor output (non-empty
+// stderr with no "no act state" line) is the positive assertion.
+func TestDocClaim_CWDRobustness_DoctorFromInsideActDir(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "cwd@example.com", "cwdtest")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	// Confirm that .act/.git exists (act init bootstraps the nested repo).
+	actGit := filepath.Join(site, ".act", ".git")
+	if _, err := os.Stat(actGit); err != nil {
+		t.Fatalf(".act/.git not present after act init: %v", err)
+	}
+
+	// Run act doctor from inside the nested .act/ directory. Before
+	// the fix this returned exit 0 with "no act state in this repo".
+	actDir := filepath.Join(site, ".act")
+	stdout, stderr, code := runAct(t, actDir, "doctor")
+	combined := stdout + stderr
+
+	if code != 0 {
+		t.Fatalf("act doctor from .act/: exit %d; combined output:\n%s", code, combined)
+	}
+
+	noStateMsg := "no act state in this repo"
+	if strings.Contains(combined, noStateMsg) {
+		t.Errorf("act doctor from .act/ produced the wrong-resolver sentinel %q; "+
+			"FindHostRepoRoot should have skipped .act/.git and found the host repo.\n"+
+			"combined output:\n%s", noStateMsg, combined)
+	}
+}
+
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).

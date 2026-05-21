@@ -731,6 +731,19 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "empty string explicitly clears the existing description",
 		testName:     "TestDocClaim_Description_CreateUpdateConsistencyNote",
 	},
+	// cwd-robustness (act-0852da): all act commands resolve the host repo root
+	// from any directory inside the project tree, including from inside .act/.
+	// Before the fix, findRepoRoot stopped at the first .git encountered, which
+	// under Phase 1 could be the nested .act/.git — causing "no act state" from
+	// inside .act/. The claim lives in cmd/act/help.go's CWD ROBUSTNESS section
+	// (helpOpsModel); the test asserts act doctor from cwd=<host>/.act/ returns
+	// real output, not the no-state sentinel.
+	{
+		name:         "cwd-robustness-doctor-from-act-dir",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "leave cwd inside .act/ after a cd; act skips the",
+		testName:     "TestDocClaim_CWDRobustness_DoctorFromInsideActDir",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
