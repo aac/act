@@ -631,7 +631,7 @@ func TestDocClaim_Description_CreateUpdateConsistencyNote(t *testing.T) {
 	}
 }
 
-// TestDocClaim_CWDRobustness_DocFromInsideActDir pins the cwd-robustness
+// TestDocClaim_CWDRobustness_DoctorFromInsideActDir pins the cwd-robustness
 // claim in `act help ops-model`: all act commands resolve the host repo
 // root from any directory inside the project tree, including from inside
 // .act/ itself. The act-0852da bug was that findRepoRoot stopped at the
