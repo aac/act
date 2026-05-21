@@ -336,7 +336,13 @@ func commitHostMigrateChanges(repoRoot string, untracked, gitignoreChanged, cont
 		// Nothing staged — nothing to commit. Treat as success.
 		return nil
 	}
-	if err := runGitIn(repoRoot, "commit", "-q", "--no-verify", "-m", hostMigrateCommitMsg); err != nil {
+	// Run through the host pre-commit hook (no --no-verify): the hook
+	// permits staged deletions of .act/* (added in act-4094c6), so the
+	// untrack commit passes even on a branch where the hook is already
+	// installed. If a project augmented the hook with additional checks
+	// that genuinely block the migration commit, the operator wants to
+	// hear about it before falling back to plumbing.
+	if err := runGitIn(repoRoot, "commit", "-q", "-m", hostMigrateCommitMsg); err != nil {
 		return err
 	}
 	return nil

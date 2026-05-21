@@ -275,6 +275,147 @@ func TestRunMigrateToNested_PartialPrior(t *testing.T) {
 	}
 }
 
+// TestRunMigrateToNested_HookAlreadyInstalled is the regression test for
+// act-4094c6: carrying the migrate-to-nested untrack commit to a branch
+// where the host pre-commit hook is already in place. Before the fix the
+// hook rejected the migration commit (it stages deletions of .act/*) and
+// the operator had to fall back to `git write-tree | commit-tree |
+// update-ref` plumbing or `--no-verify` to land it.
+//
+// The fix is twofold: (a) the hook now uses `git diff --cached
+// --diff-filter=d` so staged deletions of .act/* are permitted, and
+// (b) commitHostMigrateChanges no longer passes --no-verify so the hook
+// actually runs over the migration commit. This test pre-installs the
+// hook (simulating "the migration is being carried to a second branch
+// after the first branch installed the hook") and then runs the full
+// migration end-to-end. Migration must produce HostCommitted=true and
+// the resulting host commit must be reachable from HEAD.
+func TestRunMigrateToNested_HookAlreadyInstalled(t *testing.T) {
+	root := makeLegacyActRepo(t)
+
+	// Pre-install the hook BEFORE running migrate. This is the "hook
+	// already in place" precondition from the ticket — the host repo
+	// branch we're carrying to already has the hook from a prior
+	// migrate-to-nested run on a sibling branch.
+	if _, err := installHostPreCommitHook(root); err != nil {
+		t.Fatalf("seed pre-commit hook: %v", err)
+	}
+	hookPath := filepath.Join(root, ".git", "hooks", "pre-commit")
+	if _, err := os.Stat(hookPath); err != nil {
+		t.Fatalf("hook did not land on disk: %v", err)
+	}
+
+	beforeCount := mustGitCommitCount(t, root)
+
+	out, code := RunMigrateToNested(root, "m", "u@e", MigrateToNestedOptions{})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; out=%+v", code, out)
+	}
+	res, ok := out.(MigrateToNestedResult)
+	if !ok {
+		t.Fatalf("output = %T, want MigrateToNestedResult", out)
+	}
+	if len(res.PartialFailures) > 0 {
+		t.Errorf("partial_failures = %v; want empty (hook should permit staged deletions)", res.PartialFailures)
+	}
+	if !res.HostCommitted {
+		t.Errorf("host_committed = false; want true (commit must succeed with hook installed)")
+	}
+	if res.HookInstalled {
+		t.Errorf("hook_installed = true; want false (hook was already installed)")
+	}
+
+	afterCount := mustGitCommitCount(t, root)
+	if afterCount != beforeCount+1 {
+		t.Fatalf("host commit count went %d -> %d, want exactly 1 new commit (the migrate commit)", beforeCount, afterCount)
+	}
+
+	// Sanity: the new HEAD commit's subject is the migrate subject. If
+	// somewhere upstream silently falls back to --no-verify or plumbing,
+	// the test still wants to fail — verify by stating the commit-shape
+	// expectation explicitly.
+	subj := mustGitOutput(t, root, "log", "-1", "--format=%s")
+	if !strings.Contains(subj, "act migrate: untrack .act/") {
+		t.Errorf("HEAD commit subject = %q; want the migrate subject", subj)
+	}
+}
+
+// TestDocClaim_PreCommitHook_PermitsStagedDeletions exercises the hook's
+// user-visible boundary: a normal `git commit` that stages deletions of
+// .act/* paths (the migrate-to-nested untrack shape) must pass through
+// the hook unobstructed. This is the per-claim assertion for the fix in
+// act-4094c6: docs/migration-runbook.md says "Staged deletions of
+// `.act/*` are permitted"; this test pins that promise at the boundary
+// (a real `git commit` going through the installed hook script).
+func TestDocClaim_PreCommitHook_PermitsStagedDeletions(t *testing.T) {
+	root := makeRealGitRepo(t)
+
+	// Track a .act/ subtree before installing the hook — we need
+	// something the migration-shape commit can delete.
+	if err := os.MkdirAll(filepath.Join(root, ".act", "ops"), 0o755); err != nil {
+		t.Fatalf("mkdir .act/ops: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".act", "config.json"),
+		[]byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write .act/config.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".act", "ops", "op.json"),
+		[]byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write .act/ops/op.json: %v", err)
+	}
+	runOrFatal(t, root, "git", "add", "-A")
+	runOrFatal(t, root, "git", "commit", "-q", "--no-verify", "-m", "track legacy .act/")
+
+	// Install the hook. From here on, every commit must pass the hook.
+	if _, err := installHostPreCommitHook(root); err != nil {
+		t.Fatalf("install hook: %v", err)
+	}
+
+	// Stage deletions: the untrack shape the migration produces.
+	runOrFatal(t, root, "git", "rm", "-r", "--cached", "--ignore-unmatch", ".act/")
+
+	// Commit through the hook (no --no-verify). Must succeed.
+	commitCmd := exec.Command("git", "commit", "-m", "untrack .act/")
+	commitCmd.Dir = root
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("commit with staged .act/* deletions blocked by hook (regression of act-4094c6): %v\n%s", err, out)
+	}
+}
+
+// TestPreCommitHook_RejectsStagedAdditions is the companion to the
+// "permits deletions" test: the hook must still hard-reject any staged
+// addition under .act/, which is the original failure mode the hook was
+// installed to prevent. Without this assertion the fix could over-rotate
+// and unblock the very class of accidental re-tracking that motivated
+// the hook in the first place.
+func TestPreCommitHook_RejectsStagedAdditions(t *testing.T) {
+	root := makeRealGitRepo(t)
+	if _, err := installHostPreCommitHook(root); err != nil {
+		t.Fatalf("install hook: %v", err)
+	}
+
+	// Force-add a .act/* path past gitignore (mimics an agent
+	// accidentally `git add -f .act/...` after migration).
+	if err := os.MkdirAll(filepath.Join(root, ".act"), 0o755); err != nil {
+		t.Fatalf("mkdir .act: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".act", "leaked.json"),
+		[]byte("leaked\n"), 0o644); err != nil {
+		t.Fatalf("write .act/leaked.json: %v", err)
+	}
+	runOrFatal(t, root, "git", "add", "-f", ".act/leaked.json")
+
+	commitCmd := exec.Command("git", "commit", "-m", "should-be-blocked")
+	commitCmd.Dir = root
+	out, err := commitCmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("commit with staged .act/* addition succeeded; hook should still block additions. stdout=%s", out)
+	}
+	if !strings.Contains(string(out), "refusing to commit .act/ paths") {
+		t.Errorf("hook rejection message missing; got %q", out)
+	}
+}
+
 // silence unused-import warning when the test file is the only consumer
 // of helpers we want compiled even on cross-checks.
 var _ = time.Now

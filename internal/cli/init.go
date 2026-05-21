@@ -104,9 +104,18 @@ const preCommitHookHeader = "# act: reject staged .act/* paths"
 // preCommitHookBlock is the shell snippet appended to the host's
 // .git/hooks/pre-commit. It's deliberately POSIX-sh, no bashisms, so it
 // works on the broadest set of platforms. Rejects any commit whose staged
-// tree includes a .act/ entry with a clear remedy.
+// tree includes a .act/ addition/modification with a clear remedy.
+//
+// Deletions of .act/* are PERMITTED: the only legitimate staged .act/*
+// change under the Phase 1 nested layout is `git rm --cached` (the
+// migrate-to-nested untrack commit, or a manual carry to a sibling
+// branch that still tracks .act/). Adds and modifications under .act/
+// are the danger — they re-stage nested-repo content into the host
+// commit, which is what the hook exists to prevent. `--diff-filter=d`
+// excludes deletions (lowercase letters in --diff-filter are exclude
+// filters per git-diff(1)).
 const preCommitHookBlock = `# act: reject staged .act/* paths (managed by act init; do not remove)
-if git diff --cached --name-only -- '.act' '.act/' 2>/dev/null | grep -qE '^\.act(/|$)'; then
+if git diff --cached --name-only --diff-filter=d -- '.act' '.act/' 2>/dev/null | grep -qE '^\.act(/|$)'; then
   echo "act: refusing to commit .act/ paths to the host repo." >&2
   echo "  The .act/ tree is the nested act state repo and must not ride host commits." >&2
   echo "  Remedy: git rm -r --cached .act/ && git commit" >&2
