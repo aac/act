@@ -27,9 +27,13 @@ Three additional host-side artifacts ship with the migration:
 
 1. `.act/` is added to host `.gitignore` so future op writes don't
    accidentally re-track.
-2. A host pre-commit hook (`.git/hooks/pre-commit`) hard-rejects any
-   commit that stages a `.act/*` path. Belt-and-suspenders against
-   accidental re-tracking.
+2. A host pre-commit hook (`.git/hooks/pre-commit`) rejects any commit
+   that stages a `.act/*` addition or modification. Belt-and-suspenders
+   against accidental re-tracking.
+   Staged deletions of `.act/*` are permitted so the migrate-to-nested
+   untrack commit (and manual `git rm -r --cached .act/` carries to
+   sibling branches) succeed under a normal `git commit` even when the
+   hook is already installed.
 3. When the host has a public-looking remote (github/gitlab/bitbucket),
    `CONTRIBUTING.md` gets an `Act-Id:` trailer explainer for external
    contributors who shouldn't need to learn the convention.

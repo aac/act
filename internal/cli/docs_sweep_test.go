@@ -601,6 +601,22 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "does NOT write `.ask/`",
 		testName:     "TestDocClaim_Init_GitignoreNoAskEntry",
 	},
+	// pre-commit-hook-permits-deletions (act-4094c6): the host
+	// pre-commit hook installed by `act init` /
+	// `act migrate-to-nested` permits staged deletions of `.act/*`
+	// paths so a normal `git commit` works for the migrate-to-nested
+	// untrack shape (and manual `git rm -r --cached .act/` carries to
+	// sibling branches). Documented in docs/migration-runbook.md
+	// alongside the addition/modification rejection rule. Drift
+	// shape: a future hook-rewrite drops `--diff-filter=d` and
+	// re-rejects deletions, breaking the carry-migration workflow
+	// without any test signal.
+	{
+		name:         "pre-commit-hook-permits-deletions",
+		docFile:      "docs/migration-runbook.md",
+		claimPattern: "Staged deletions of `.act/*` are permitted",
+		testName:     "TestDocClaim_PreCommitHook_PermitsStagedDeletions",
+	},
 	// doctor-fix-index-* (act-f2f93a): the `--fix-index` flag rebuilds a
 	// malformed `.act/index.db` from `.act/ops/`. The user-visible literal
 	// claim is the remediation hint that surfaces when doctor sees the
