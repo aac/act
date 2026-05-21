@@ -15,6 +15,7 @@ import (
 
 	"github.com/aac/act/internal/cli"
 	_ "github.com/aac/act/internal/fold" // registers op_version=1 in the op-package dispatch registry
+	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/mcp"
 	"github.com/aac/act/internal/op"
 )
@@ -423,24 +424,17 @@ func toMap(v any) (map[string]any, bool) {
 	return m, true
 }
 
-// findRepoRoot walks upward from the current working directory looking for a
-// `.git` entry (file or directory). The first hit's directory is the repo root.
+// findRepoRoot returns the host repo root by delegating to
+// gitops.FindHostRepoRoot. Under Phase 1 the nearest .git walking upward from
+// cwd may belong to the nested .act/.git; FindHostRepoRoot skips those and
+// continues the walk so commands run from inside .act/ still resolve to the
+// enclosing host repo (act-0852da).
 func findRepoRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("getcwd: %w", err)
 	}
-	dir := cwd
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("no .git/ found in %s or any parent", cwd)
-		}
-		dir = parent
-	}
+	return gitops.FindHostRepoRoot(cwd)
 }
 
 // getMachineID returns a stable per-host identifier. Order:
