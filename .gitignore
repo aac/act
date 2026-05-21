@@ -22,3 +22,4 @@ Thumbs.db
 /.claude/*
 !/.claude/settings.json
 .act/
+.ask/
