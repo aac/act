@@ -1,26 +1,24 @@
-name: CI Matrix
+name: Release Smoke
 
-# Three-environment smoke matrix per spec-v2 §7.8 / docs/issues/act-2e8d.md.
-# Each job builds the act binary, runs the full Go test suite (including the
-# concurrency tests — no `-short`), and then drives the canonical end-to-end
-# smoke workflow via .github/scripts/smoke.sh.
-#
-# Environments simulate the three target sandboxes:
-#   - cc-laptop : ubuntu-latest with the standard Go toolchain + module cache.
-#   - cc-web    : ubuntu-latest with `cache: false` to mirror a fresh web
-#                 sandbox where no pre-warmed module cache exists.
-#   - cowork    : ubuntu-latest where the smoke flow does NOT touch a remote
-#                 (no `--push`); approximates the locked-down network
-#                 namespace used by the Cowork plugin runtime.
-#
-# `fail-fast: false` keeps each row independent: an automated agent reads the
-# PASS/FAIL summary line per job and decides whether the build can advance.
+# Release-time smoke per spec-v2 §7.8 / docs/issues/act-2e8d.md.
+# Builds the act binary, runs the full Go test suite (no `-short`, includes
+# concurrency tests), and drives the canonical end-to-end smoke workflow
+# via .github/scripts/smoke.sh.
 #
 # Triggered on `v*` tag push only — runs alongside the release build so a
-# tagged release that breaks one of the sandbox rows surfaces a failure
-# notification. Per-push / per-PR runs were dropped to cut Actions burn;
-# regressions in normal development show up via the plain `ci.yml` job and
-# through dogfooding.
+# tagged release that breaks the smoke surfaces a failure notification.
+# Per-push / per-PR runs were dropped to cut Actions burn; regressions in
+# normal development show up via the plain `ci.yml` job and through
+# dogfooding.
+#
+# Originally a 3-row matrix (cc-laptop / cc-web / cowork) intended to
+# simulate the three target agent sandboxes, but the rows had no
+# behavioral differentiation — cc-laptop and cowork were identical
+# (`smoke.sh` never read the `MATRIX_PUSH` flag that was supposed to gate
+# network), and cc-web differed only in the `setup-go` cache flag. Collapsed
+# to a single job. Restore the matrix when `smoke.sh` actually grows
+# sandbox-distinguishing behavior (e.g. a `--no-network` mode) worth
+# exercising in parallel rows.
 
 on:
   push:
@@ -31,26 +29,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-matrix-${{ github.workflow }}-${{ github.ref }}
+  group: release-smoke-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   smoke:
-    name: smoke (${{ matrix.env }})
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - env: cc-laptop
-            cache: 'true'
-            push: 'true'
-          - env: cc-web
-            cache: 'false'
-            push: 'true'
-          - env: cowork
-            cache: 'true'
-            push: 'false'
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
@@ -59,21 +43,16 @@ jobs:
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5
         with:
           go-version: '1.22'
-          # cc-web simulates the web sandbox: no module cache, no
-          # cross-run reuse. Other rows keep the default cache for parity
-          # with the standard CI job.
-          cache: ${{ matrix.cache == 'true' }}
 
       - name: Cache Go modules
-        if: matrix.cache == 'true'
         uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-matrix-${{ matrix.env }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-release-smoke-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-matrix-${{ matrix.env }}-
+            ${{ runner.os }}-go-release-smoke-
 
       - name: Install jq
         run: |
@@ -98,10 +77,6 @@ jobs:
       - name: Smoke workflow
         env:
           ACT_BIN: ${{ runner.temp }}/act
-          # cowork simulates a no-network sandbox. The smoke script never
-          # passes --push so all three rows are network-quiet by default;
-          # we still surface the variable for clarity / future use.
-          MATRIX_PUSH: ${{ matrix.push }}
         run: |
           set -euo pipefail
           bash .github/scripts/smoke.sh "${ACT_BIN}"
@@ -110,9 +85,9 @@ jobs:
         if: always()
         run: |
           if [ "${{ job.status }}" = "success" ]; then
-            echo "PASS: ${{ matrix.env }}"
-            echo "PASS: ${{ matrix.env }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "PASS: release smoke"
+            echo "PASS: release smoke" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "FAIL: ${{ matrix.env }}"
-            echo "FAIL: ${{ matrix.env }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "FAIL: release smoke"
+            echo "FAIL: release smoke" >> "$GITHUB_STEP_SUMMARY"
           fi
