@@ -1,3 +1,22 @@
+# Session handoff — 2026-05-22 (overnight cross-repo .act/ history strip)
+
+## Overnight 2026-05-21 → 2026-05-22 — `.act/` history strip across 17 repos
+
+After tonight's Phase 1 migration finished across all project folders, Andrew asked to clean the host-repo commit logs of "pure act-operation" commits. Two-pass approach: drop commits whose entire diff is under `.act/`, and strip `.act/` paths from surviving "mixed" commits. Done across all 17 repos with `.act/` directories. **15/16 fully clean; sift done manually earlier in evening; 1 (plugin_library_commercial) has a partial-remote state needing decision.**
+
+**Read first:** `~/Workspace/_history-backups/SUMMARY.md` has the full status table, what's left to do on plugin_library_commercial, and how to clean up backups.
+
+Safety properties enforced per repo:
+- Tree-hash check on every branch (excluding `.act/`) — provably byte-identical host content pre/post rewrite.
+- Mirror clone of original state at `~/Workspace/_history-backups/<repo>.git`.
+- `.act/` tarball at `~/Workspace/_history-backups/<repo>.act.tgz`.
+- `--atomic --force-with-lease` push (after the plugin_library_commercial incident).
+- Build/test gate before any push: go test, npm test, pytest where configured; tree-hash carries the safety load where no tests are configured.
+
+**plugin_library_commercial** force-pushed 9 feature branches but `main` was rejected by GitHub branch protection. Local main is rewritten and verified; needs either temporarily-disabled protection to push main, or feature-branch revert from mirror backup. Decision documented in SUMMARY.md.
+
+**Scripts kept at `/tmp/strip-act.sh` and `/tmp/build-and-push.sh`** — useful reference if the pattern needs to be re-run (e.g. if Andrew creates another `.act/`-using repo and wants to keep its host history clean).
+
 # Session handoff — 2026-05-21 (evening wrap)
 
 Four sessions ran 2026-05-21. This file is updated chronologically — most recent wrap on top.
