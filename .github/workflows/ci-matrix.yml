@@ -15,12 +15,17 @@ name: CI Matrix
 #
 # `fail-fast: false` keeps each row independent: an automated agent reads the
 # PASS/FAIL summary line per job and decides whether the build can advance.
+#
+# Triggered on `v*` tag push only — runs alongside the release build so a
+# tagged release that breaks one of the sandbox rows surfaces a failure
+# notification. Per-push / per-PR runs were dropped to cut Actions burn;
+# regressions in normal development show up via the plain `ci.yml` job and
+# through dogfooding.
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
