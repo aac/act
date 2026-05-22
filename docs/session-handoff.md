@@ -1,19 +1,21 @@
-# Session handoff — 2026-05-21 (afternoon wrap)
+# Session handoff — 2026-05-21 (evening wrap)
 
-Three sessions ran 2026-05-21. This file is updated chronologically — most recent wrap on top.
+Four sessions ran 2026-05-21. This file is updated chronologically — most recent wrap on top.
 
 ## What shipped 2026-05-21
 
+- **CI Actions burn cut** (this session, no ticket — tactical infra). GitHub sent a 90%-of-3000-min notification for the `aac` account mid-cycle; root cause was CI Matrix running 3 parallel jobs (`cc-laptop` / `cc-web` / `cowork`) on every push to main and every PR, with ~172 pushes this cycle (~1080 billable min from matrix alone). Three changes:
+  - `a5f4cf6` — `ci-matrix.yml` triggers on `v*` tag push only. Plain `ci.yml` keeps per-push/per-PR coverage; matrix becomes a release-time smoke. Header comment updated to explain the gating.
+  - `44cf444` — both workflows got a `concurrency:` block keyed on workflow+ref with `cancel-in-progress: true`. Burst pushes (fix-typo, fix-lint, fix-the-fix) now collapse to one billed run instead of N.
+  - Matrix collapsed to single job (`ci-matrix.yml` renamed `name:` to "Release Smoke"; filename kept). The 3 rows had no behavioral differentiation today — `cc-laptop` and `cowork` were identical (`smoke.sh` never read `MATRIX_PUSH`) and `cc-web` only differed in the `setup-go` cache flag. Dead `MATRIX_PUSH` env var removed. Comment notes the conditions for restoring the matrix (when `smoke.sh` grows a `--no-network` mode worth exercising in a separate row).
+  - Skipped as not worth the risk: path filter for docs-only changes — would conflict with this repo's TestDocClaim-in-same-commit discipline.
+- **`ask-25aa` resolved** — cross-repo NTFS-safe op-filename migration verified done. All 16 repos checked tonight (financial 864→0, ask 211→0, dispatch 3→0, the other 13 all 0). The migration ran in a prior session but the ask was never closed at the time.
 - **`act-4094c6`** — host pre-commit hook now permits staged `.act/*` deletions (uses `git diff --cached --diff-filter=d`). `commitHostMigrateChanges` drops `--no-verify` so the migration commit actually runs through the hook. Regression test simulates "hook already installed on the branch we're carrying the migration to," asserts the commit succeeds without plumbing or `--no-verify`. Docs-sweep registry entry pins the "permits deletions" claim. Commit `6a05287`, pushed.
 - **`act-2d98`** — colon-bearing op filenames closed in a sibling session. Forward fix was already in place (act-2f3d); this close shipped `tools/migrate-ntfs-safe-op-filenames.sh` (host commit `3c54af8`). Side-effect close: `act-487a` bumped the close-hook test timeout 180s→300s (nested commit `6ff1c81`).
 - **Local binary refresh** — `go install ./cmd/act` ran from this repo, replacing the May-16 build at `/Users/andrewcove/go/bin/act` (11.3MB → 11.8MB). Third session's recovery work in another repo (migration just-ran, old binary still on PATH) depended on this. Their half-landed `act-9329` op file is colon-bearing and uncommitted in their nested `.act/.git`; they have the rename-vs-recreate recovery paths from me.
 - **Tickets filed (CLI dep-surface review)** — `act-00e5cc` (surface `blocks`/`blocked_by` arrays in `act show --json`), `act-5918c7` (spec-v2.md dep schema drifted), `act-2e1070` (deferred subcommand idea, blocked-by `act-00e5cc`, with explicit trigger condition). All from a two-reviewer design pass after a sibling session misread the `deps` JSON shape.
 - **`act-0852da` shipped** — `cmd/act/findRepoRoot` now delegates to `gitops.FindHostRepoRoot`, so commands run from inside `.act/` resolve to the host repo instead of misresolving to the nested `.act/.git`. Boundary test `TestDocClaim_CWDRobustness_DoctorFromInsideActDir` drives the binary as a subprocess from `cwd=<host>/.act/` and asserts the wrong-resolver sentinel is absent. Migration was deferred from act-9e8c → act-37f7 in a close-reason and got missed; sonnet sub-agent in worktree did the mechanical wire-through. Commits `c0502d2` (fix) + `9362489` (docblock typo), pushed.
 - **Deferred-handoff precedent captured in CLAUDE.md** — the prose-only deferral of the resolver migration is documented under "Versioning rationale" with the three-mechanism failure analysis (no dep edge, scope didn't enumerate, accept criterion was boundary-shaped but tested internal). Not yet promoted to the global skill — one instance is thin; promote if the pattern recurs.
-
-## Cross-repo migration cleanup (still queued)
-
-`ask-25aa` parks the run-the-cleanup-script-across-16-repos prompt at `~/Workspace/migrate-act-projects-prompt.md`. Inventory of legacy colon files inlined: financial has 864, ask 211, dispatch 3, others between. Trigger condition: all other Claude sessions in those repos idle first.
 
 ## Carryforward 2026-05-20
 
@@ -69,7 +71,7 @@ Carried forward from the 2026-05-19 morning handoff (still open, not on this ses
 
 1. **`act-784b`** — auto-commit regression: nested-repo case fails when host gitignores `.act/`. Fix `8850ceb` (gitops: nested-repo auto-commit targets .act/.git working tree) IS on main as of 2026-05-21 verification — the financial-repo session's own writes via the post-refresh binary all landed in nested `.act/.git`, which couldn't happen if the fix were missing. The act-784b issue itself is still status=in_progress in the tracker; close it next time someone's in the loop.
 2. **`act-993b93`** — dep dispatch tests fail under no-state guard. Status: in_progress, claimed 2026-05-19. Commit `6fb554a` made an attempt; verify tests pass.
-3. **`act-2d98`** — op-file names with colons fail on Windows. **Closed 2026-05-21** in a sibling session. Forward fix was already in place (act-2f3d); this close shipped the cross-repo cleanup script `tools/migrate-ntfs-safe-op-filenames.sh` (host commit `3c54af8`, pushed). The cleanup pass across 16 adopting host-tracked repos is queued — paste-ready prompt at `~/Workspace/migrate-act-projects-prompt.md`, surfaced as **`ask-25aa`** ("needs all other Claude sessions idle first"). Inventory inlined in the prompt; financial has 864 legacy files, ask 211, dispatch 3, others in between. Side-effect close: `act-487a` (close-hook `go test` timeout bumped 180s→300s, nested commit `6ff1c81`) — internal/cli grew past the original 180s ceiling and was tripping every close in this env.
+3. **`act-2d98`** — op-file names with colons fail on Windows. **Closed 2026-05-21** in a sibling session. Forward fix was already in place (act-2f3d); this close shipped the cross-repo cleanup script `tools/migrate-ntfs-safe-op-filenames.sh` (host commit `3c54af8`, pushed). Cross-repo migration ran and was verified clean across all 16 adopting repos in tonight's wrap (`ask-25aa` resolved). Side-effect close: `act-487a` (close-hook `go test` timeout bumped 180s→300s, nested commit `6ff1c81`) — internal/cli grew past the original 180s ceiling and was tripping every close in this env.
 4. **Ext-dep-should-actually-gate bug** — discovered 2026-05-19 mid-day but never filed (search confirms no ticket). Briefcraft's design ran despite an open `ext-add` dep on `arc-ask-9317`. File when somebody picks this back up.
 
 Closed since the previous handoff:
