@@ -1,21 +1,47 @@
-# Session handoff — 2026-05-22 (overnight cross-repo .act/ history strip)
+# Session handoff — 2026-05-22 (cross-repo .act/ history strip + plugin_library_commercial cleanup)
 
-## Overnight 2026-05-21 → 2026-05-22 — `.act/` history strip across 17 repos
+## 2026-05-21 → 2026-05-22 — `.act/` history strip across 17 repos + morning eyeball pass
 
-After tonight's Phase 1 migration finished across all project folders, Andrew asked to clean the host-repo commit logs of "pure act-operation" commits. Two-pass approach: drop commits whose entire diff is under `.act/`, and strip `.act/` paths from surviving "mixed" commits. Done across all 17 repos with `.act/` directories. **15/16 fully clean; sift done manually earlier in evening; 1 (plugin_library_commercial) has a partial-remote state needing decision.**
+After Phase 1 migration finished, Andrew asked to clean the host-repo commit logs of "pure act-operation" commits. Two-pass approach: drop commits whose entire diff is under `.act/`, and strip `.act/` paths from surviving mixed commits. Done across all 17 repos with `.act/`.
 
-**Read first:** `~/Workspace/_history-backups/SUMMARY.md` has the full status table, what's left to do on plugin_library_commercial, and how to clean up backups.
+**Read first:** `~/Workspace/_history-backups/SUMMARY.md` for full per-repo status, backup paths, and cleanup instructions.
+
+**Outcome:** 16/17 repos cleanly rewritten (overnight). plugin_library_commercial had complications addressed Friday morning (see below). Sift done manually before the script existed.
 
 Safety properties enforced per repo:
 - Tree-hash check on every branch (excluding `.act/`) — provably byte-identical host content pre/post rewrite.
-- Mirror clone of original state at `~/Workspace/_history-backups/<repo>.git`.
+- Mirror clone of original state at `~/Workspace/_history-backups/<repo>.git` (~200MB total).
 - `.act/` tarball at `~/Workspace/_history-backups/<repo>.act.tgz`.
 - `--atomic --force-with-lease` push (after the plugin_library_commercial incident).
-- Build/test gate before any push: go test, npm test, pytest where configured; tree-hash carries the safety load where no tests are configured.
 
-**plugin_library_commercial** force-pushed 9 feature branches but `main` was rejected by GitHub branch protection. Local main is rewritten and verified; needs either temporarily-disabled protection to push main, or feature-branch revert from mirror backup. Decision documented in SUMMARY.md.
+Morning eyeball pass (post-overnight) verified zero pure-`.act/` commits remain across all 16 non-plugin_library_commercial repos.
 
-**Scripts kept at `/tmp/strip-act.sh` and `/tmp/build-and-push.sh`** — useful reference if the pattern needs to be re-run (e.g. if Andrew creates another `.act/`-using repo and wants to keep its host history clean).
+### plugin_library_commercial resolution (Friday morning)
+
+Initial overnight run hit two complications: GitHub branch protection rejected the force-push to `main`, and a parallel Claude session in plugin_library_commercial wrote a handoff doc (`fd8c0ed` on `ci/concurrency-groups`) with an incorrect "reset local to origin" instruction that would have undone the cleanup. Both resolved:
+
+- Andrew temporarily disabled main branch protection → rewritten main force-pushed up (`9314ac6`) → re-enabled protection. Confirmed by Andrew.
+- Wrote a fresh handoff entry on main (`317b46b`) capturing the actual state and what shipped — corrects the wrong-instruction doc that lived on `ci/concurrency-groups`.
+- Deleted `ci/concurrency-groups` (workaround branch — CI fix already on main).
+
+Then triaged 9 unsnapped local branches that appeared in plugin_library_commercial between the strip snapshot and morning. Used `git cherry` for content-based merge detection. Outcomes:
+
+- **Truly stale (deleted on remote):** `feat/neon-branching-deploy` (all 37 commits shipped via other path; the Neon-branching feature is live in `deploy.yml`), `seo/plugin-vendor-pages` (only unmerged commit was a "trigger CI" no-op), `claude/migrate-to-vinext-D9LFQ` (Andrew confirmed: exploration, not critical path).
+- **Restored on remote + triage ticket filed:** `claude/email-onboarding-walkthrough-q2KnC`, `claude/filter-verified-plugins-kMLlC`, `claude/fix-ci-failure-u8xl9`, `claude/fix-mobile-hamburger-menu-fmPAh`. Each has real unmerged content (CLAUDE.md additions, CI/lint fixes, mobile UI fix).
+- **Already on remote, triage ticket filed:** `fix/seo-page-messaging`, `worktree-overnight-code-fixes`.
+
+Triage tickets in plugin_library_commercial's `.act/`: `act-777645`, `act-ec53f0`, `act-4188a2`, `act-35e61d`, `act-77d40f`, `act-4602f5` (all priority-3 chores, "ship or discard" framing).
+
+### Scripts and what to do with backups
+
+- `/tmp/strip-act.sh` and `/tmp/build-and-push.sh` — useful reference if the pattern needs to be re-run.
+- `~/Workspace/_history-backups/` — ~200MB. `rm -rf` when confident; not yet done.
+
+### Lessons (worth remembering when something similar comes up)
+
+- Initial branch-delete sweep on plugin_library_commercial was driven by name patterns (`claude/*` looked disposable) rather than merge-status check. That was wrong: `git cherry main <branch>` is the right gate before deleting. Used after the fact to recover; ~4 branches had to be restored.
+- For history rewrites with branch-protected mains: `--atomic --force-with-lease` to keep partial-push states from happening, but a protected main still rejects everything atomically. Resolution is GitHub-UI-side, not git-side.
+- Force-pushing across multiple branches and a parallel session may be working on the same repo: check `reflog` after, not just before. The fd8c0ed commit landed *during* the cleanup run — visible only by looking at refs created after the snapshot.
 
 # Session handoff — 2026-05-21 (evening wrap)
 
