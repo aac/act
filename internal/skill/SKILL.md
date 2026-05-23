@@ -74,6 +74,25 @@ Pattern: file it, keep working. If the discovery actually blocks the current iss
 
 **Backlog-check before any `act create`.** Whether the prospective new issue comes from a mid-flight discovery, an external list (TODO file, audit doc, retrospective findings), or a delegated subagent's task — grep the existing backlog first. Use `act list --search '<keywords>'` or `act ready` and confirm the issue isn't already tracked under a different title before filing. Discovered during the aac-website dogfood: a docs-triage subagent translated three to-do-list.md items into duplicates of existing seed issues (act-a4b6/a744/0578 dup'd act-4141/8a44/218d). The claim a finding is new requires evidence it isn't already tracked.
 
+## External dependencies
+
+When an issue is blocked on work in a sibling tracker act doesn't import — a Linear ticket, a GitHub issue in another repo, a Jira card — attach an opaque ref:
+
+```
+act update <id> --ext-add "linear:ENG-123"
+act update <id> --ext-add "gh:org/other-repo#42"
+```
+
+The ref is stored verbatim; act doesn't interpret it. An issue with at least one external dep is excluded from `act ready` the same way an unresolved internal block excludes. The caller owns the lifecycle — when the upstream work is done, clear the ref:
+
+```
+act update <id> --ext-rm "linear:ENG-123"
+```
+
+Both add and remove are idempotent (re-adding a present ref is a no-op at the apply layer; removing an absent ref succeeds silently). In MCP sessions, use the `ext_add` and `ext_rm` arrays on `act_update`.
+
+Use `--ext-add` / `--ext-rm` for cross-tracker blocks; use `act dep add` for act-to-act block edges. The two compose: an issue may carry both, and either kind keeps it out of `act ready` until cleared.
+
 ## Sub-agents
 
 Whether to spawn sub-agents is a harness decision, not an act rule.
