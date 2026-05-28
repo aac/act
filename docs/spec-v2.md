@@ -828,14 +828,13 @@ Exit codes for `--claim`: `0` win, `1` loss or other logical error, `2` usage. O
 
 ### `act doctor`
 
-**Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--json] [--compact]`
+**Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--json]`
 
 **Flags:**
 - `--check NAME` (repeatable). Default: run all.
 - `--fix` (bool). Auto-remediate where safe (per check, below). Drives `index-divergence` and `index-schema` only.
 - `--fix-index` (bool). Auto-remediate the `index-malformed` check by rebuilding `.act/index.db` from `.act/ops/`. Separate flag from `--fix` so the malformed-image recovery (which moves the broken file aside) is opt-in independent of the routine divergence/schema fixes.
 - `--json` (bool).
-- `--compact` (bool). Manual escape hatch to compact eligible issues.
 
 **Checks and `--fix` behavior:**
 
@@ -974,7 +973,6 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `hlc_drift`                | 8    | `hlc drift exceeds 5m: op=<hlc> ref=<ref>`                                 | `op_hlc`, `ref_hlc`, `delta_seconds`          |
 | `index_corrupt`            | 9    | `index.db corrupt or schema-mismatched; rerun 'act doctor --rebuild'`      | `reason`                                      |
 | `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
-| `compaction_locked`        | 0    | `compaction already in progress; skipping` (warning, exit 0)               | `lock_path`                                   |
 | `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
 | `push_exhausted`           | 4    | `push retries exhausted after <N> attempts; last error: <msg>`             | `retry_count`, `shallow_unshallow_attempted`, `last_error` |
 | `remote_unreachable`       | 4    | `git fetch failed: <reason>`                                               | `remote`, `branch`, `stderr_tail`             |
@@ -1222,9 +1220,6 @@ The `act_next` claim-loss backoff jitter MUST be uniform random in `[0.75x, 1.25
 
 ### 5.D.3 `stderr_tail` is last 4096 bytes UTF-8-trimmed; `truncated` reflects only the 64KB cap
 `stderr_tail` is the last 4096 bytes of captured stderr, trimmed to the nearest valid UTF-8 boundary. `details.truncated` MUST be `true` if and only if the 64KB capture cap was hit, independent of the 4KB tail trim.
-
-### 5.D.4 `compaction_locked` is a stdout warning under `--json`; error envelope reserved for non-zero exits
-Under `--json`, `compaction_locked` MUST be emitted on stdout as `{"ok": true, "warning": "compaction_locked", "details": {...}}`. The `error` envelope is reserved for non-zero exits. The error-table row for `compaction_locked` belongs in a separate "warnings" subsection.
 
 ### 5.D.5 MCP test 7.5 budget reconciled with jitter math; exactly 3 claim attempts via injected clock
 The base delay sum is `100ms + 400ms + 1.6s = 2.1s`; with per-attempt uniform jitter `[0.75x, 1.25x]` the achievable sleep range is `[1.575s, 2.625s]`. MCP E2E test 7.5 MUST inject a deterministic clock AND a deterministic jitter source so the test asserts exact, reproducible values: jitter sources MUST be seeded to produce `(1.0x, 1.0x, 1.0x)` (no jitter) and total elapsed sleep MUST equal `2.1s ± 50ms`. Per-attempt work time (fold + git ops) is excluded from the budget by using the injected clock to advance only on sleep; exactly 3 claim attempts MUST be observed.

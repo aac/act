@@ -284,13 +284,12 @@ Exit codes for `--claim`: `0` win, `1` loss or other logical error, `2` usage. O
 
 ### `act doctor`
 
-**Synopsis:** `act doctor [--check NAME] [--fix] [--json] [--compact]`
+**Synopsis:** `act doctor [--check NAME] [--fix] [--json]`
 
 **Flags:**
 - `--check NAME` (repeatable). Default: run all.
 - `--fix` (bool). Auto-remediate where safe (per check, below).
 - `--json` (bool).
-- `--compact` (bool). Manual escape hatch to compact eligible issues.
 
 **Checks and `--fix` behavior:**
 

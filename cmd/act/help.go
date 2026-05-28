@@ -123,11 +123,6 @@ IDENTITY
   'assignee' strings tag work with the node that owns it. The MCP
   composed tools resolve identity automatically.
 
-COMPACTION
-  Long-lived issues accumulate ops. 'act compact --issue <id>'
-  snapshots the op log and (optionally) prunes. Mechanical only;
-  no LLM summarization.
-
 DEEPER DIVES
   act help workflow         # the loop in detail with copy-pastable examples
   act help ops-model        # how the op log folds into state
@@ -526,11 +521,6 @@ INDEX
   derived state, gitignored, and the source of truth is always the
   ops directory.
 
-SNAPSHOTS
-  'act compact --issue <id>' writes .act/snapshots/<id>.json from
-  the op log and optionally prunes the ops directory. v0.1
-  compaction is mechanical only.
-
 DOCTOR
   'act doctor' verifies git history vs tracker state, including
   orphan-close detection (a commit's message references an issue
@@ -591,7 +581,6 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     hlc_drift               clock moved backwards beyond tolerance
     index_corrupt           SQLite cache failed integrity check
     import_invalid_jsonl    'act import' could not parse a line
-    compaction_locked       another compaction is in progress
 
   Internal / per-command codes (also stable; tests pin them):
     bad_flag                argparse rejected a flag/value
