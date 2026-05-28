@@ -1,0 +1,6 @@
+{
+  "name": "act",
+  "description": "Agent task tracker. A single-binary task tracker designed for AI coding agents as the primary user. State lives as append-only JSON op files inside a nested git repo at .act/ — its own .git/ directory, gitignored from the surrounding code repo. Concurrent agents merge their writes with plain git semantics. No server, no database, no schema setup.",
+  "version": "0.1.0",
+  "author": { "name": "Andrew Cove" }
+}
