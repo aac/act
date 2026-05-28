@@ -252,6 +252,34 @@ Phase 2 workers will fail their next push and surface a clean error,
 recoverable by harvesting them via the fallback path. `act remote
 disable` is idempotent — running it twice exits zero both times.
 
+## Live-fire sweep findings (2026-05-28)
+
+Swept 22 act-using repos on Andrew's machine. Summary: 20/22 pass `act doctor` cleanly (exit 0, warnings only); 2/22 exit 1 with genuine errors. All five commands (`version`, `doctor`, `ready`, `list`, `show`) return exit 0 everywhere except `doctor` on the two repos below.
+
+### Tombstone-only ops directory causes `[orphan-ops]` error
+
+**Repo:** `ask` (discovered 2026-05-28 live-fire sweep)  
+**Error:** `[error] [orphan-ops] act-a2af issue act-a2af has no create op (orphan ops directory)`  
+**Root cause:** `.act/ops/act-a2af/` exists with only a tombstone op — no create op. The issue was deleted via tombstone, but the directory was not cleaned up. Doctor treats any ops directory without a corresponding create op as an error, regardless of whether the issue was legitimately tombstoned.  
+**Impact:** `act doctor` exits 1, which would fail any CI check keyed on doctor's exit code. All other commands (`ready`, `list`, `show`) work correctly.  
+**Workaround:** Suppress with `act doctor` exit-code tolerance in CI, or manually clean the orphan directory. Filed as a bug to fix doctor's handling of tombstone-only directories (ticket: act-11986a).
+
+### Dangling dep edge to deleted parent causes `[dangling-deps]` error
+
+**Repo:** `financial` (discovered 2026-05-28 live-fire sweep)  
+**Error:** `[error] [dangling-deps] act-ad72 issue act-ad72 has blocks edge to unknown parent act-b221`  
+**Root cause:** `act-ad72` (already closed) has a `blocked-by act-b221` dep edge, but `act-b221` was later tombstoned/deleted. The dep edge was never pruned.  
+**Impact:** `act doctor` exits 1. Since both issues are closed, there is no operational impact — the dangling dep cannot block any workflow. All other commands work correctly.  
+**Workaround:** Prune the dep edge manually, or tolerate the exit 1 in CI. Filed as a bug to suppress dangling-dep errors for closed issues (ticket: act-48d57f).
+
+### Count of act-using repos grows over time
+
+The session-handoff from 2026-05-22 referenced 17 repos. By 2026-05-28 there are 22. Three repos were added since the handoff (`curiosity`, `extrapolate`, `surface-voice-triage`); two more (`grocery-app`, `spotify-agent`) were added between May 20–22 and may have been missed in the count. Enumerate with:
+
+```
+find ~/Workspace -maxdepth 2 -type d -name '.act' | grep -v '/.act/.git' | sort
+```
+
 ### Common failures and recovery
 
 - `bootstrap_timeout` — the worker's initial clone from `<url>` exceeded
