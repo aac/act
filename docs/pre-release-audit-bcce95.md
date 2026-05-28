@@ -1,69 +1,108 @@
 ---
 type: memo
 ticket: act-bcce95
-status: blocked
-pinned_commit: d76de336201e5a9a2599b7ddd6199d5bbc3d9637
+status: completed
+pinned_commit: e1663b0a26e367052b436b53d1fd6d60ff44e6f4
 date: 2026-05-28
 ---
 
-# Pre-release audit (act-bcce95) — halt memo
+# Pre-release audit (act-bcce95)
 
 ## Outcome
 
-**Halted before dispatching reviewers.** The worker session for act-bcce95 cannot perform its primary action: dispatching ≥3 independent reviewer agents against the pinned commit. The acceptance criteria are not met and the ticket is closed as blocked, not completed.
+**Three independent reviewers completed structured reviews against the pinned commit. 17 findings filed as derivative tickets — 5 priority-1 (release-gating), 9 priority-2, 3 priority-3. One additional priority-1 process-bug surfaced about the dispatch infrastructure itself (worktree auto-reap).**
 
-## What happened
+**Top-level recommendation: NOT ready for the public flip until the 5 priority-1 findings are resolved.**
 
-Pre-flight executed cleanly:
-- pwd confirmed under `.claude/worktrees/`.
-- `~/Workspace/knowledge/_guides/process-learnings.md` read.
-- `act bootstrap-worker` succeeded (had to run from `/Users/andrewcove/Workspace/act`, not from the worktree, since the source-not-target is the cwd that needs `.act/`; the prompt instructed running it from the worktree which fails with `source ... has no .act/` — minor wording bug, not gating).
-- `act binary` built (`bin/act` was gitignored as expected).
-- `act show act-bcce95` confirmed visibility.
-- HEAD pinned at `d76de336201e5a9a2599b7ddd6199d5bbc3d9637`.
-- `act update --claim act-bcce95` claimed cleanly.
+## Pinned audit commit
 
-The dispatch step failed:
+`e1663b0a26e367052b436b53d1fd6d60ff44e6f4`
 
-1. **Agent tool unavailable at worker level.** The ticket prompt instructs "Dispatch ≥3 reviewer subagents in parallel via the Agent tool with `isolation: \"worktree\"` and `run_in_background: true`." That tool is available to orchestrator-level sessions (the `/orchestrate` command runs there). It is not in the toolset of dispatched workers like this one. `ToolSearch` returned no matches for `Agent` / `Task` / `dispatch`-shaped primitives.
+## How this audit was run (and the prior halt)
 
-2. **`claude -p` fallback blocked.** Tried spawning reviewers as background `claude -p --permission-mode bypassPermissions ...` processes via `Bash(run_in_background)`. The auto-mode classifier denied with the (correct) reasoning that spawning permission-bypassed Claude sub-processes creates an unsafe autonomous loop.
+The first attempt dispatched a meta-orchestration worker that was expected to spawn three reviewer subagents. That worker correctly halted: the `Agent` tool is not available at the dispatched-worker level — only at the orchestrator level. The worker filed `act-a09752` capturing the tool gap, plus a halt memo (this file's prior contents) recommending one of three unblock paths.
 
-3. **Single-reviewer multi-pass rejected.** Producing three "review passes" myself and labeling them as three independent reviewers would directly violate the acceptance criterion ("three *independent* reviewer agents") and the process-learning "Self-narration in a generated artifact is factual content, not framing." I halted rather than launder one reasoning chain as three.
+This pass took the recommended path: the orchestrator dispatched the three reviewers directly as parallel worker units, then synthesized.
 
-## Derivative ticket filed
+During the audit run, a second process-level finding surfaced (`act-3e7a98`): when a worker's only outputs are gitignored (`.act/ops/` writes via `act create` / `act dep add`), the harness sees "no host-repo changes" and auto-reaps the worktree before the orchestrator can run `act harvest`. All three reviewers hit this; their tickets were re-created from the conversation-preserved reports. The pattern needs a fix before any future audit-shaped dispatch.
 
-- **act-a09752** (bug, priority=2, `relates` → act-bcce95): *Worker sub-agents lack dispatch primitive (Agent tool unavailable at worker level).* Captures the recurring class — every cross-tool pre-release audit ticket in the agent-tools-release punch list will hit the same wall when dispatched as a worker.
+## Reviewer A — code-quality / correctness
 
-## Recommendation
+Read `cmd/act/`, `internal/cli/`, `internal/gitops/`, `internal/ops/`.
 
-Three paths forward, any of which unblocks act-bcce95:
+**Findings (0 P1, 3 P2, 2 P3):**
 
-1. **Re-dispatch from the orchestrator** (cheapest). Run the audit-dispatch step from a top-level `/orchestrate` invocation where the Agent tool is present. The synthesis-and-file step (everything after reviewers complete) can run as a worker; only the *dispatch* step needs orchestrator-level toolset.
+- `act-c58aaa` (P2) — `CloseOptions.Reason` comment says >4096 bytes rejected; actual constant is 500. Misleading API contract.
+- `act-acdf5d` (P2) — `gitops.CheckIgnored` bypasses runner seam + gitDir override (latent `act-784b` class).
+- `act-f64d6e` (P2) — `claimGitOps.runGit` (update.go claim staging) bypasses gitDir override + runner seam. Same class.
+- `act-6d7001` (P3) — `pushAttemptCounter` / `shallowFaultCounter` not atomic; `-race` flake risk.
+- `act-d31605` (P3) — `harvest.go` calls `Commit()` directly, bypassing the `AutoPushAfterCommitToBranch` invariant honored everywhere else.
 
-2. **Restructure the meta-ticket** so the orchestrator dispatches the three reviewers directly (as parallel worker units in a single pass), and act-bcce95 becomes a synthesis-only ticket that aggregates their already-filed findings. This is the cleaner long-term shape and matches how the orchestrate skill is designed to work.
+**Reviewer A verdict:** No priority-1 release-gaters. Land the three P2s before public flip; P3s are tracked but not blocking.
 
-3. **Add a worker-level dispatch primitive.** Either expose the Agent tool to dispatched workers, or ship a `~/.claude/bin/dispatch-reviewer` helper with a scoped Bash allowlist that doesn't require auto-mode bypass. (Tracked in act-a09752.)
+## Reviewer B — public-readiness / docs
 
-## Minor finding surfaced during pre-flight
+Read `README.md`, selected `docs/`, `cmd/act/help.go`, `CLAUDE.md`, the global skill at `~/.claude/skills/act/SKILL.md`, and the agent-tools-release KB project.
 
-The ticket prompt's pre-flight step 3 says to run `bootstrap-worker` from the worktree:
+**Findings (3 P1, 3 P2, 1 P3):**
 
-```
-WORKER_PATH=$(pwd)
-/Users/andrewcove/Workspace/act/bin/act bootstrap-worker "$WORKER_PATH"
-```
+- **`act-9b5339` (P1)** — `act compact --issue <id>` documented in `helpOverview` + `helpOpsModel`, but the subcommand does not exist; invocation returns `unknown subcommand`.
+- **`act-91b10f` (P1)** — `go install github.com/aac/act/cmd/act@latest` is the primary install path; must verify `github.com/aac/act` is public before flip, or every install attempt fails.
+- **`act-9dff9b` (P1)** — `LICENSE` file absent at repo root. Default legal posture is all-rights-reserved.
+- `act-3a4321` (P2) — Internal tracker IDs (`act-e6a5`, `act-e31aa1`, `act-c4c5`, `act-f9a0`, `act-0852da`, "Phase 2 ticket 7") leak verbatim into user-visible `act help` output.
+- `act-387e01` (P2) — `act help errors` EXIT CODES block omits exit 3 (`issue_not_found`) and exit 4 (`push_exhausted`, `remote_unreachable`).
+- `act-983139` (P2) — `migrate-to-nested` missing from `act help` subcommand listing.
+- `act-9d2340` (P3) — `docs/` lacks an index distinguishing authoritative docs from working papers (~20 process artifacts interleaved).
 
-The tool reads `.act/` from cwd (the source) and writes to `<target>`. The fresh worktree has no `.act/`, so this fails immediately with `source ... has no .act/`. Correct invocation is from the main checkout. This wording trip is small but would catch every future meta-ticket using the same pre-flight template. Filed implicitly — not worth its own ticket; the orchestrate-skill prompt template should be the source of truth.
+**Reviewer B verdict:** Not ready for public flip without the three P1s resolved.
 
-## What I read
+## Reviewer C — test coverage / verification discipline
 
-`cmd/act/main.go`, `cmd/act/close.go`, `cmd/act/bootstrap_worker.go` (partial), `cmd/act/help.go` references, `docs/` directory listing, file size inventory. Enough to confirm the codebase is real and the scope of an audit would be substantive (~37k LOC across `cmd/act/` + `internal/cli/`). No findings filed against the codebase itself — that's the reviewers' job, and I deliberately did not impersonate them.
+Read `internal/cli/docclaim_test.go`, `cmd/act/docclaim_test.go`, `internal/cli/docs_sweep_test.go`, sampled tests across both packages, ran `go test ./...`.
+
+`go test ./...`: all packages pass. `internal/cli` runs subprocess end-to-end tests (159s, acceptable). `internal/cli` coverage 72.4%; `cmd/act` 9.3% (thin but delegates to `internal/cli`). No flaky timeouts.
+
+**Findings (2 P1, 3 P2):**
+
+- **`act-1849a6` (P1)** — `--no-doctor` flag (user-visible, documented in help.go) tested only at the `RunClose()` internal API; no `TestDocClaim_*`, no sweep-registry entry. Exact prior-bug pattern of `act-6fca` / `act-ac52`.
+- **`act-2af8c7` (P1)** — `claim_lost` / last-write-wins claim documented in `act help errors` + spec-v2 §7.4 ("asserted across 100 iterations") but `TestConcurrentClaimRace` carries a permanent `t.Skip("Phase 1...")` with no single-machine replacement. Actual subprocess-boundary assertion count: zero.
+- `act-54462e` (P2) — 500-byte `--reason` cap correctly tested at subprocess boundary but not named `TestDocClaim_*` and not in sweep registry.
+- `act-ddd458` (P2) — `--include-ops` flag claim tested only via `RunShow()` internal call; no boundary assertion.
+- `act-915a88` (P2) — `TestDocClaim_Errors_PushExhausted` / `_RemoteUnreachable` check constant equality and spec prose rather than binary behavior; behavioral test (`TestActClose_PushExhausted_ReturnsEnvelope`) exists but is unregistered.
+
+**Reviewer C verdict:** Not release-ready. The two P1 gaps are the same failure class that produced `act-6fca` and `act-ac52`; the concurrent-claim gap is additionally an unmet spec §7.4 commitment.
+
+## What's working well (aggregated, deduplicated)
+
+1. **`op.ProbeAndWrite` atomic-rename + fsync ordering** (`internal/op/filename.go:atomicWrite`) is correct (Write → Sync → Close → Rename). Common bug class, gotten right here. Must not regress.
+2. **Type-system enforcement of `ActGitOps` vs `HostGitOps`** (`internal/gitops/gitops.go`): write methods only callable through `*ActGitOps`. "act never writes to the host repo" is a compile-time guarantee, not a convention. Load-bearing.
+3. **Three-way push-error lattice** (`*PushExhaustedError` / `ErrFetchFailed` / generic) maps to distinct exit codes + envelope codes via correct `errors.As`/`errors.Is` chains. Callers can take targeted action.
+4. **Two-list rollback pattern in `WriteOpsAndAutoCommit`** (`written` vs `staged`) prevents spurious `git restore --staged` on untracked paths. Comment references the bug that motivated it (`act-c22b`).
+5. **Doc-claim sweep registry** (`internal/cli/docs_sweep_test.go`): bidirectional enforcement, 60+ tracked claims, `crossRepoDocClaimTests` escape hatch. The mechanism that prevented `act-6fca` and `act-ac52`. Reviewers A, B, and C all flag this as load-bearing — do not weaken it. The new P1/P2 test findings are about *gaps* in coverage, not about weakening the discipline itself.
+6. **`TestDocClaim_PrefixOk_TwoCharUniquePrefixResolves`** is the canonical pattern: drives `actBinary show <prefix>` as a subprocess, asserts on exit code + stdout JSON. Use this shape for every future doc claim.
+7. **`TestDocClaim_CWDRobustness_DoctorFromInsideActDir`** asserts at exactly the right boundary — `cd`s into `.act/`, runs the binary, checks the user-visible sentinel string. Mirrors the failure mode that motivated the fix.
+8. **README is publication-quality.** Elevator pitch, storage layout, canonical workflow example, Beads credit — all clear to a stranger.
+9. **`act help` canonical loop is correctly written.** Numbered, accurate commit-marker instructions, realistic worked example.
+10. **`docs/spec-v2.md` and `docs/migration-runbook.md` are production-grade.** Internally consistent, accurate against code, with go/no-go verification commands.
+
+## Release readiness — recommendation
+
+**Hold the public flip until five priority-1 findings land:**
+
+| ID | Area | Blocker |
+|---|---|---|
+| `act-9b5339` | docs / help | `act compact` doc claim mismatch — agents/users hit "unknown subcommand" immediately |
+| `act-91b10f` | distribution | Verify `github.com/aac/act` is public before flip OR change install instructions |
+| `act-9dff9b` | legal | `LICENSE` file present at repo root |
+| `act-1849a6` | test discipline | `TestDocClaim_*` for `--no-doctor` at subprocess boundary |
+| `act-2af8c7` | test discipline | Subprocess-boundary concurrent-claim test replacing the permanent `t.Skip` |
+
+The nine priority-2 findings (gitDir-bypass class, exit-code doc gaps, ticket-ID leak, registration drift) should land soon but are not flip-blockers. The three priority-3s are polish.
+
+Additionally, **`act-3e7a98` (P1, process)** — the worktree auto-reap problem — needs a fix before any future audit-shaped dispatch can be trusted to preserve its work.
 
 ## Acceptance criteria status
 
-- "≥3 independent reviewer agents have completed structured reviews" — **NOT MET**.
-- "All findings filed as derivative act issues" — **NOT APPLICABLE** (no reviewer findings exist yet).
-- "'what's working well' closing section captured from each reviewer" — **NOT MET**.
-
-This memo + act-a09752 capture the gap. Re-running the audit per recommendation (1) or (2) above should unblock the public-flip gate.
+- "≥3 independent reviewer agents have completed structured reviews against current HEAD with pinned commit hashes and >70% confidence findings" — **MET**.
+- "All findings filed as derivative act issues, linked from this issue's close reason" — **MET** (17 substantive findings + 1 dispatch-infrastructure finding + 1 process-bug finding, all wired `relates → act-bcce95`).
+- "'what's working well' closing section captured from each reviewer for forward reference" — **MET** (aggregated above; per-reviewer detail in conversation transcript).
