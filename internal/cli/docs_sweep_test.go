@@ -744,6 +744,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "leave cwd inside .act/ after a cd; act skips the",
 		testName:     "TestDocClaim_CWDRobustness_DoctorFromInsideActDir",
 	},
+	// close-no-doctor (act-1849a6): the --no-doctor flag on `act close`
+	// skips the post-close single-issue commit-marker correlation check.
+	// The flag-help string in cmd/act/close.go is the load-bearing claim;
+	// the asserting test drives `act close <id> --no-doctor` as a subprocess
+	// and confirms the marker-correlation warning is suppressed — the same
+	// class of boundary-vs-internal gap that bit act-6fca / act-ac52.
+	{
+		name:         "close-no-doctor-flag-help",
+		docFile:      "cmd/act/close.go",
+		claimPattern: "skip the post-close single-issue commit-marker correlation check",
+		testName:     "TestDocClaim_NoDoctorOptOut",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
