@@ -674,6 +674,63 @@ func TestDocClaim_CWDRobustness_DoctorFromInsideActDir(t *testing.T) {
 	}
 }
 
+// TestDocClaim_NoDoctorOptOut pins the `--no-doctor` flag's user-visible
+// contract claimed in cmd/act/close.go's flag-help string: "skip the
+// post-close single-issue commit-marker correlation check (default: warn
+// on stderr if no host commit in the last 50 carries an 'Act-Id:' trailer
+// for this issue)". This is the same failure pattern as act-6fca /
+// act-ac52 — the existing internal test (TestRunClose_NoDoctorOptsOut)
+// calls RunClose() directly and would pass even if the CLI flag was never
+// wired through to the NoDoctor option.
+//
+// Two close invocations in the same fresh repo (no host commits, so the
+// marker correlation check would always fire):
+//
+//  1. Default (no --no-doctor): stderr must contain the warning text
+//     "no host commit with 'Act-Id: <id>' trailer".
+//
+//  2. With --no-doctor: stderr must be empty (check is skipped).
+//
+// The comparison between the two cases makes the assertion meaningful:
+// the test fails if either (a) the default doesn't warn or (b) --no-doctor
+// doesn't suppress the warning.
+func TestDocClaim_NoDoctorOptOut(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	// Issue 1: close without --no-doctor. No host commit carries the
+	// trailer, so the post-close check must warn on stderr.
+	createOut1, _ := mustRunAct(t, site, 0, "create", "no-doctor probe default", "--json")
+	id1 := pickIDFromJSON(t, createOut1)
+
+	_, stderr1, code1 := runAct(t, site, "close", id1, "--reason", "probe default")
+	if code1 != 0 {
+		t.Fatalf("close without --no-doctor: exit %d; stderr: %s", code1, stderr1)
+	}
+	// The warning must mention the 'Act-Id:' trailer and the issue id.
+	if !strings.Contains(stderr1, "Act-Id:") {
+		t.Errorf("default close: stderr missing 'Act-Id:' warning; got: %q", stderr1)
+	}
+	if !strings.Contains(stderr1, id1) {
+		t.Errorf("default close: stderr missing issue id %q; got: %q", id1, stderr1)
+	}
+
+	// Issue 2: close with --no-doctor. Same repo state (no host commits),
+	// but the warning must be suppressed entirely.
+	createOut2, _ := mustRunAct(t, site, 0, "create", "no-doctor probe with flag", "--json")
+	id2 := pickIDFromJSON(t, createOut2)
+
+	_, stderr2, code2 := runAct(t, site, "close", id2, "--reason", "probe with flag", "--no-doctor")
+	if code2 != 0 {
+		t.Fatalf("close with --no-doctor: exit %d; stderr: %s", code2, stderr2)
+	}
+	if stderr2 != "" {
+		t.Errorf("--no-doctor must suppress the marker-correlation warning; got stderr: %q", stderr2)
+	}
+}
+
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).
