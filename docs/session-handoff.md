@@ -1,4 +1,40 @@
-# Session handoff — 2026-05-22 (cross-repo .act/ history strip + plugin_library_commercial cleanup)
+# Session handoff — 2026-05-28 (pre-release audit + audit-driven fixes + sibling license alignment)
+
+## 2026-05-27 → 2026-05-28 — autonomous /loop /orchestrate pass closed out the three pre-public-release P1s
+
+Multi-pass autonomous orchestrate run that landed the three pre-flip blockers from the 2026-05-22 carryforward, plus the audit-driven fixes from the audit's own findings, plus a sibling-tool license alignment that emerged from the LICENSE work. Branch ef5c0c1..66803d9; nine host commits.
+
+**What shipped this session, in order:**
+
+- **`docs/release-history-cleanup-memo.md`** (act-cb9750). Recommended *leave-as-is* — Phase 1 nested-repo migration already evacuated `act-op:` commits from the host log; the remaining session-handoff + pre-v0.1 scaffolding commits are identifiable noise, not misleading. KB project doc `~/Workspace/knowledge/projects/agent-tools-release/agent-tools-release.md` carries the same stance for ask/poke/reach. Filter-repo recipe parked in the memo in case the decision flips later.
+- **`docs/distribution-options-brief.md`** (act-2b65b0). Recommended curl-installer-first; brew tap deferred until demand surfaces. `go install github.com/aac/act/cmd/act@latest` explicitly framed as primary, agent-bootstrappable. Same stance extends to sibling tools.
+- **Pre-public-release reviewer audit** (act-bcce95). Three independent reviewers (code-quality, public-readiness, test-discipline) pinned at `e1663b0`. 17 derivative findings filed: 5 P1, 9 P2, 3 P3. Closing memo at `docs/pre-release-audit-bcce95.md`. Audit run revealed two infrastructure problems (see below).
+- **`act compact` removed from user-visible surfaces** (act-9b5339). Andrew's direction: "we're not using it" — removed from help.go, doctor flag/options, MCP server (hidden caller), spec-v2.md, spec-section-commands.md. `internal/compact/` package itself has zero callers and is clean for follow-up deletion.
+- **`TestDocClaim_NoDoctorOptOut`** (act-1849a6 / act-601edf). Subprocess-boundary test asserting `--no-doctor` actually suppresses the doctor warning; sweep registry entry pinned. Closes the same drift class as `act-6fca` / `act-ac52`.
+- **`LICENSE` added** (act-9dff9b). Initially MIT matching reach/surface — then Andrew flagged the asymmetry with ask's deliberate Apache-2.0 pick. Swapped all three (act, reach, surface) to Apache-2.0 to match ask. Rationale: patent grant + Go ecosystem default (see ask commit `252c218`); MITs on reach/surface were scaffold drift, not considered choice.
+- **Live-fire sweep across 22 act-using projects** (act-b4288f). All five smoke commands (version/doctor/ready/list/show) return exit 0 across 22/22 repos; 2/22 hit `act doctor` exit 1 on pre-existing data anomalies in already-closed issues (filed as `act-11986a` and `act-48d57f` — both P3, not release-gating). Runbook updated with the findings.
+
+## Infrastructure problems discovered during the audit (both filed, both P1)
+
+These came out of running the audit itself, not the audit's content:
+
+- **`act-a09752`** — worker subagents lack the `Agent` tool. The first audit-dispatch attempt halted because workers can't fan out parallel sub-agents. Worker filed the gap and recommended dispatch shift to orchestrator-level. The successful audit run used that recommended shape. Pattern: any "dispatch reviewers" meta-ticket has to live at the orchestrator level. Worker-level `Agent` tool would need a harness change.
+- **`act-3e7a98`** — read-only worker worktrees get auto-reaped before harvest. When a worker's only outputs are `.act/ops/` writes (via `act create` / `act dep add`), git sees zero host-repo changes, the harness reaps the worktree, the orchestrator-side `act harvest` finds nothing. **This bit all three audit reviewers.** Reviewer A's and B's findings were lost entirely (recovered manually from conversation reports as recreated tickets); reviewer C's auto-pushed to the nested `.act/` remote in time and survived. Two candidate fixes documented in the ticket: (a) dispatch-prompt convention requiring a tracked-file write per worker (skill-doc edit, fast), or (b) harness change deferring auto-reap when `.act/ops/` has unharvested ops (durable, protects future tools that emit gitignored state).
+
+## Remaining audit P1s (next session pickup, no operator input needed)
+
+- **`act-2af8c7`** — concurrent-claim / `claim_lost` boundary test. Spec §7.4 says "asserted across 100 iterations"; actual count is zero (`TestConcurrentClaimRace` has a permanent `t.Skip`). Same shape as the --no-doctor work that landed.
+- Reviewer-C's auto-pushed originals **act-e5ff8b**, **act-0ebe66**, **act-107a7e**, **act-24dfd6** duplicate four of my manually-recreated tickets (act-2af8c7, act-54462e, act-ddd458, act-915a88). Pair-by-pair dedup is bookkeeping; either side can be closed-as-duplicate. The work itself isn't done yet for these four.
+
+## Sibling-tool license alignment (cross-repo, all pushed)
+
+All four agent-tools-release siblings (ask, act, reach, surface) now on **Apache-2.0 with `Copyright 2026 Andrew Cove`**. The MITs on reach + surface were scaffold drift from a template; ask's Apache-2.0 was the deliberate choice (see ask commit `252c218`: "patent grant load-bearing vs MIT for a tool meant to spread, and Go ecosystem default"). Commits in each repo cite the rationale and reference the source commit.
+
+## Carryforward from prior session
+
+The 2026-05-22 cross-repo `.act/` history strip is in `~/Workspace/_history-backups/SUMMARY.md` for full per-repo status. Backups (~200MB) not yet deleted.
+
+
 
 ## 2026-05-21 → 2026-05-22 — `.act/` history strip across 17 repos + morning eyeball pass
 
