@@ -68,3 +68,7 @@ act install-skill --dest PATH  # alternate destination
 `act` is at v0.1 and actively dogfooded on this repo's own backlog plus a few adjacent projects. The Phase 1 nested-repo layout is as-built; Phase 1.5 worker isolation is shipping; Phase 2 push-attached coordination is in implementation.
 
 Design docs: [`docs/spec-v2.md`](docs/spec-v2.md) (authoritative spec), [`docs/coordination-plane-design.md`](docs/coordination-plane-design.md) (Phase 1 / 1.5 nested-repo design), [`docs/coordination-plane-phase2-design.md`](docs/coordination-plane-phase2-design.md) (Phase 2 push-attached workers), [`docs/migration-runbook.md`](docs/migration-runbook.md) (one-shot legacy → nested migration), [`docs/act-evaluation.md`](docs/act-evaluation.md) (live evaluation against real use).
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
