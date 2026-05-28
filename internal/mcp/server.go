@@ -863,18 +863,16 @@ func (s *Server) callLog(raw json.RawMessage) (any, bool) {
 
 func (s *Server) callDoctor(raw json.RawMessage) (any, bool) {
 	var args struct {
-		Check   string `json:"check"`
-		Fix     bool   `json:"fix"`
-		Compact bool   `json:"compact"`
+		Check string `json:"check"`
+		Fix   bool   `json:"fix"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
 	}
 	out, code := cli.RunDoctor(s.repoRoot, cli.DoctorOptions{
-		Check:   args.Check,
-		Fix:     args.Fix,
-		AsJSON:  true,
-		Compact: args.Compact,
+		Check:  args.Check,
+		Fix:    args.Fix,
+		AsJSON: true,
 	})
 	return out, code != 0
 }

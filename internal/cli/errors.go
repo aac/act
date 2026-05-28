@@ -46,7 +46,6 @@ const (
 	ErrHLCDrift          = "hlc_drift"
 	ErrIndexCorrupt      = "index_corrupt"
 	ErrImportInvalidJSON = "import_invalid_jsonl"
-	ErrCompactionLocked  = "compaction_locked"
 	// Phase 2 push-retry codes (act-9f3fc5). `push_exhausted` is
 	// emitted by gitops.PushWithRetry after MaxRetries full retry
 	// rounds; `remote_unreachable` is emitted when the underlying

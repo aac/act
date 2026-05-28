@@ -32,9 +32,6 @@ type DoctorOptions struct {
 	Fix bool
 	// AsJSON toggles the JSON output envelope.
 	AsJSON bool
-	// Compact triggers manual compaction (delegated to compact package
-	// when available; here a no-op warn-only finding).
-	Compact bool
 	// Strict promotes all `warn` findings to `error` severity (and
 	// therefore exit 1). Use in CI to catch regressions that the
 	// interactive review step tolerates. Per Phase 1 reconcile-lite
