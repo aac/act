@@ -2,7 +2,7 @@
 
 Status: planning, pre-implementation
 Date: 2026-05-10
-Inputs: Anthropic Managed Agents article; `(private notes)/projects/session-orchestrator/`; `act/docs/dispatcher-prompt.md`; `act/docs/act-evaluation.md`; `act/CLAUDE.md`.
+Inputs: Anthropic Managed Agents article; a private session-orchestrator design doc; `act/docs/dispatcher-prompt.md`; `act/docs/act-evaluation.md`; `act/CLAUDE.md`.
 
 This note exists to keep us from prematurely codifying integration patterns between act and an orchestrator before either the orchestrator is built or the worker contract is generalized for non-code work. It maps the design space, names what's owned by which layer, and proposes what's safe to do now vs. what should wait.
 
@@ -235,8 +235,8 @@ Orchestrator work happens on its own track, dogfooded against Plugin Library cod
 
 ## File pointers
 
-- This file: `~/Workspace/act/docs/orchestration-design.md`
-- Sister doc: `(private notes)/projects/session-orchestrator/session-orchestrator.md` (the orchestrator project itself; doesn't currently link here — Andrew may want to add a "Related" pointer)
+- This file: `docs/orchestration-design.md`
+- Sister doc: a private session-orchestrator design doc (the orchestrator project itself; not part of this repo)
 - Anthropic managed-agents: https://www.anthropic.com/engineering/managed-agents
 - act skill: `~/.claude/skills/act/SKILL.md`
 - Existing act dispatcher precedent: `~/Workspace/act/docs/dispatcher-prompt.md`
