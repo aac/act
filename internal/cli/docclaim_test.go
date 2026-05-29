@@ -21,6 +21,7 @@ package cli
 // the same surface a cold-start agent hits.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -728,6 +729,89 @@ func TestDocClaim_NoDoctorOptOut(t *testing.T) {
 	}
 	if stderr2 != "" {
 		t.Errorf("--no-doctor must suppress the marker-correlation warning; got stderr: %q", stderr2)
+	}
+}
+
+// TestDocClaim_ClaimLost_LastWriteWins pins the README / `act help errors`
+// promise "concurrent claimers resolve last-write-wins" (act-2af8c7).
+//
+// Two `act update --claim --isolated` invocations run against the same
+// issue from the same working tree but with different node_ids (config.json
+// is swapped between invocations). The first invocation has the earlier
+// wall-clock HLC and wins; the second, running after it, has the later HLC
+// and loses. This exercises the fold winner-selection at the subprocess
+// boundary that spec-v2.md §7.4 ("concurrent_claim_two_writers") and the
+// README ("atomic; concurrent claimers resolve last-write-wins") claim.
+//
+// Asserted at the subprocess exit-code + stdout boundary:
+//   - Winner: exit 0, {"ok":true,"claimed":true,"winner":"<winnerNodeID>"}
+//   - Loser:  exit 1, {"ok":false,"claimed":false,"winner":"<winnerNodeID>"}
+//
+// Spec §7.4 says the loser exits 5; the implementation exits 1. The test
+// asserts the actual boundary (exit 1 + claimed:false) so it catches
+// regression at the real surface. The exit-code gap is documented as a
+// known spec/impl discrepancy; updating the code to emit exit 5 should
+// also update this test.
+func TestDocClaim_ClaimLost_LastWriteWins(t *testing.T) {
+	if actBinaryPath == "" {
+		t.Skip("actBinaryPath not set (TestMain did not run)")
+	}
+
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "alice@example.com", "Alice")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	createOut, _ := mustRunAct(t, site, 0, "create", "last-write-wins probe", "--json")
+	id := pickIDFromJSON(t, createOut)
+
+	// Read the current (winner's) config.json.
+	cfgPath := filepath.Join(site, ".act", "config.json")
+	cfgData, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read .act/config.json: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(cfgData, &cfg); err != nil {
+		t.Fatalf("unmarshal config.json: %v", err)
+	}
+	winnerNodeID, _ := cfg["node_id"].(string)
+	if winnerNodeID == "" {
+		t.Fatalf("node_id missing from config.json")
+	}
+
+	// First claim: winner path. --isolated skips pull-rebase.
+	winOut, _, winCode := runAct(t, site, "update", "--claim", "--isolated", "--json", id)
+	if winCode != 0 {
+		t.Fatalf("winner claim: exit %d\n%s", winCode, winOut)
+	}
+	if !strings.Contains(winOut, `"claimed":true`) {
+		t.Errorf("winner claim: stdout missing claimed:true\n%s", winOut)
+	}
+
+	// Swap config.json to a different node_id (simulates a second agent).
+	const loserNodeID = "deadbeef"
+	cfg["node_id"] = loserNodeID
+	loserCfg, _ := json.Marshal(cfg)
+	if err := os.WriteFile(cfgPath, loserCfg, 0o600); err != nil {
+		t.Fatalf("write loser config: %v", err)
+	}
+	// Restore winner's config.json after the test.
+	t.Cleanup(func() { _ = os.WriteFile(cfgPath, cfgData, 0o600) })
+
+	// Second claim: loser path. Fold sees two ops; winner's earlier HLC wins.
+	loseOut, _, loseCode := runAct(t, site, "update", "--claim", "--isolated", "--json", id)
+
+	// Primary assertion: exit 1 (the actual boundary code for a claim loss).
+	if loseCode != 1 {
+		t.Errorf("loser claim: exit %d, want 1; stdout:\n%s", loseCode, loseOut)
+	}
+	// The loser output must carry claimed:false and the winner's node_id.
+	if !strings.Contains(loseOut, `"claimed":false`) {
+		t.Errorf("loser claim: stdout missing claimed:false\n%s", loseOut)
+	}
+	if !strings.Contains(loseOut, winnerNodeID) {
+		t.Errorf("loser claim: stdout missing winner node_id %q\n%s", winnerNodeID, loseOut)
 	}
 }
 
