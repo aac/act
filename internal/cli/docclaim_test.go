@@ -69,11 +69,11 @@ func TestDocClaim_PrefixOk_TwoCharUniquePrefixResolves(t *testing.T) {
 
 // TestDocClaim_CanonicalLoop_HelpOverviewIncludesGitPush pins the
 // canonical-loop step that act-ac52 was filed over: `act help` must
-// name `git push` as a step. The previous bug was that CLAUDE.md's
+// name `git push` as a step. The previous bug was that the act skill's
 // loop omitted it; a similar omission in the binary's own tutorial
 // (which is what a fresh agent reads via `act help`) would re-create
 // the failure mode for any project that doesn't override the tutorial
-// in its own CLAUDE.md.
+// in its own act skill installation.
 //
 // Asserted at the subprocess stdout boundary, not on the helpOverview
 // const, so a refactor that splits the constant into multiple chunks

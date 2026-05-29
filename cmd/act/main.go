@@ -283,7 +283,7 @@ func emitInit(asJSON bool, payload any, success bool) {
 		// Next-step hint (act-f2c7 finding #5). The previous one-liner
 		// ("Run \"act create\" to file your first issue.") was a half-
 		// step — it told the agent what to do next, but didn't name
-		// the full canonical-loop tutorial. CLAUDE.md filled the gap
+		// the full canonical-loop tutorial. AGENTS.md filled the gap
 		// when act ran inside its own repo; an agent doing `act init`
 		// in a fresh project saw nothing about the loop. The "Next:"
 		// hint surfaces both anchors in one line.
