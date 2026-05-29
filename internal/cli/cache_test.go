@@ -309,13 +309,13 @@ func TestReadCache_RunReadyWiresThroughCache(t *testing.T) {
 // TestDocClaim_ReadCache_FreshFlagInReadyHelp — §5 addendum + AC3:
 // the user-visible `--fresh` and `--no-cache` flags must both appear in
 // `act ready --help`. We run the binary in --help mode and grep. This
-// is the user-visible boundary assertion the CLAUDE.md doc-discipline
+// is the user-visible boundary assertion the AGENTS.md doc-discipline
 // rule names: we don't trust an internal "the flag exists" check; we
 // check the same output a human or agent reads.
 func TestDocClaim_ReadCache_FreshFlagInReadyHelp(t *testing.T) {
 	// Run `act ready --help` via the binary path resolved by the test
 	// harness — the binary is built at ./bin/act before `go test`
-	// (CLAUDE.md). If it isn't present, skip rather than fail; the
+	// (AGENTS.md). If it isn't present, skip rather than fail; the
 	// build step is the caller's responsibility, not this test's.
 	bin := actBinaryPathOrSkip(t)
 	if bin == "" {

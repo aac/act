@@ -3,7 +3,7 @@ package cli
 // Doc-claim regression tests (act-ff5c).
 //
 // Every test in this file asserts a *user-visible behavior claim* made
-// in a doc surface (act help text, --help string, README, CLAUDE.md,
+// in a doc surface (act help text, --help string, README, AGENTS.md,
 // docs/spec-v2.md) at the boundary an agent would actually hit. Internal
 // unit tests live elsewhere; this file is for tests whose failure means
 // "doc says X, binary does Y" — the drift shape that bit act-6fca and
@@ -204,7 +204,7 @@ func TestDocClaim_CommitMarker_HistoricalSubjectFormStillAttributed(t *testing.T
 }
 
 // TestDocClaim_AmbiguousPrefix_ExitsTwoWithIdAmbiguous pins the
-// error-envelope claim from `act help errors` and from CLAUDE.md's
+// error-envelope claim from `act help errors` and from AGENTS.md's
 // versioning-rationale entry: an ambiguous short-id prefix returns
 // `id_ambiguous` with candidates, not `issue_not_found`, and exits 2
 // (usage error) per spec-v2.md's universal exit-code table.
@@ -570,7 +570,7 @@ func TestDocClaim_BareAct_DepAddNotThreeItems(t *testing.T) {
 // (`act help workflow`). The pre-polish behavior had a one-line
 // "Run \"act create\" to file your first issue." that omitted the
 // loop pointer; an agent doing `act init` in a fresh project that
-// didn't have act's own CLAUDE.md to fill the gap saw no loop hint
+// didn't have act's own project docs to fill the gap saw no loop hint
 // at all.
 //
 // Asserted at the user-visible boundary: the binary's stdout after

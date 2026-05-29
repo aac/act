@@ -48,7 +48,7 @@ func TestResolveHookMapsOpType(t *testing.T) {
 }
 
 // TestResolveHookMatchesDocs is the regression test for act-8277. The
-// docs (CLAUDE.md, the act skill, `act help workflow`) all promise that
+// docs (the act skill, `act help workflow`) all promise that
 // an executable `.act/hooks/close` runs on every close. The original
 // recognized map used `post-close` and silently no-op'd. This test
 // pins the contract at the doc-quoted name so the bug can't return.

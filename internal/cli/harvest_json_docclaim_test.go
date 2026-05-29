@@ -22,7 +22,7 @@ package cli
 // The doc claim layer alone is satisfied by the registry sweep
 // (TestDocSweep_AllClaimsHaveAssertingTests reads the doc file and looks
 // for the substring); the docclaim test exists to assert the boundary
-// the doc names. See CLAUDE.md "Documentation discipline" for why this
+// the doc names. See AGENTS.md "Documentation discipline" for why this
 // matters — internal-only assertions miss the kind of drift that ate
 // act-6fca and act-ac52.
 

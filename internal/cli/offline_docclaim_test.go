@@ -5,7 +5,7 @@ package cli
 // pending-push log schema. Each test asserts the doc claim at the
 // user-visible boundary (stderr text, on-disk JSON record, or
 // `act create --help` output) — the spirit of the act-ff5c
-// TestDocClaim_* convention (see CLAUDE.md "Documentation
+// TestDocClaim_* convention (see AGENTS.md "Documentation
 // discipline").
 
 import (

@@ -278,7 +278,7 @@ func TestRunUpdate_ClaimMutuallyExclusiveWithFieldFlags(t *testing.T) {
 // `act update --claim` against a repo with NO upstream remote configured
 // must succeed (exit 0) and write a claim op — without the caller having
 // to pass --isolated. The fresh-repo / local-first case is the canonical
-// loop in CLAUDE.md and should not require an escape-hatch flag.
+// loop in the act skill and should not require an escape-hatch flag.
 func TestRunUpdate_ClaimNoUpstreamSucceeds(t *testing.T) {
 	root, id := makeUpdateRepoWithIssue(t)
 	// makeCreateRepo produces a repo with no remote/upstream by default,

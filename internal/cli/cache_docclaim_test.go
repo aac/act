@@ -3,7 +3,7 @@ package cli
 // Phase 2 ticket 5 — TestDocClaim_* assertions for the read-path cache.
 //
 // These tests pin user-visible behavior named in spec-v2.md and in the
-// `act ready --help` flag-strings. Per CLAUDE.md "Documentation
+// `act ready --help` flag-strings. Per AGENTS.md "Documentation
 // discipline": every claim in the registry must have a matching
 // asserting test that exercises the same behavior at the user-visible
 // boundary the claim names.
