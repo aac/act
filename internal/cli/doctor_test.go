@@ -477,3 +477,153 @@ func TestRunDoctor_UnknownMarker_ExternalAuthor(t *testing.T) {
 		}
 	}
 }
+
+// TestRunDoctor_DanglingDeps_ClosedIssue_IsWarn asserts that a dangling dep
+// edge on a fully-closed issue produces a warn-severity finding (not error),
+// so `act doctor` exits 0. (act-48d57f)
+//
+// Scenario: create child, close it, then hand-write an add_dep op pointing
+// at a phantom parent. The dangling edge is on a closed issue, so doctor
+// should tolerate it as a cosmetic leftover.
+func TestRunDoctor_DanglingDeps_ClosedIssue_IsWarn(t *testing.T) {
+	root := makeCreateRepo(t)
+	childOut, code := RunCreate(root, CreateOptions{Title: "closed-child", Type: "task"})
+	if code != 0 {
+		t.Fatalf("create: code=%d", code)
+	}
+	childID := childOut.(CreateResult).ID
+
+	// Close the issue.
+	_, code = RunClose(root, CloseOptions{ID: childID, NoCode: true})
+	if code != 0 {
+		t.Fatalf("close: code=%d", code)
+	}
+
+	// Hand-write a dangling dep pointing at an unknown parent.
+	writeRawOp(t, root, childID, "add_dep",
+		map[string]string{"parent": "act-deadbeef", "edge_type": "blocks"},
+		99)
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "dangling-deps"})
+	// Benign case: closed issue → exit 0 (warn, not error).
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 for dangling dep on closed issue; out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	found := false
+	for _, f := range res.Findings {
+		if f.Check == "dangling-deps" && f.IssueID == childID {
+			found = true
+			if f.Severity != "warn" {
+				t.Errorf("expected warn severity for closed-issue dangling dep, got %q", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a dangling-deps finding for %s, got %+v", childID, res.Findings)
+	}
+}
+
+// TestRunDoctor_DanglingDeps_OpenIssue_IsError asserts that a dangling dep
+// edge on an open (non-closed) issue remains an error-severity finding and
+// causes exit 1. (act-48d57f — still-error case)
+func TestRunDoctor_DanglingDeps_OpenIssue_IsError(t *testing.T) {
+	root := makeCreateRepo(t)
+	childOut, code := RunCreate(root, CreateOptions{Title: "open-child", Type: "task"})
+	if code != 0 {
+		t.Fatalf("create: code=%d", code)
+	}
+	childID := childOut.(CreateResult).ID
+
+	// Hand-write a dangling dep on the OPEN issue.
+	writeRawOp(t, root, childID, "add_dep",
+		map[string]string{"parent": "act-deadbeef", "edge_type": "blocks"},
+		1)
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "dangling-deps"})
+	// Real-problem case: open issue → exit 1 (error).
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for dangling dep on open issue; out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	found := false
+	for _, f := range res.Findings {
+		if f.Check == "dangling-deps" && f.IssueID == childID {
+			found = true
+			if f.Severity != "error" {
+				t.Errorf("expected error severity for open-issue dangling dep, got %q", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected error dangling-deps finding for %s, got %+v", childID, res.Findings)
+	}
+}
+
+// TestRunDoctor_OrphanOps_TombstonedIssue_IsWarn asserts that orphan ops for a
+// tombstoned/deleted issue produce a warn-severity finding (not error), so
+// `act doctor` exits 0. (act-11986a)
+//
+// Scenario: hand-write a tombstone op for a synthetic id that has NO create op.
+// This reproduces the state left after an issue is deleted in a repo that
+// doesn't GC its op log (the financial-repo case).
+func TestRunDoctor_OrphanOps_TombstonedIssue_IsWarn(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	// Use a fixed synthetic id: only a tombstone op, no create op.
+	tombID := "act-deaddead"
+	writeRawOp(t, root, tombID, "tombstone", map[string]string{}, 1)
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "orphan-ops"})
+	// Benign case: tombstoned issue → exit 0 (warn, not error).
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 for orphan-ops on tombstoned issue; out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	found := false
+	for _, f := range res.Findings {
+		if f.Check == "orphan-ops" && f.IssueID == tombID {
+			found = true
+			if f.Severity != "warn" {
+				t.Errorf("expected warn severity for tombstoned-issue orphan-ops, got %q", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected an orphan-ops finding for %s, got %+v", tombID, res.Findings)
+	}
+}
+
+// TestRunDoctor_OrphanOps_LiveIssue_IsError asserts that orphan ops for a
+// live (non-tombstoned) issue remain an error-severity finding and cause
+// exit 1. (act-11986a — still-error case)
+//
+// Scenario: hand-write a non-create op for a synthetic id that has NO create
+// op and NO tombstone op, so it appears as a genuinely corrupt orphan.
+func TestRunDoctor_OrphanOps_LiveIssue_IsError(t *testing.T) {
+	root := makeCreateRepo(t)
+
+	// Write a random non-create op with no tombstone — genuinely orphaned.
+	liveOrphanID := "act-cafecafe"
+	writeRawOp(t, root, liveOrphanID, "update_field",
+		map[string]string{"field": "title", "value": "ghost"}, 1)
+
+	out, code := RunDoctor(root, DoctorOptions{Check: "orphan-ops"})
+	// Real-problem case: live orphan → exit 1 (error).
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for orphan-ops on live issue; out=%+v", code, out)
+	}
+	res := out.(DoctorResult)
+	found := false
+	for _, f := range res.Findings {
+		if f.Check == "orphan-ops" && f.IssueID == liveOrphanID {
+			found = true
+			if f.Severity != "error" {
+				t.Errorf("expected error severity for live-issue orphan-ops, got %q", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected error orphan-ops finding for %s, got %+v", liveOrphanID, res.Findings)
+	}
+}

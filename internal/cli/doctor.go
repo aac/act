@@ -174,7 +174,7 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 		case "orphan-close":
 			findings = append(findings, checkOrphanClose(repoRoot, foldRes)...)
 		case "orphan-ops":
-			findings = append(findings, checkOrphanOps(paths.Ops)...)
+			findings = append(findings, checkOrphanOps(paths.Ops, foldRes)...)
 		case "dangling-deps":
 			findings = append(findings, checkDanglingDeps(foldRes)...)
 		case "time-travel":
@@ -241,7 +241,7 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 func foldNeeded(run []string) bool {
 	for _, n := range run {
 		switch n {
-		case "orphan-close", "dangling-deps", "cycle":
+		case "orphan-close", "orphan-ops", "dangling-deps", "cycle":
 			return true
 		}
 	}
@@ -502,7 +502,14 @@ func checkGitignoreEffective(repoRoot string) []Finding {
 }
 
 // checkOrphanOps: for each issue dir under .act/ops/, find no `create` op.
-func checkOrphanOps(opsDir string) []Finding {
+//
+// Tombstone-only issues (the issue was deleted via a tombstone op, leaving
+// residual op files but no create op) are expected residue of the delete
+// workflow, not corruption. Those findings are downgraded to warn so
+// `act doctor` exits 0. An orphan ops directory for a live (non-tombstoned)
+// issue is still an error — that indicates unexpected op log corruption.
+// (act-11986a)
+func checkOrphanOps(opsDir string, fr *fold.FoldResult) []Finding {
 	var findings []Finding
 	entries, err := os.ReadDir(opsDir)
 	if err != nil {
@@ -538,8 +545,17 @@ func checkOrphanOps(opsDir string) []Finding {
 			return nil
 		})
 		if !hasCreate {
+			// If the fold knows this issue and it is tombstoned, the
+			// missing-create is expected residue of deletion — downgrade
+			// to warn so plain `act doctor` exits 0.
+			sev := "error"
+			if fr != nil {
+				if st := fr.Issues[issueID]; st != nil && st.Tombstoned {
+					sev = "warn"
+				}
+			}
 			findings = append(findings, Finding{
-				Check: "orphan-ops", Severity: "error",
+				Check: "orphan-ops", Severity: sev,
 				IssueID: issueID,
 				Message: fmt.Sprintf("issue %s has no create op (orphan ops directory)", issueID),
 			})
@@ -550,6 +566,13 @@ func checkOrphanOps(opsDir string) []Finding {
 
 // checkDanglingDeps: for each issue, for each blocks/relates/supersedes parent,
 // finding if the parent issue does not exist in the fold.
+//
+// A dangling dep on a fully-closed issue is treated as a warning rather than
+// an error: the parent may have been deleted/tombstoned after the issue was
+// closed, and since the issue is terminal it can no longer block anything —
+// the edge is cosmetically stale, not operationally harmful. Open or
+// in-progress issues with dangling deps still surface as errors because the
+// edge could block forward progress or mislead an orchestrator. (act-48d57f)
 func checkDanglingDeps(fr *fold.FoldResult) []Finding {
 	if fr == nil {
 		return nil
@@ -569,8 +592,16 @@ func checkDanglingDeps(fr *fold.FoldResult) []Finding {
 		deps := extractDeps(st)
 		for _, d := range deps {
 			if !known[d.parent] {
+				// A dangling dep on a fully-closed issue is benign: the
+				// issue is terminal and cannot block anything. Downgrade
+				// to warn so `act doctor` exits 0. Open/in-progress
+				// issues with dangling deps remain errors.
+				sev := "error"
+				if status, _ := st.Fields["status"].(string); status == "closed" {
+					sev = "warn"
+				}
 				findings = append(findings, Finding{
-					Check: "dangling-deps", Severity: "error",
+					Check: "dangling-deps", Severity: sev,
 					IssueID: id,
 					Message: fmt.Sprintf("issue %s has %s edge to unknown parent %s", id, d.edge, d.parent),
 				})
