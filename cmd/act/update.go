@@ -39,6 +39,7 @@ func runUpdate(args []string) int {
 	var extRmFlag stringSliceFlag
 	fs.Var(&extRmFlag, "ext-rm", "clear an opaque external-tracker ref (repeatable; idempotent on absence)")
 	claimFlag := fs.Bool("claim", false, "atomic claim protocol")
+	forceFlag := fs.Bool("force", false, "with --claim: override open external dep gate (blocked_by_external_dep); emits a WARNING to stderr listing each bypassed dep — use only when the dep is resolved but --ext-rm hasn't fired yet")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
@@ -75,6 +76,7 @@ func runUpdate(args []string) int {
 		ExtAdd:      []string(extAddFlag),
 		ExtRm:       []string(extRmFlag),
 		Claim:       *claimFlag,
+		Force:       *forceFlag,
 		Wait:        *wait,
 		WaitTimeout: *waitTimeout,
 		Push:        *push,

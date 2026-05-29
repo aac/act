@@ -54,6 +54,12 @@ type UpdateOptions struct {
 	Wait        bool
 	WaitTimeout time.Duration
 
+	// Force overrides the external-dep gate on the --claim path (act-5e36).
+	// When true and the issue has ≥1 open external dep, a WARNING is emitted
+	// to os.Stderr and the claim proceeds normally. Without --force, open
+	// external deps cause exit 2 with envelope `blocked_by_external_dep`.
+	Force bool
+
 	// Universal write flags.
 	Push     bool
 	NoCommit bool
@@ -547,6 +553,42 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 // UpdateErrorOutput.
 func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	paths := config.Layout(repoRoot)
+
+	// External-dep gate (act-5e36): reject claim when ≥1 open external dep
+	// is present unless --force overrides it. This check runs BEFORE the
+	// claim protocol to ensure the gate fires on a directly-targeted id,
+	// not just on the `act ready` filter that ordinarily hides such issues.
+	{
+		idx, ierr := index.Open(paths.IndexDB)
+		if ierr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_open_failed",
+				Message: ierr.Error(),
+			}, 1
+		}
+		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+			_ = idx.Close()
+			return UpdateErrorOutput{
+				Error:   "index_rebuild_failed",
+				Message: rerr.Error(),
+			}, 1
+		}
+		gateRes, gerr := CheckExternalDepGate(idx, full)
+		_ = idx.Close()
+		if gerr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_query_failed",
+				Message: gerr.Error(),
+			}, 1
+		}
+		if gateRes.Blocked {
+			if !opts.Force {
+				return UpdateBlockedByExtDepErrorOutput("act update --claim", full, gateRes.ExternalDeps), 2
+			}
+			EmitExtDepForceWarning(nil, full, gateRes.ExternalDeps)
+		}
+	}
+
 	cfg, cerr := config.ReadConfig(paths)
 	if cerr != nil {
 		return UpdateErrorOutput{
