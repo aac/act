@@ -36,3 +36,21 @@ If the harness is in **auto mode**, it may block several canonical-loop steps as
 (Adjust branch names if the project uses something other than `main`/`master`.) The trade-off: removing these safety nets means the agent's per-issue merge+push proceeds without confirmation. The rationale for accepting that trade in act-using projects: the loop already gates the close+commit cycle behind in-session review, and the value of immediate visibility-to-other-agents (the whole multi-writer story) depends on those merges and pushes landing. Discovered during the aac-website dogfood (2026-05-10): only the `git push` rule was in the original carveout, and the merge step had to be unblocked mid-loop.
 
 If you're not in auto mode, this section is irrelevant — confirms happen normally.
+
+## Codex sandbox approvals
+
+If the harness is **Codex** (container-based sandbox via `spawn_agent`), several canonical-loop operations may need explicit operator approval or may be blocked by the sandbox policy. Full details are in `SKILL.md` ("Codex sandbox approvals"); the short version for setup:
+
+**Operations that need approval or design decisions at dispatch time:**
+
+- **`git push`** (loop step 5 / `act_finish`) reaches the network. If the sandbox has no outbound access, omit the push from the agent's loop and defer it to the integrator — the same offline/harvest pattern as Phase 1.5. See SKILL.md for the two-option trade-off.
+- **Merge flows** (`git merge --ff-only`) need write access to the target working tree. In Codex, merges belong in a container that has write access to the appropriate path; the sub-agent container typically does not.
+- **`.act/` within the writable root** — act's nested `.act/` repo must fall inside the container's declared writable root. If `.act/` is mounted separately or at a non-standard path, confirm write access before running any act commands.
+
+**Setup checklist (run once per Codex project configuration):**
+
+1. Confirm `.act/` is within the container's writable root.
+2. Decide whether `git push` is in-loop (network-enabled container) or deferred to integrator (offline mode, harvest at teardown).
+3. If spawning sub-agents via `spawn_agent`, remember each container gets its own writable filesystem — `act bootstrap-worker` still applies for seeding `.act/` state into each sub-agent.
+
+There is no `permissions.allow` JSON block for Codex; sandbox policy is set at the platform level, not in `.claude/settings.json`. If you're on Claude Code, the section above is the right reference.
