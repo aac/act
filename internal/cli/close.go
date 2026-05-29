@@ -71,10 +71,18 @@ type CloseOptions struct {
 	// construction bugs locally is cheaper than discovering them at the
 	// next doctor run.
 	NoDoctor bool
+	// Force overrides the external-dep gate (act-5e36). When true and the
+	// issue has ≥1 open external dep, a WARNING is emitted to Stderr and
+	// the close proceeds normally. Without --force, open external deps
+	// cause exit 2 with envelope `blocked_by_external_dep`. This is a
+	// rare escape hatch; the warning is intentionally verbose for audit
+	// visibility.
+	Force bool
 	// Stderr is the destination for the post-close marker-correlation
-	// warning. Default (nil) is os.Stderr; tests inject a bytes.Buffer to
-	// capture the emitted line. The cmd-level dispatcher leaves it nil
-	// because its own stderr is the right destination.
+	// warning and (when --force fires) the external-dep override warning.
+	// Default (nil) is os.Stderr; tests inject a bytes.Buffer to capture
+	// the emitted lines. The cmd-level dispatcher leaves it nil because
+	// its own stderr is the right destination.
 	Stderr io.Writer
 }
 
@@ -272,6 +280,24 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			ID:            full,
 			AlreadyClosed: true,
 		}, 0
+	}
+
+	// Step 3b: external-dep gate (act-5e36). An issue with ≥1 open
+	// external dep is blocked from being closed until the dep is cleared
+	// via `act update --ext-rm`. Pass --force to override; a WARNING is
+	// emitted to stderr when the override fires.
+	gateRes, gerr := CheckExternalDepGate(idx, full)
+	if gerr != nil {
+		return CloseErrorOutput{
+			Error:   "index_query_failed",
+			Message: gerr.Error(),
+		}, 1
+	}
+	if gateRes.Blocked {
+		if !opts.Force {
+			return BlockedByExtDepErrorOutput("act close", full, gateRes.ExternalDeps), 2
+		}
+		EmitExtDepForceWarning(opts.Stderr, full, gateRes.ExternalDeps)
 	}
 
 	// Step 4: build and write the close envelope.

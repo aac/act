@@ -76,6 +76,16 @@ const (
 	ErrBootstrapTimeout = "bootstrap_timeout"
 	ErrTargetNotEmpty   = "target_not_empty"
 
+	// ErrBlockedByExternalDep is emitted by `act update --claim` and
+	// `act close` when the target issue has one or more open external
+	// deps (act-5e36). External deps are opaque refs set via
+	// `act update --ext-add`; presence means the cross-tracker gate is
+	// still open. Pass --force to override; a WARNING is emitted to
+	// stderr when the override fires. Exit 2 (usage: a prerequisite
+	// gate is unmet; fix the state or pass --force). Details key:
+	// `external_deps` []string listing each blocking ref.
+	ErrBlockedByExternalDep = "blocked_by_external_dep"
+
 	// Internal/per-command error slugs in active use across cli/*.go.
 	// They are surfaced as the `error` field of the envelope; tests and
 	// JSON consumers depend on them, so renaming is a breaking change.

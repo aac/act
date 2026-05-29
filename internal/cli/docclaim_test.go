@@ -1002,6 +1002,122 @@ func TestDocClaim_DepAdd_InspectionHint(t *testing.T) {
 	}
 }
 
+// TestDocClaim_BlockedByExtDep_ClaimBlocked pins the act-5e36 claim made in
+// docs/spec-v2.md and cmd/act/help.go: `act update --claim <id>` exits 2
+// with envelope code `blocked_by_external_dep` when the issue has ≥1 open
+// external dep. The details map must contain an `external_deps` array listing
+// the blocking ref(s).
+//
+// Boundary: subprocess `act update --claim --json`; exit code + JSON envelope.
+func TestDocClaim_BlockedByExtDep_ClaimBlocked(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	createOut, _ := mustRunAct(t, site, 0, "create", "blocked claim probe", "--json")
+	id := pickIDFromJSON(t, createOut)
+
+	// Attach an external dep so the gate fires.
+	mustRunAct(t, site, 0, "update", id, "--ext-add", "linear:ENG-99")
+
+	out, _, code := runAct(t, site, "update", "--claim", id, "--json")
+	if code != 2 {
+		t.Fatalf("expected exit 2 (blocked_by_external_dep), got %d; stdout:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"error":"blocked_by_external_dep"`) &&
+		!strings.Contains(out, `"error": "blocked_by_external_dep"`) {
+		t.Errorf("stdout missing blocked_by_external_dep code:\n%s", out)
+	}
+	if !strings.Contains(out, "linear:ENG-99") {
+		t.Errorf("stdout missing blocking ref linear:ENG-99 in envelope:\n%s", out)
+	}
+	if !strings.Contains(out, `"external_deps"`) {
+		t.Errorf("stdout missing details.external_deps key:\n%s", out)
+	}
+}
+
+// TestDocClaim_BlockedByExtDep_CloseBlocked pins the act-5e36 claim: `act
+// close <id>` exits 2 with envelope code `blocked_by_external_dep` when the
+// issue has ≥1 open external dep.
+//
+// Boundary: subprocess `act close --json`; exit code + JSON envelope.
+func TestDocClaim_BlockedByExtDep_CloseBlocked(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	createOut, _ := mustRunAct(t, site, 0, "create", "blocked close probe", "--json")
+	id := pickIDFromJSON(t, createOut)
+
+	mustRunAct(t, site, 0, "update", id, "--ext-add", "gh:org/repo#7")
+
+	out, _, code := runAct(t, site, "close", id, "--json")
+	if code != 2 {
+		t.Fatalf("expected exit 2 (blocked_by_external_dep), got %d; stdout:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"error":"blocked_by_external_dep"`) &&
+		!strings.Contains(out, `"error": "blocked_by_external_dep"`) {
+		t.Errorf("stdout missing blocked_by_external_dep code:\n%s", out)
+	}
+	if !strings.Contains(out, "gh:org/repo#7") {
+		t.Errorf("stdout missing blocking ref gh:org/repo#7 in envelope:\n%s", out)
+	}
+	if !strings.Contains(out, `"external_deps"`) {
+		t.Errorf("stdout missing details.external_deps key:\n%s", out)
+	}
+}
+
+// TestDocClaim_BlockedByExtDep_ForceOverrides pins the act-5e36 claim: both
+// `act update --claim --force` and `act close --force` succeed (exit 0) when
+// the issue has open external deps, and emit a WARNING to stderr naming the
+// bypassed deps.
+//
+// Boundary: subprocess exit code + stderr WARNING line.
+func TestDocClaim_BlockedByExtDep_ForceOverrides(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	// ----- claim --force -----
+	{
+		createOut, _ := mustRunAct(t, site, 0, "create", "force-claim probe", "--json")
+		id := pickIDFromJSON(t, createOut)
+		mustRunAct(t, site, 0, "update", id, "--ext-add", "jira:PROJ-55")
+
+		_, stderr, code := runAct(t, site, "update", "--claim", "--force", "--no-commit", id)
+		if code != 0 {
+			t.Fatalf("--force claim: expected exit 0, got %d; stderr:\n%s", code, stderr)
+		}
+		if !strings.Contains(stderr, "WARNING") {
+			t.Errorf("--force claim: expected WARNING on stderr; got:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "jira:PROJ-55") {
+			t.Errorf("--force claim: WARNING should name bypassed dep jira:PROJ-55; got stderr:\n%s", stderr)
+		}
+	}
+
+	// ----- close --force -----
+	{
+		createOut, _ := mustRunAct(t, site, 0, "create", "force-close probe", "--json")
+		id := pickIDFromJSON(t, createOut)
+		mustRunAct(t, site, 0, "update", id, "--ext-add", "jira:PROJ-66")
+
+		_, stderr, code := runAct(t, site, "close", id, "--force", "--no-commit")
+		if code != 0 {
+			t.Fatalf("--force close: expected exit 0, got %d; stderr:\n%s", code, stderr)
+		}
+		if !strings.Contains(stderr, "WARNING") {
+			t.Errorf("--force close: expected WARNING on stderr; got:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "jira:PROJ-66") {
+			t.Errorf("--force close: WARNING should name bypassed dep jira:PROJ-66; got stderr:\n%s", stderr)
+		}
+	}
+}
+
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).

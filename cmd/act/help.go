@@ -644,6 +644,8 @@ EXIT CODES
   exit 0   success
   exit 1   runtime failure (generic; not covered by a more specific code)
   exit 2   usage error (bad flags, usage conflict, or missing prerequisite)
+           blocked_by_external_dep — issue has ≥1 open external dep; clear
+             with --ext-rm or override with --force on update --claim / close
   exit 3   issue_not_found — id resolved to nothing (zero prefix matches)
   exit 4   push_exhausted — push retries exhausted after N attempts
            remote_unreachable — git fetch failed (non-recoverable)

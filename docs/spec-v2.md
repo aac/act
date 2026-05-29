@@ -982,6 +982,7 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `remote_unreachable`       | 4    | `git fetch failed: <reason>`                                               | `remote`, `branch`, `stderr_tail`             |
 | `bootstrap_timeout`        | 4    | `act bootstrap-worker: clone <url> exceeded <N>s budget`                   | `timeout_seconds`, `url`                      |
 | `target_not_empty`         | 2    | `act bootstrap-worker: <path> exists and is non-empty; pass --force to overwrite` | `target`                                |
+| `blocked_by_external_dep`  | 2    | `<cmd>: <id> has <N> open external dep(s); clear with --ext-rm or override with --force` | `external_deps[]`               |
 
 Rules:
 - Every command MUST return exactly one error class on failure; no compound errors.

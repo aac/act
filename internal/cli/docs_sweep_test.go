@@ -864,6 +864,32 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "inspect with act show <id>",
 		testName:     "TestDocClaim_DepAdd_InspectionHint",
 	},
+	// extdep-gate-* (act-5e36): external deps must gate `act update --claim`
+	// and `act close`. The three entries below pin:
+	//   - The spec table claim for `blocked_by_external_dep` (error code +
+	//     exit 2 + details.external_deps shape).
+	//   - The help-errors EXIT CODES block claim that names the code under
+	//     exit 2.
+	//   - The --force override behavior described in the --force flag-help
+	//     string on `act close`.
+	{
+		name:         "extdep-gate-spec-code",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`blocked_by_external_dep`",
+		testName:     "TestDocClaim_BlockedByExtDep_ClaimBlocked",
+	},
+	{
+		name:         "extdep-gate-help-errors-exit-2",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "blocked_by_external_dep",
+		testName:     "TestDocClaim_BlockedByExtDep_CloseBlocked",
+	},
+	{
+		name:         "extdep-gate-force-flag",
+		docFile:      "cmd/act/close.go",
+		claimPattern: "override open external dep gate",
+		testName:     "TestDocClaim_BlockedByExtDep_ForceOverrides",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
