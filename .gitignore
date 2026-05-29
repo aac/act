@@ -52,3 +52,6 @@ docs/issues/*.md
 docs/issues/.gitkeep
 !docs/issues/act-2e8d.md
 !docs/issues/act-e1d4.md
+
+# Personal-project dev detail — not for the public act repo (see act-840886)
+docs/aac-website-dogfood-debrief.md
