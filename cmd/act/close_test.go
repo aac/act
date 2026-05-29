@@ -8,12 +8,15 @@ import (
 	"testing"
 )
 
-// TestCloseReasonCapValidatedUpfront is the regression test for act-7ecd:
-// the 500-byte cap on `act close --reason` must surface at flag-parse
-// time with a clear cap-naming stderr message, NOT after the op file is
-// written or staged. The check runs before findRepoRoot() so it fires
-// in any directory.
-func TestCloseReasonCapValidatedUpfront(t *testing.T) {
+// TestDocClaim_CloseReasonCap_OverCapRejected pins the user-visible 500-byte
+// cap on `act close --reason` documented in `act help workflow` ("--reason is
+// capped at 500 bytes"). The cap must surface at flag-parse time with a clear
+// stderr message naming the byte limit, NOT after the op file is written.
+// The check runs before findRepoRoot() so it fires in any directory.
+//
+// This is the over-cap rejection case (1 byte over → exit 2 with cap message).
+// See also TestDocClaim_CloseReasonCap_AtCapAccepted for the off-by-one guard.
+func TestDocClaim_CloseReasonCap_OverCapRejected(t *testing.T) {
 	bin := actBinary(t)
 	if _, err := exec.LookPath(bin); err != nil {
 		t.Skipf("act binary not built at %s: %v", bin, err)
@@ -52,11 +55,12 @@ func TestCloseReasonCapValidatedUpfront(t *testing.T) {
 	}
 }
 
-// TestCloseReasonAtCapAccepted: a reason exactly at the cap passes the
-// upfront check and proceeds into the command body. The command will
-// still fail downstream (no .act/ in this temp dir), but we're asserting
-// the gate didn't reject — i.e. the off-by-one is correct.
-func TestCloseReasonAtCapAccepted(t *testing.T) {
+// TestDocClaim_CloseReasonCap_AtCapAccepted pins the at-boundary case for the
+// 500-byte cap on `act close --reason`. A reason exactly at the cap must pass
+// the upfront check and proceed into the command body (the off-by-one guard).
+// The command still fails downstream (no .act/ in the temp dir), but the
+// absence of the "byte cap" message in stderr confirms the cap did not reject.
+func TestDocClaim_CloseReasonCap_AtCapAccepted(t *testing.T) {
 	bin := actBinary(t)
 	if _, err := exec.LookPath(bin); err != nil {
 		t.Skipf("act binary not built at %s: %v", bin, err)

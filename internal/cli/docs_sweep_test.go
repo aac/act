@@ -770,6 +770,35 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "concurrent claimers resolve last-write-wins",
 		testName:     "TestDocClaim_ClaimLost_LastWriteWins",
 	},
+	// close-reason-cap-* (act-54462e): `act help workflow` documents the
+	// 500-byte cap on `--reason`. The prior tests `TestCloseReasonCap*` in
+	// cmd/act/close_test.go were not named TestDocClaim_* and had no registry
+	// entry, so deleting them would not trip the sweep. Renamed and registered
+	// here so the drift guard catches both deletion of the assertion and
+	// removal of the cap claim from help.go.
+	{
+		name:         "close-reason-cap-over-cap-rejected",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "--reason is capped at 500 bytes",
+		testName:     "TestDocClaim_CloseReasonCap_OverCapRejected",
+	},
+	{
+		name:         "close-reason-cap-at-cap-accepted",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "--reason is capped at 500 bytes",
+		testName:     "TestDocClaim_CloseReasonCap_AtCapAccepted",
+	},
+	// show-include-ops (act-ddd458): the `--include-ops` flag-help string in
+	// cmd/act/main.go is a user-visible claim. `TestRunShow_IncludeOpsHumanFormat`
+	// covers the internal Go API, but no TestDocClaim_* existed at the subprocess
+	// boundary. The asserting test drives `act show --include-ops <id>` and
+	// asserts the op stream appears in the output.
+	{
+		name:         "show-include-ops-flag-help",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "inline the HLC-sorted op stream alongside the snapshot",
+		testName:     "TestDocClaim_IncludeOps_SubprocessShowsOpStream",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
