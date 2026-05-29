@@ -22,6 +22,9 @@ The single discipline that makes everything else work:
 
 1. `act ready` — what's unblocked, ordered by priority. Pick the highest.
 2. `act update --claim <id>` — atomic claim. Other agents see "this is taken."
+
+   **Claim collision — `claim_lost`.** If another agent wins the race, `act update --claim` exits **5** with envelope `{"ok":false,"claimed":false,"error":"claim_lost","winner":"<node_id>","reason":"lost-race"}`. The `winner` field names the node that holds the authoritative claim (last-write-wins fold makes the winner the single source of truth). **Do not proceed with the work** — you do not own the issue. Instead, go back to step 1: run `act ready` (or `act_next` in MCP sessions) and pick a different unblocked issue. Working a contended issue produces orphaned commits and is never recoverable via re-try — the winner is authoritative.
+
 3. Do the work. Write tests. Run them.
 4. `git commit -a -m "<subject>" -m "<commit_marker>"` — the marker is the `Act-Id: act-XXXXXX` trailer that goes in the commit BODY (the two `-m` flags produce a body paragraph separated from the subject by a blank line, matching `git interpret-trailers` form). The trailer enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response — the command prints a single line, e.g. `Act-Id: act-25aae7`. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window. The trailer form is invisible to conventional-commit linters, survives squash-merge cleanly, and is the only emission shape going forward; doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat in pre-migration repos.
 5. **Review the diff** — see the Review step section.
