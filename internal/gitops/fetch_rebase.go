@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // envForceShallowRebase is a test-only env var that forces the next N
@@ -28,25 +29,31 @@ const envForceShallowRebase = "ACT_TEST_FORCE_SHALLOW_REBASE_FAILURES"
 
 // shallowFaultCounter is decremented on every rebase attempt while the
 // env-var hook is active. When non-zero, faultInjectShallow returns
-// the synthetic failure message.
-var shallowFaultCounter int
-var shallowFaultInit bool
+// the synthetic failure message. Stored as an atomic so parallel test
+// goroutines with fault-injection env vars set don't race on the counter.
+var shallowFaultCounter atomic.Int64
+var shallowFaultInit atomic.Bool
 
 // faultInjectShallow returns a non-empty synthetic rebase-failure
 // message when the env-var hook is active and the counter is non-zero.
 // Otherwise returns "" and the helper proceeds normally.
 func faultInjectShallow() string {
-	if !shallowFaultInit {
+	if shallowFaultInit.CompareAndSwap(false, true) {
+		// First caller in this process: read the env var and seed the counter.
 		v := os.Getenv(envForceShallowRebase)
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			shallowFaultCounter = n
+			shallowFaultCounter.Store(int64(n))
 		}
-		shallowFaultInit = true
 	}
-	if shallowFaultCounter <= 0 {
-		return ""
+	for {
+		cur := shallowFaultCounter.Load()
+		if cur <= 0 {
+			return ""
+		}
+		if shallowFaultCounter.CompareAndSwap(cur, cur-1) {
+			break
+		}
 	}
-	shallowFaultCounter--
 	return "fatal: unable to find common ancestor (shallow file has changed)"
 }
 
@@ -54,8 +61,8 @@ func faultInjectShallow() string {
 // test starts from zero. Tests using ACT_TEST_FORCE_SHALLOW_REBASE_FAILURES
 // MUST call this in setup. Production callers never invoke it.
 func ResetShallowFaultCounter() {
-	shallowFaultCounter = 0
-	shallowFaultInit = false
+	shallowFaultCounter.Store(0)
+	shallowFaultInit.Store(false)
 }
 
 // Sentinel errors returned by FetchAndRebase. Callers (PushWithRetry's

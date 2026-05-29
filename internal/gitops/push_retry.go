@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -116,9 +117,10 @@ func pushOptsDefaults(o PushOpts) PushOpts {
 const envFailPushAfter = "ACT_TEST_FAIL_PUSH_AFTER"
 
 // pushAttemptCounter tracks the global push-attempt count for the
-// fault-injection hook. Using a package-level int is acceptable because
-// the hook is test-only and never set in production runs.
-var pushAttemptCounter int
+// fault-injection hook. Using a package-level atomic is necessary because
+// tests may run in parallel goroutines with fault-injection env vars set,
+// and the race detector flags concurrent plain-int increments.
+var pushAttemptCounter atomic.Int64
 
 // PushWithRetry implements the v4 brief's "fetch, rebase, push, verify"
 // loop:
@@ -326,7 +328,7 @@ func backoffFor(base, cap time.Duration, retry int) time.Duration {
 // unset the env var inside their Sleep callback so the second attempt
 // sees no fault.
 func shouldFaultInjectPush() bool {
-	pushAttemptCounter++
+	count := pushAttemptCounter.Add(1)
 	v := os.Getenv(envFailPushAfter)
 	if v == "" {
 		return false
@@ -335,7 +337,7 @@ func shouldFaultInjectPush() bool {
 	if err != nil || n <= 0 {
 		return false
 	}
-	return pushAttemptCounter >= n
+	return count >= int64(n)
 }
 
 // ResetPushAttemptCounter resets the global fault-injection counter to
@@ -343,5 +345,5 @@ func shouldFaultInjectPush() bool {
 // previously-run tests don't bias the count. Production callers never
 // invoke this.
 func ResetPushAttemptCounter() {
-	pushAttemptCounter = 0
+	pushAttemptCounter.Store(0)
 }
