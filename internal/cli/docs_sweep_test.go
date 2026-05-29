@@ -799,6 +799,35 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "inline the HLC-sorted op stream alongside the snapshot",
 		testName:     "TestDocClaim_IncludeOps_SubprocessShowsOpStream",
 	},
+	// migrate-to-nested-help-listed (act-983139): `act migrate-to-nested` is a
+	// real subcommand but was absent from the top-level `act help` subcommand
+	// listing. A help-first agent had no way to discover it. The fix adds it
+	// to the listing; this entry pins the claim so a future cleanup that
+	// removes it from the listing is a build break.
+	{
+		name:         "migrate-to-nested-help-listed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "migrate-to-nested",
+		testName:     "TestDocClaim_Help_ListsMigrateToNested",
+	},
+	// help-errors-exit-3 and help-errors-exit-4 (act-387e01): `act help errors`
+	// EXIT CODES block previously listed only exits 1 and 2. Exit 3
+	// (issue_not_found) and exit 4 (push_exhausted, remote_unreachable) are
+	// documented in docs/spec-v2.md but were invisible to a reader of `act help
+	// errors`. The asserting test drives `act help errors` and asserts both
+	// exit-3 and exit-4 labels appear in the output.
+	{
+		name:         "help-errors-exit-3-issue-not-found",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "exit 3   issue_not_found",
+		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour",
+	},
+	{
+		name:         "help-errors-exit-4-push-exhausted",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "exit 4   push_exhausted",
+		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
@@ -852,9 +881,15 @@ func TestDocSweep_AllClaimsHaveAssertingTests(t *testing.T) {
 // tests" still find them.
 var crossRepoDocClaimTests = map[string]string{
 	// Asserts claude-config orchestrate.md still names
-	// `act bootstrap-worker --from-remote` (Phase 2 ticket 10,
-	// act-95bc5c). Skips on hosts without the symlink wired in.
+	// `act bootstrap-worker --from-remote` (Phase 2 ticket 10).
+	// Skips on hosts without the symlink wired in.
 	"TestDocClaim_OrchestratePhase2_FromRemoteFlow": "claude-config: commands/orchestrate.md",
+	// Absence property: asserts `act help` output contains no bare internal
+	// tracker IDs outside example-session blocks. This does not fit the
+	// registry's "claimPattern must appear in docFile" model (there is no
+	// positive string to pin), so it lives here as an opt-out from the
+	// orphan check rather than a registry entry.
+	"TestDocClaim_Help_NoBareTrackerIDs": "cmd/act/help.go (absence: no bare act-XXXX outside example blocks)",
 }
 
 // TestDocSweep_NoOrphanedDocClaimTests is the inverse pass: every

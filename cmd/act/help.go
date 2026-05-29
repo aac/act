@@ -73,9 +73,9 @@ GETTING STARTED
 
   go install is the canonical bootstrap — one command, no setup. The
   alternates (brew tap, prebuilt release binaries, curl installer)
-  exist but are tracked separately (act-e6a5, act-4fe6, act-8416) and
-  are not the recommended path for new agent sessions. See README.md
-  for the rationale and the tradeoffs.
+  exist but are tracked separately and are not the recommended path
+  for new agent sessions. See README.md for the rationale and the
+  tradeoffs.
 
 THE CANONICAL WORK LOOP (use this in every session)
   1. act ready                    # what's unblocked, ordered by priority
@@ -134,7 +134,7 @@ DEEPER DIVES
     init, version, log, list, search, ready, mine, show,
     create, close, reopen, delete, update,
     dep add, doctor, import, mcp, install-skill,
-    bootstrap-worker, harvest, remote
+    bootstrap-worker, harvest, remote, migrate-to-nested
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
@@ -153,7 +153,6 @@ BOOTSTRAPPING A WORKER WORKTREE
     act bootstrap-worker <target-path> --json   # machine-readable summary
     act bootstrap-worker --from-remote <url> <target-path>
                                                 # clone .act/ from a remote URL
-                                                # (Phase 2 ticket 7)
 
   The copy stages into <target>/.act.bootstrap/ first and atomic-renames
   to <target>/.act/ on success, so a mid-copy failure never leaves a
@@ -197,7 +196,7 @@ HARVESTING A WORKER'S OPS BACK
   silent overwrite). Harvest does NOT push the host's commit to its git
   remote — that's the orchestrator's responsibility.
 
-  Phase 2 push-attached workers (act-e31aa1): when the worker's
+  Push-attached workers: when the worker's
   .act/.git/config has act.role=worker AND its remote.origin.url
   matches the orchestrator's canonical .act/.git path (resolved from
   cwd of the act harvest invocation), harvest short-circuits with
@@ -246,10 +245,10 @@ ACT REMOTE (PHASE 2 COORDINATION PLANE)
     act.upstreamDriftThresholdCommits=50
     act.upstreamDriftThresholdSeconds=3600
 
-  Enable also installs .act/.git/hooks/post-receive (Phase 2 ticket 6a
-  body: detaches a background 'act remote sync' so each worker push to
-  the orchestrator is republished to origin-upstream) and runs
-  'act doctor' as a verification pass. Disable unsets every key and
+  Enable also installs .act/.git/hooks/post-receive (detaches a
+  background 'act remote sync' so each worker push to the orchestrator
+  is republished to origin-upstream) and runs 'act doctor' as a
+  verification pass. Disable unsets every key and
   removes the hook file. Both verbs are idempotent: running disable
   twice exits zero both times; running enable on an already-enabled
   repo re-writes the keys to defaults.
@@ -321,9 +320,9 @@ THE LOOP IN DETAIL
 
     Two -m flags produce a body paragraph for the trailer (separated
     from the subject by a blank line). The Act-Id trailer form
-    (act-c4c5) replaces the pre-migration '(act-XXXX)' subject-line
-    suffix; doctor still resolves the old form for back-compat, but
-    new commits should always use the trailer.
+    replaces the pre-migration '(act-XXXX)' subject-line suffix;
+    doctor still resolves the old form for back-compat, but new
+    commits should always use the trailer.
 
     Under Phase 1, 'act close' commits the close op standalone in
     the nested .act/ git repo, and the agent's separate 'git commit
@@ -412,12 +411,12 @@ EXAMPLE SESSION (CLI)
   $ git push
 
 COMMIT MARKER INVARIANTS
-  Emission form (since act-c4c5): 'Act-Id: act-<short>' as a trailer
-  in the commit body (separated from the subject by a blank line).
-  The short string is the issue's shortest-unique prefix as computed
-  by ids.ShortestUniquePrefixes — variable length, minimum 6 hex chars
-  for newly minted ids (4 hex chars for historical ids that pre-date
-  the act-f9a0 widening; both shapes remain valid on disk). Use
+  Emission form: 'Act-Id: act-<short>' as a trailer in the commit body
+  (separated from the subject by a blank line). The short string is the
+  issue's shortest-unique prefix as computed by
+  ids.ShortestUniquePrefixes — variable length, minimum 6 hex chars for
+  newly minted ids (4 hex chars for historical ids; both shapes remain
+  valid on disk). Use
   'act show <id> --commit-marker' (or the commit_marker field on
   act_next's response) to get the canonical string;
   do NOT slice the id by hand.
@@ -428,8 +427,8 @@ COMMIT MARKER INVARIANTS
   grep keys on the issue's canonical marker prefix (6 hex chars for
   new ids, the full id for historical sub-floor ids) and matches as
   a substring, so unique-prefix growth from id collisions still finds
-  the right commits. Hand-rolled shapes ('issue act-c26a01' or 'closes
-  #c26a01') do not match — use the canonical trailer.
+  the right commits. Hand-rolled shapes ('issue act-XXXXXX' or 'closes
+  #XXXXXX') do not match — use the canonical trailer.
 
   The trailer form was chosen for OSS-friendliness: it survives
   squash-merge intact, is invisible to conventional-commit linters,
@@ -535,7 +534,7 @@ CWD ROBUSTNESS
   itself. Persistent-shell harnesses (tmux, Claude Code's Bash tool)
   occasionally leave cwd inside .act/ after a cd; act skips the
   nested .act/.git and finds the real host repo above it so commands
-  continue to work correctly (act-0852da).
+  continue to work correctly.
 `
 
 const helpErrors = `act — error-envelope contract
@@ -642,7 +641,11 @@ EMITTING AN ERROR
     squashes them into the canonical envelope without losing fields.
 
 EXIT CODES
-  Any error path: exit non-zero (typically 1 for runtime failures,
-  2 for usage errors from flag parsing). The envelope is emitted
-  before exit; success paths emit no envelope at all.
+  exit 0   success
+  exit 1   runtime failure (generic; not covered by a more specific code)
+  exit 2   usage error (bad flags, usage conflict, or missing prerequisite)
+  exit 3   issue_not_found — id resolved to nothing (zero prefix matches)
+  exit 4   push_exhausted — push retries exhausted after N attempts
+           remote_unreachable — git fetch failed (non-recoverable)
+  The envelope is emitted before exit; success paths emit no envelope at all.
 `
