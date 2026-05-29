@@ -51,8 +51,10 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
   "type":         "task | bug | epic | chore", // default "task"
   "parent":       "act-... | null",            // default null
   "deps": [
-    { "id": "act-...", "edge": "blocks | relates | supersedes" }
+    { "parent": "act-...", "edge_type": "blocks | relates | supersedes" }
   ],
+  "blocked_by": ["act-...", "..."],             // bare ids from deps where edge_type=blocks (derived)
+  "blocks":     ["act-...", "..."],             // bare ids of issues that list this issue as a blocks parent (reverse scan)
   "assignee":     "string | null",             // default null; free-form (human handle or agent role)
   "acceptance_criteria": [
     { "text": "string, 1..500 chars", "done": false }
@@ -66,7 +68,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
 Validation rules:
 - `id` matches `^act-[0-9a-f]{4,16}$`. IDs on disk are always the short form, capped at 16 hex chars (the collision-extension procedure in §ID model never grows past this cap). The 40-hex (actually 64-hex) sha256 digest is an internal intermediate value used to derive the short id; it is never written as an `id` or `issue_id` field.
 - `priority` outside 0..3 is a hard error at write time.
-- `parent` and every `deps[].id` MUST resolve to an existing (non-tombstoned) issue at fold time; doctor's `dangling-deps` check enforces this on the whole repo.
+- `parent` and every `deps[].parent` MUST resolve to an existing (non-tombstoned) issue at fold time; doctor's `dangling-deps` check enforces this on the whole repo.
 - `acceptance_criteria` indices are stable across the issue's lifetime; `remove_accept` shifts later indices down (see op semantics below).
 - A close op against an issue with unmet criteria succeeds only if `closed_reason` is non-empty; doctor flags otherwise.
 
@@ -232,7 +234,7 @@ issues(
   created_at TEXT, closed_at TEXT, closed_reason TEXT,
   closed_by_tree TEXT
 )
-deps(child TEXT, parent TEXT, edge TEXT, PRIMARY KEY(child, parent))
+issue_deps(issue_id TEXT, parent_id TEXT, edge_type TEXT, PRIMARY KEY(issue_id, parent_id, edge_type))
 accept(issue TEXT, idx INT, text TEXT, done INT, PRIMARY KEY(issue, idx))
 fts USING fts5(id UNINDEXED, title, description, content='')
 meta(key TEXT PRIMARY KEY, value TEXT)        -- 'schema_version', 'tree_hash'
@@ -676,7 +678,9 @@ Resolution happens before any op is written, so a write command never partially 
 {"ok": true, "issue": {
   "id":"act-a1b2c3d4e5f60718","title":"...","description":"...",
   "status":"open","priority":1,"type":"task","parent":null,
-  "deps":[{"id":"act-9c2b...","type":"blocks"}],
+  "deps":[{"parent":"act-9c2b...","edge_type":"blocks"}],
+  "blocked_by":["act-9c2b..."],
+  "blocks":["act-ff3a..."],
   "assignee":"agent-1","acceptance_criteria":["..."],
   "created_at":"...","closed_at":null,"closed_reason":null,
   "ops_count": 4

@@ -828,6 +828,42 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "exit 4   push_exhausted",
 		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour",
 	},
+	// show-blocked-by-blocks (act-00e5cc): `act show --json <id>` includes
+	// `blocked_by` and `blocks` arrays. The spec claim lives in
+	// docs/spec-v2.md (the schema section); the asserting test drives the
+	// binary with a two-issue graph and checks both arrays in both
+	// directions.
+	{
+		name:         "show-blocked-by-array",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: `"blocked_by": ["act-...", "..."]`,
+		testName:     "TestDocClaim_Show_BlocksAndBlockedByJSON",
+	},
+	{
+		name:         "show-blocks-array",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: `"blocks":     ["act-...", "..."]`,
+		testName:     "TestDocClaim_Show_BlocksAndBlockedByJSON",
+	},
+	// dep-shape-spec (act-5918c7): the spec's dep-edge JSON shape must match
+	// the emitted {parent, edge_type} form. The claimPattern pins the
+	// canonical spec example; the asserting test drives the binary and
+	// asserts the wire shape directly.
+	{
+		name:         "dep-shape-spec-parent-key",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: `{ "parent": "act-...", "edge_type": "blocks | relates | supersedes" }`,
+		testName:     "TestDocClaim_Show_DepShapeMatchesSpec",
+	},
+	// dep-add-inspection-hint (act-00e5cc): `act dep add --help` must surface
+	// the inspection hint pointing agents to `act show <id> --json` for the
+	// `blocked_by / blocks arrays`.
+	{
+		name:         "dep-add-inspection-hint",
+		docFile:      "cmd/act/depadd.go",
+		claimPattern: "inspect with act show <id>",
+		testName:     "TestDocClaim_DepAdd_InspectionHint",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

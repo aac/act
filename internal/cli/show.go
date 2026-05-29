@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/ids"
+	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
 
@@ -187,6 +189,19 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	} else {
 		rendered["short_id"] = full
 	}
+
+	// Step 6b: compute blocked_by and blocks arrays.
+	//
+	// blocked_by: the parent ids from this issue's own deps where
+	// edge_type=blocks. Derivable from the fold result with no extra I/O.
+	//
+	// blocks: the set of other issues that have THIS issue as a blocks
+	// parent in their deps[]. Requires a reverse scan; we use the SQLite
+	// index for O(1) lookup. If the index is unavailable, we degrade to
+	// an empty slice so the fields are always present in the JSON output.
+	blockedBy := blockedByFromDeps(rendered)
+	rendered["blocked_by"] = blockedBy
+	rendered["blocks"] = blocksReverseFromIndex(paths, full)
 
 	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps, Full: opts.Full}
 
@@ -544,4 +559,69 @@ func depShowLabel(edgeType string) string {
 		return "blocked-by"
 	}
 	return edgeType
+}
+
+// blockedByFromDeps extracts the sorted list of parent ids from a
+// rendered state map where edge_type == "blocks". This is the
+// forward-direction read: "this issue is blocked by these parents."
+//
+// The returned slice is always non-nil (empty slice, not nil) so JSON
+// callers always see `"blocked_by":[]` rather than `"blocked_by":null`.
+// Ordering is deterministic (sorted ascending) so test assertions are stable.
+func blockedByFromDeps(rendered map[string]any) []string {
+	out := []string{}
+	deps, ok := rendered["deps"]
+	if !ok {
+		return out
+	}
+	switch d := deps.(type) {
+	case []map[string]string:
+		for _, e := range d {
+			if e["edge_type"] == "blocks" {
+				out = append(out, e["parent"])
+			}
+		}
+	case []any:
+		for _, e := range d {
+			if m, ok := e.(map[string]any); ok {
+				if et, _ := m["edge_type"].(string); et == "blocks" {
+					if pa, _ := m["parent"].(string); pa != "" {
+						out = append(out, pa)
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// blocksReverseFromIndex returns the sorted list of issue ids that have
+// fullID as a blocks parent in their deps[] — i.e. the issues that are
+// blocked BY this issue (reverse direction).
+//
+// The lookup uses the SQLite index without triggering a rebuild; the
+// index is assumed to be reasonably current (write commands refresh it).
+// If the index is unavailable or the query fails, the function degrades
+// to an empty slice so the `blocks` field is always present in JSON
+// output (never null).
+func blocksReverseFromIndex(paths config.LayoutPaths, fullID string) []string {
+	empty := []string{}
+	idx, err := index.Open(paths.IndexDB)
+	if err != nil {
+		// Index not present or not readable — degrade gracefully.
+		return empty
+	}
+	defer func() { _ = idx.Close() }()
+	if err := idx.ApplySchema(); err != nil {
+		return empty
+	}
+	result, err := idx.BlocksOf(fullID)
+	if err != nil {
+		return empty
+	}
+	if result == nil {
+		return empty
+	}
+	return result
 }
