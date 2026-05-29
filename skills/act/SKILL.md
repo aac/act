@@ -23,7 +23,7 @@ The single discipline that makes everything else work:
 1. `act ready` — what's unblocked, ordered by priority. Pick the highest.
 2. `act update --claim <id>` — atomic claim. Other agents see "this is taken."
 3. Do the work. Write tests. Run them.
-4. `git commit -a -m "<subject>" -m "<commit_marker>"` — the marker is the `Act-Id: act-XXXXXX` trailer that goes in the commit BODY (the two `-m` flags produce a body paragraph separated from the subject by a blank line, matching `git interpret-trailers` form). The trailer enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window. The trailer form is invisible to conventional-commit linters, survives squash-merge cleanly, and is the only emission shape going forward; doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat in pre-migration repos.
+4. `git commit -a -m "<subject>" -m "<commit_marker>"` — the marker is the `Act-Id: act-XXXXXX` trailer that goes in the commit BODY (the two `-m` flags produce a body paragraph separated from the subject by a blank line, matching `git interpret-trailers` form). The trailer enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response — the command prints a single line, e.g. `Act-Id: act-25aae7`. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window. The trailer form is invisible to conventional-commit linters, survives squash-merge cleanly, and is the only emission shape going forward; doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat in pre-migration repos.
 5. **Review the diff** — see the Review step section.
 6. `act close <id> --reason "<one-liner>"`.
 7. `git push origin main` (or whatever the project's default branch is) — concurrent agents see the close immediately; session-death can't lose work.
@@ -35,10 +35,10 @@ In an MCP-equipped session, `act_next` + `act_finish` collapse 1+2 and 6+7 respe
 
 Orchestrator-judged based on the change's scope and risk:
 
-- **No review:** typo fixes, doc touch-ups, formatting-only commits, comments. Trust the work + your own checks; close.
-- **Lightweight review (default for ergonomic features and bugfixes):** `feature-dev:code-reviewer` over the diff with `>70% confidence` filter. Goal is signal not nits. Findings → file as follow-up issues, fix the load-bearing ones inline, close on the rest.
-- **Multi-modal review (default for changes affecting agent workflow, public API, or concurrency semantics):** code-reviewer + a UX/walkthrough reviewer + (where appropriate) a real workflow run by a fresh agent. These catch non-overlapping defect classes; relying on one leaves blind spots.
-- **Pre-implementation review (for big architectural moves):** review the plan before writing code. Cheaper to throw away an approach than a refactor.
+- **No review:** typo fixes, doc touch-ups, formatting-only commits, comments. Trust the work + your own checks; close. *Examples: fixing a help string typo, updating a CHANGELOG entry, correcting an inline comment.*
+- **Lightweight review (default for ergonomic features and bugfixes):** `feature-dev:code-reviewer` over the diff with `>70% confidence` filter. Goal is signal not nits. Findings → file as follow-up issues, fix the load-bearing ones inline, close on the rest. *Examples: adding a new CLI flag, fixing an off-by-one in a display formatter, adding a missing error message, small UX improvements.*
+- **Multi-modal review (default for changes affecting agent workflow, public API, or concurrency semantics):** code-reviewer + a UX/walkthrough reviewer + (where appropriate) a real workflow run by a fresh agent. These catch non-overlapping defect classes; relying on one leaves blind spots. *Examples: changing claim/close locking semantics, modifying the op-log append path, altering `act harvest` merge logic, adding a new public subcommand, changing the canonical-loop skill guidance.*
+- **Pre-implementation review (for big architectural moves):** review the plan before writing code. Cheaper to throw away an approach than a refactor. *Examples: introducing a new data persistence layer, designing a breaking change to the issue-id schema, adding a streaming coordination plane, changing the public MCP tool contract.*
 
 Reviewer prompts **must**: (a) pin the commit hash explicitly, (b) include the changed file paths, (c) require the reviewer to state "I read commit X at paths Y" as the first line of output before any findings, (d) set a confidence floor (>70% is the validated default from the aac-website dogfood), and (e) ask for a "what's working well" closing section.
 
@@ -122,6 +122,10 @@ If the project has `.act/hooks/close` (an executable script), it runs before eve
 When you start work in a new project, look for `.act/hooks/close`. If it exists, every close runs through it. If it doesn't and the project has a CI suite, consider creating one — it makes "broke CI on push" failures locally-detectable before they fan out across multiple close commits.
 
 ## Working in a worktree or sandbox
+
+**Before claiming any issue:** run `git branch` and confirm the current branch matches the worktree-branch named in your dispatch prompt. If they differ, do not proceed — surface the mismatch to the orchestrator. This check catches the case where your worktree was set up against an unexpected ref; claiming and committing on the wrong branch entangles your work with another agent's.
+
+**Push scope:** push only to your own worktree branch (`git push origin HEAD:<your-worktree-branch>`). Never push to `main`, `master`, or any branch you didn't create for this dispatch. Scope-guarding push prevents your commits from bypassing the integrator's merge gate and colliding with concurrent agents or open PRs.
 
 If you've been dispatched as a sub-agent into a git worktree (or any other isolated sandbox) by an orchestrator, `act` works normally in your environment because the orchestrator pre-seeds a `.act/` copy via `act bootstrap-worker <your-path>` before launching you. The seeded `.act/` mirrors the orchestrator's view of the backlog at dispatch time — you can call `act ready`, `act update --claim`, `act create`, `act close`, etc. exactly as you would in the main checkout.
 
