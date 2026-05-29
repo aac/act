@@ -55,3 +55,4 @@ docs/issues/.gitkeep
 
 # Personal-project dev detail — not for the public act repo (see act-840886)
 docs/aac-website-dogfood-debrief.md
+.claude/settings.local.json
