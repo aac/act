@@ -22,3 +22,6 @@ Thumbs.db
 /.claude/
 .act/
 .ask/
+
+# Operator-workflow artifacts (session state, not project deliverables)
+docs/session-handoff.md

@@ -69,6 +69,10 @@ act install-skill --dest PATH  # alternate destination
 
 Design docs: [`docs/spec-v2.md`](docs/spec-v2.md) (authoritative spec), [`docs/coordination-plane-design.md`](docs/coordination-plane-design.md) (Phase 1 / 1.5 nested-repo design), [`docs/coordination-plane-phase2-design.md`](docs/coordination-plane-phase2-design.md) (Phase 2 push-attached workers), [`docs/migration-runbook.md`](docs/migration-runbook.md) (one-shot legacy → nested migration), [`docs/act-evaluation.md`](docs/act-evaluation.md) (live evaluation against real use).
 
+## Privacy / telemetry: none
+
+`act` is local-only. It collects no telemetry, phones home to nothing, and makes no network calls except the git operations you explicitly invoke (e.g. `git push` when you pass `--push`, or `git pull` on the nested `.act/` repo when syncing workers). See [SECURITY.md](SECURITY.md) for the full security model.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.

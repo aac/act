@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Agent task tracker. A single-binary task tracker designed for AI coding agents as the primary user. State lives as append-only JSON op files inside a nested git repo at .act/ — its own .git/ directory, gitignored from the surrounding code repo. Concurrent agents merge their writes with plain git semantics. No server, no database, no schema setup.",
   "author": { "name": "Andrew Cove" },
+  "license": "Apache-2.0",
+  "keywords": ["task-tracker", "agents", "cli", "coordination", "mcp"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }
