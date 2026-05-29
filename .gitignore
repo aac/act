@@ -19,7 +19,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
-/.claude/*
-!/.claude/settings.json
+/.claude/
 .act/
 .ask/
