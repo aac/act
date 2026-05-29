@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
 )
@@ -343,6 +346,75 @@ func TestRunUpdate_ClaimIdempotentSameNode(t *testing.T) {
 	if len(matchesAfterSecond) != 1 {
 		t.Errorf("after second claim: %d ops on disk, want 1 (idempotent); files=%v",
 			len(matchesAfterSecond), matchesAfterSecond)
+	}
+}
+
+// TestClaimGitOps_WorktreeContext_StagesViaOverride asserts act-f64d6e:
+// claimGitOps.Commit must stage the ops subtree through the inner
+// ActGitOps' --git-dir/--work-tree override (StageOpFile), NOT through a
+// bare `git add` that relies on cwd-discovery. The harm being guarded
+// against: in a worktree/migration context where the nested .act/.git is
+// not discoverable from the .act/ cwd, a cwd-discovered `git add` walks
+// UP and stages the act op into the WRONG (ambient host) git index —
+// silently polluting the host repo's tracked history with .act/ops/**.
+//
+// Fixture (the bug-visible shape): a host repo that does NOT gitignore
+// .act/, with .act/ present as a plain directory that has NO nested
+// .git of its own. NewActGitOps(actDir) pins the override git-dir to
+// <actDir>/.git (absent here) — so the override path FAILS LOUDLY rather
+// than silently retargeting the host.
+//
+// How this fails on the UNFIXED code: the old claimGitOps.runGit ran
+// `git add -- ops` with only cmd.Dir=<actDir> set. With <actDir>/.git
+// absent, git's cwd-discovery walks up to the host repo and (because the
+// host does not ignore .act/) STAGES .act/ops/...op.json into the host
+// index, and Commit returns nil. The test asserts (a) Commit returns a
+// non-nil error and (b) the host index has NO .act/ path staged — both
+// fail pre-fix (no error; host index polluted). Post-fix StageOpFile
+// pins --git-dir=<actDir>/.git, which does not exist, so the stage
+// errors with "not a git repository" before any host write — error
+// returned, host index clean, both assertions pass.
+func TestClaimGitOps_WorktreeContext_StagesViaOverride(t *testing.T) {
+	host := t.TempDir()
+	mustGit(t, host, "init", "-q", "-b", "main")
+	mustGit(t, host, "config", "user.email", "u@example.com")
+	mustGit(t, host, "config", "user.name", "U")
+	mustGit(t, host, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(host, "README"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	// Deliberately NO `.act/` line in .gitignore: this is what lets a
+	// cwd-discovered `git add` silently stage into the host index instead
+	// of being refused — the silent wrong-repo write the fix prevents.
+	mustGit(t, host, "add", "README")
+	mustGit(t, host, "commit", "-q", "--no-verify", "-m", "init")
+
+	// .act/ is a plain directory with an unstaged op file and NO nested
+	// .git of its own (worktree/mid-migration shape).
+	actDir := filepath.Join(host, ".act")
+	opPath := filepath.Join(actDir, "ops", "act-aaaaaa", "2026-05", "op-create.json")
+	if err := os.MkdirAll(filepath.Dir(opPath), 0o755); err != nil {
+		t.Fatalf("mkdir ops: %v", err)
+	}
+	if err := os.WriteFile(opPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write op: %v", err)
+	}
+
+	// Production wrapper, production constructor: the override git-dir is
+	// <actDir>/.git, which does not exist in this fixture.
+	wrapped := &claimGitOps{inner: gitops.NewActGitOps(actDir)}
+
+	err := wrapped.Commit("act-op: (act-aaaaaa) claim")
+	if err == nil {
+		t.Fatalf("claimGitOps.Commit: want error (override git-dir absent), got nil — " +
+			"a cwd-discovered `git add` silently staged into the ambient host index")
+	}
+
+	// The host index must NOT carry any .act/ path: the stage must never
+	// retarget the ambient repo.
+	hostStaged := mustGitOutput(t, host, "diff", "--cached", "--name-only")
+	if strings.Contains(hostStaged, ".act/") {
+		t.Fatalf("host index polluted with act ops: %q (claim stage leaked into ambient repo)", hostStaged)
 	}
 }
 
