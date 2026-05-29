@@ -293,14 +293,23 @@ INSTALLING THE SKILL
   docs) is embedded in this binary. To drop it into your skills
   directory so agents pick it up on every session:
 
-    act install-skill              # writes to ~/.claude/skills/act/
-    act install-skill --force      # overwrite local edits to canonical files
-    act install-skill --dest PATH  # alternate destination
-    act install-skill --json       # machine-readable install summary
+    act install-skill                       # writes to ~/.claude/skills/act/
+    act install-skill --target codex        # writes to ~/.codex/skills/act/
+    act install-skill --force               # overwrite local edits to canonical files
+    act install-skill --dest PATH           # alternate destination (overrides --target)
+    act install-skill --json                # machine-readable install summary
+    act install-skill --check               # read-only: verify installed matches embedded
+    act install-skill --check --target codex  # verify the codex install
+
+  Default target is claude (~/.claude/skills/act/). --dest overrides
+  --target when both are supplied.
 
   install-skill is idempotent: files already matching the embedded
   copy are skipped; files that diverge are listed and left untouched
   unless --force is passed. Re-run after every 'act' upgrade.
+
+  --check never writes; it exits 0 if every embedded file matches the
+  installed copy, or 1 if any file is missing or differs (drift).
 `
 
 const helpWorkflow = `act — workflow
