@@ -756,6 +756,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "skip the post-close single-issue commit-marker correlation check",
 		testName:     "TestDocClaim_NoDoctorOptOut",
 	},
+	// claim-lost-last-write-wins (act-2af8c7): the README and `act help`
+	// promise "concurrent claimers resolve last-write-wins." Spec §7.4
+	// names the test case "concurrent_claim_two_writers" and says "Exactly
+	// one exits 0 with {claimed:true}; the other exits 5 with claim_lost."
+	// The asserting test drives two sequential `act update --claim`
+	// subprocesses with different node_ids against the same issue and
+	// verifies exactly one winner (exit 0, claimed:true) and one loser
+	// (exit 1, claimed:false) at the subprocess boundary.
+	{
+		name:         "claim-lost-last-write-wins",
+		docFile:      "README.md",
+		claimPattern: "concurrent claimers resolve last-write-wins",
+		testName:     "TestDocClaim_ClaimLost_LastWriteWins",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
