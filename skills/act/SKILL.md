@@ -14,27 +14,38 @@ This skill activates whenever you're in a repo that uses `act` (the agent-first 
 
 If act isn't already installed and configured in this project, read `references/setup.md` first. Otherwise proceed.
 
+**MCP vs CLI:** When the project's `.mcp.json` wires `act_next`, `act_finish`, and related tools, **prefer MCP tools** — they compose canonical-loop steps into single calls and return fields like `commit_marker` without a subprocess. Fall back to CLI commands when MCP tools are unavailable. The skill describes both; all behavior is the same at the semantic level.
+
 Run `act help` once at the start of any session to absorb the mechanics. That's the canonical reference; this skill assumes you've read it.
 
 ## The canonical work loop
 
 The single discipline that makes everything else work:
 
-1. `act ready` — what's unblocked, ordered by priority. Pick the highest.
-2. `act update --claim <id>` — atomic claim. Other agents see "this is taken."
+1. **Claim the next issue.**
+   - MCP: `act_next` — atomically picks the highest-priority unblocked issue, claims it, and returns `id` plus `commit_marker`.
+   - CLI: `act ready` to see what's unblocked, then `act update --claim <id>`.
 
-   **Claim collision — `claim_lost`.** If another agent wins the race, `act update --claim` exits **5** with envelope `{"ok":false,"claimed":false,"error":"claim_lost","winner":"<node_id>","reason":"lost-race"}`. The `winner` field names the node that holds the authoritative claim (last-write-wins fold makes the winner the single source of truth). **Do not proceed with the work** — you do not own the issue. Instead, go back to step 1: run `act ready` (or `act_next` in MCP sessions) and pick a different unblocked issue. Working a contended issue produces orphaned commits and is never recoverable via re-try — the winner is authoritative.
+   **Claim collision — `claim_lost`.** If another agent wins the race, `act update --claim` exits **5** with envelope `{"ok":false,"claimed":false,"error":"claim_lost","winner":"<node_id>","reason":"lost-race"}`. The `winner` field names the node that holds the authoritative claim (last-write-wins fold makes the winner the single source of truth). **Do not proceed with the work** — you do not own the issue. Instead, go back to step 1: call `act_next` (MCP) or `act ready` + `act update --claim` (CLI) on a different unblocked issue. Working a contended issue produces orphaned commits and is never recoverable via re-try — the winner is authoritative.
 
-3. Do the work. Write tests. Run them.
-4. `git commit -a -m "<subject>" -m "<commit_marker>"` — the marker is the `Act-Id: act-XXXXXX` trailer that goes in the commit BODY (the two `-m` flags produce a body paragraph separated from the subject by a blank line, matching `git interpret-trailers` form). The trailer enables `act doctor` orphan-close detection. Get the marker from `act show <id> --commit-marker` or the `commit_marker` field on `act_next`'s response — the command prints a single line, e.g. `Act-Id: act-25aae7`. **Don't construct it by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window. The trailer form is invisible to conventional-commit linters, survives squash-merge cleanly, and is the only emission shape going forward; doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat in pre-migration repos.
-5. **Review the diff** — see the Review step section.
-6. `act close <id> --reason "<one-liner>"`.
-7. `git push origin main` (or whatever the project's default branch is) — concurrent agents see the close immediately; session-death can't lose work.
-8. Repeat from step 1 until `act ready` is empty.
+2. Do the work. Write tests. Run them.
+3. **Commit with the issue marker.** The marker is the `Act-Id: act-XXXXXX` trailer that goes in the commit BODY (the two `-m` flags produce a body paragraph separated from the subject by a blank line, matching `git interpret-trailers` form). The trailer enables `act doctor` orphan-close detection.
+   - MCP: the `commit_marker` field on the `act_next` response is the ready-to-use string.
+   - CLI: `act show <id> --commit-marker` prints a single line, e.g. `Act-Id: act-25aae7`.
+   - **Don't construct the marker by hand** — slicing the id directly is how the marker drifts out of `act doctor`'s grep window. The trailer form is invisible to conventional-commit linters, survives squash-merge cleanly, and is the only emission shape going forward; doctor still resolves the historical `(act-XXXX)` subject-line form for back-compat in pre-migration repos.
 
-In an MCP-equipped session, `act_next` + `act_finish` collapse 1+2 and 6+7 respectively.
+   Example commit command (CLI):
+   ```
+   git commit -a -m "<subject>" -m "Act-Id: act-XXXXXX"
+   ```
 
-## Review step (step 5)
+4. **Review the diff** — see the Review step section.
+5. **Close the issue and push.**
+   - MCP: `act_finish` — closes the issue and pushes in one call.
+   - CLI: `act close <id> --reason "<one-liner>"` then `git push origin main` (or whatever the project's default branch is) — concurrent agents see the close immediately; session-death can't lose work.
+6. Repeat from step 1 until `act ready` (or `act_next`) returns empty.
+
+## Review step (step 4)
 
 Orchestrator-judged based on the change's scope and risk:
 
@@ -98,13 +109,13 @@ Use `--ext-add` / `--ext-rm` for cross-tracker blocks; use `act dep add` for act
 
 ## Sub-agents
 
-Whether to spawn sub-agents is a harness decision, not an act rule.
+Whether to spawn sub-agents is a harness decision, not an act rule. The key principle is **write-scope isolation**: each sub-agent must own a disjoint slice of the filesystem so that concurrent `git commit` and act ops don't collide.
 
-**Default: `isolation: "worktree"`.** Two un-isolated agents in the same working tree collide on the git index even when their files don't overlap — `act update --claim` fails fast on a dirty index. Worktrees give each agent its own working directory and branch.
+**Claude Code harness — `isolation: "worktree"`.** Two un-isolated agents in the same working tree collide on the git index even when their files don't overlap — `act update --claim` fails fast on a dirty index. Worktrees give each agent its own working directory and branch. When you spawn a worktree agent, **override the loop in their prompt** so they push to their *worktree branch* (not main). An integrator (you, or another agent) merges the branch in once their work returns clean. Before dispatching any worktree subagent, read `references/worktree-subagents.md` — it covers the `--push` trap and parallelism-vs-isolation guidance that has caused real damage.
 
-When you spawn a worktree agent, **override the loop in their prompt** so they push to their *worktree branch* (not main). An integrator (you, or another agent) merges the branch in once their work returns clean.
+**Codex harness — `spawn_agent`.** Codex provides container-level isolation: each `spawn_agent` call runs in its own sandbox with its own writable root. The same disjoint-scope principle applies — each agent should own non-overlapping work. The act canonical loop runs identically inside the container; `act bootstrap-worker` is still the correct seeding mechanism when the orchestrator pre-provisions the `.act/` state.
 
-Before dispatching any worktree subagent, read `references/worktree-subagents.md` — it covers the `--push` trap and parallelism-vs-isolation guidance that has caused real damage.
+**Parallelism vs isolation (harness-neutral).** Isolation (worktree or container) removes the git-index collision problem; it does not make conflicting work safe. Default serial when issues touch overlapping files regardless of harness. Spawn parallel only when issues are provably disjoint.
 
 ## Commit discipline
 
@@ -146,6 +157,33 @@ Harvest remains the fallback for sandboxed workers without network access to the
 
 Cross-reference: see `docs/migration-runbook.md` "Phase 1.5 → Phase 2 cutover" for the one-time operator setup and the rollback path.
 
+## Codex sandbox approvals
+
+Codex agents run inside a sandbox with restricted network and filesystem access. Several canonical-loop operations may require explicit approval from the operator, or may be blocked entirely depending on the sandbox policy:
+
+**`git push`** — the push step (loop step 5 / `act_finish`) reaches the network. If the sandbox has no outbound network access, push will hang or fail. Two options:
+- If the orchestrator pre-grants network access to the origin host, push proceeds normally.
+- If not, omit the push from the agent's loop (`--offline` flag on write commands), accumulate commits locally, and let the integrator push after inspecting the branch. This is the same trade-off as the Phase 1.5 harvest pattern: ops are committed locally and harvested at teardown.
+
+**Merge flows** — operations that merge a worktree branch back to main (`git merge --ff-only`) need write access to the host working tree. In Codex, each `spawn_agent` runs in its own container; the integrator (the calling agent or a separate merge pass) performs the merge in a container with write access to the appropriate path.
+
+**Operations outside the writable root** — Codex restricts writes to a declared writable root (usually the repo checkout). Act's nested `.act/` repo falls inside the project root and is within the writable root by default. If `.act/` is mounted separately or lives at a non-standard path, confirm it's within the declared writable root before running act commands.
+
+**Approval checklist for Codex dispatch:**
+1. Confirm `.act/` is within the container's writable root.
+2. Decide whether `git push` is in-loop (network-enabled sandbox) or deferred to integrator (offline mode).
+3. If using `spawn_agent` for sub-agents, note that each container gets its own writable filesystem — `act bootstrap-worker` still applies for `.act/` state seeding.
+
+**Claude Code note:** Claude Code's analogous approvals are documented in `references/setup.md` (the `permissions.allow` list for `git push`, `git merge --ff-only`, etc.). If you're on Claude Code, that file is the right reference; this section is for Codex operators.
+
+## Worktree dispatch and orchestrator pattern
+
+**This pattern is Claude Code-specific.** The Claude Code harness supports `isolation: "worktree"` in agent dispatch, which creates a git worktree for each sub-agent. The canonical orchestrate loop (`/orchestrate` skill, `act harvest`) is built around this shape: the orchestrator dispatches N worktree agents, each runs the canonical loop on its own branch, and the orchestrator harvests + merges at completion.
+
+**Codex equivalent:** Codex doesn't have a worktree concept natively — isolation comes from `spawn_agent` containers. The same coordination model applies: each `spawn_agent` runs the canonical loop (claim → work → close → optionally push), and the top-level agent integrates after all sub-agents complete. The act op-log works the same way inside each container; the `act harvest` step replaces any cross-container bootstrap that would be needed in a shared filesystem model.
+
+**For project-level orchestration config** (dispatch prompts, harvest wiring, the `/orchestrate` skill itself): those live in the project's `CLAUDE.md` or `AGENTS.md`, not here. The skill documents the per-agent loop; orchestrator wiring is project-specific.
+
 ## Per-project overrides
 
-Project-specific rules live in the repo's `CLAUDE.md`. That file is for deviations and rationale, not duplication of this skill. If a rule belongs in every project that uses act, it lives here; if it belongs in just one project, it lives in that project's CLAUDE.md.
+Project-specific rules live in the repo's `CLAUDE.md` (or `AGENTS.md`). That file is for deviations and rationale, not duplication of this skill. If a rule belongs in every project that uses act, it lives here; if it belongs in just one project, it lives in that project's `CLAUDE.md`.
