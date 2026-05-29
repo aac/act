@@ -440,6 +440,22 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 			"message": fmt.Sprintf("act harvest: commit: %v", err),
 		}, 1
 	}
+	// No AutoPushAfterCommitToBranch here — intentional deviation from the
+	// write-subcommand auto-push invariant (spec §"Auto-publish on write").
+	//
+	// Harvest is the orchestrator-side fan-in primitive. The orchestrator's
+	// nested .act/.git typically has NO `origin` remote — it IS the
+	// canonical history that workers push to; calling AutoPush would be a
+	// silent no-op in the common production shape. In Phase 2 remote-
+	// attached mode the worker already pushed its ops directly to the
+	// orchestrator before harvest ran (and harvest short-circuits with a
+	// skip for that worker shape). In Phase 1.5 sandboxed mode, harvest
+	// folds the worker's op files into the orchestrator's local state;
+	// publishing that fold upward (e.g. to an upstream remote) is an
+	// orchestrator-level concern handled by `act remote sync`, not by
+	// harvest's commit. The spec's auto-publish list is exactly
+	// {create, update, close, dep add, reopen, delete} and harvest is
+	// deliberately absent.
 
 	// Re-fold via index rebuild. A failure here does NOT roll back the
 	// copy/commit — harvest is one-way append. We surface the fold error
