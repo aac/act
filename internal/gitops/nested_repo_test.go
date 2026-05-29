@@ -1,7 +1,9 @@
 package gitops
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -120,6 +122,112 @@ func TestActGitOps_NestedRepo_MissingGitDirSurfaces(t *testing.T) {
 	if !strings.Contains(msg, "not a git repository") {
 		t.Fatalf("StageOpFile error: want 'not a git repository', got %q", msg)
 	}
+}
+
+// TestActGitOps_CheckIgnored_RespectsGitDirOverride asserts act-acdf5d:
+// CheckIgnored must route through the same runner seam + --git-dir/
+// --work-tree override every other gitops method uses, so the ignore
+// verdict reflects the PINNED git-dir, not whatever git's cwd-discovery
+// walks up to find.
+//
+// Fixture (two distinct repos with CONFLICTING ignore rules for the same
+// path, so cwd-discovery and the override give opposite answers):
+//
+//   - Repo B (the "ambient" repo): a normal git repo. Its
+//     <B>/.git/info/exclude is EMPTY, so it does NOT ignore "target".
+//   - A working subdir <B>/wt with NO .git of its own: cwd-discovery from
+//     here walks UP to repo B.
+//   - Repo A (the "pinned" repo): a separate git dir whose
+//     <A>/.git/info/exclude DOES ignore "target".
+//
+// GitOps is constructed with RepoRoot=<B>/wt (so cwd-discovery resolves
+// to B) and gitDir=<A>/.git (the override target). The exclude rule is
+// placed in $GIT_DIR/info/exclude (git-dir-specific, not work-tree's
+// .gitignore) precisely so the verdict differs between the discovered
+// repo and the pinned one.
+//
+// How this fails on the UNFIXED code: pre-fix CheckIgnored shelled out
+// with `exec.Command("git","check-ignore",path); cmd.Dir = RepoRoot`,
+// ignoring g.gitDir entirely. cwd-discovery from <B>/wt finds repo B,
+// whose info/exclude does NOT list "target" → returns (false, nil). The
+// test asserts (true, nil), so it fails. Post-fix CheckIgnored runs
+// through g.run, which prepends --git-dir=<A>/.git, so A's info/exclude
+// applies → (true, nil), and the test passes.
+func TestActGitOps_CheckIgnored_RespectsGitDirOverride(t *testing.T) {
+	root := t.TempDir()
+
+	mkdir := func(p string) string {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+		return p
+	}
+
+	// Repo B (ambient / cwd-discovered): does NOT ignore "target".
+	repoB := filepath.Join(root, "ambient")
+	runGit(t, mkdir(repoB), "init", "-q", "-b", "main")
+	// info/exclude intentionally left empty for B.
+
+	// Working subdir inside B with no .git of its own; cwd-discovery from
+	// here walks up to B.
+	wt := mkdir(filepath.Join(repoB, "wt"))
+
+	// Repo A (pinned via gitDir): DOES ignore "target" via info/exclude.
+	repoA := filepath.Join(root, "pinned")
+	runGit(t, mkdir(repoA), "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repoA, ".git", "info", "exclude"),
+		[]byte("target\n"), 0o644); err != nil {
+		t.Fatalf("write A info/exclude: %v", err)
+	}
+
+	// Pre-condition: confirm the two repos genuinely disagree, so the
+	// post-fix verdict is only correct if the override was honored.
+	// B's check-ignore exits 1 ("not ignored") for "target".
+	if b := checkIgnoreExit(t, repoB, "target"); b != 1 {
+		t.Fatalf("precondition: ambient repo B check-ignore exit = %d, want 1 (not ignored)", b)
+	}
+	// A's check-ignore exits 0 ("ignored") for "target".
+	if a := checkIgnoreExit(t, repoA, "target"); a != 0 {
+		t.Fatalf("precondition: pinned repo A check-ignore exit = %d, want 0 (ignored)", a)
+	}
+
+	// Construct a GitOps whose cwd (RepoRoot) discovers B but whose
+	// override pins git-dir to A. Mirrors NewActGitOps's override shape;
+	// in-package test sets the unexported gitDir directly.
+	g := &GitOps{
+		RepoRoot: wt,
+		gitDir:   filepath.Join(repoA, ".git"),
+		runner:   exec.Command,
+	}
+
+	ignored, err := g.CheckIgnored("target")
+	if err != nil {
+		t.Fatalf("CheckIgnored: %v", err)
+	}
+	if !ignored {
+		t.Fatalf("CheckIgnored(\"target\") = false; want true (verdict must come "+
+			"from the pinned git-dir %s's info/exclude, not the cwd-discovered repo %s)",
+			g.gitDir, repoB)
+	}
+}
+
+// checkIgnoreExit runs `git check-ignore <path>` directly in dir and
+// returns its exit code (0 = ignored, 1 = not ignored). Any other exit
+// code fails the test. Used only by the precondition assertions above.
+func checkIgnoreExit(t *testing.T, dir, path string) int {
+	t.Helper()
+	cmd := exec.Command("git", "check-ignore", path)
+	cmd.Dir = dir
+	err := cmd.Run()
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	t.Fatalf("check-ignore in %s: %v", dir, err)
+	return -1
 }
 
 // initHostWithIgnoredAct creates a tempdir + `git init`, configures

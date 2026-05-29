@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -19,10 +18,6 @@ import (
 	"github.com/aac/act/internal/index"
 	"github.com/aac/act/internal/op"
 )
-
-// execCommand is the indirection used by claimGitOps for `git add`.
-// Aliased here so a future build-tag can replace it for hermetic tests.
-var execCommand = exec.Command
 
 // UpdateOptions captures the flag knobs accepted by `act update`.
 //
@@ -580,7 +575,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	// WriteOpAndAutoCommit's StageOpFile), so we must stage the ops dir
 	// before the commit fires. Under Phase 1 the wrapper's cwd is the
 	// nested .act/ working tree so the staging path is plain "ops".
-	wrapped := &claimGitOps{inner: gops, repoRoot: paths.Root, branch: opts.Branch}
+	wrapped := &claimGitOps{inner: gops, branch: opts.Branch}
 
 	res, err := claim.RunClaim(repoRoot, full, claim.Options{
 		Assignee:    cfg.NodeID, // assignee defaults to the local node id
@@ -722,8 +717,7 @@ func FormatUpdateHuman(res UpdateResult) string {
 // call), so without this wrapper the subsequent `git commit` finds an
 // empty index and fails. PullRebase / Push pass through unchanged.
 type claimGitOps struct {
-	inner    *gitops.ActGitOps
-	repoRoot string
+	inner *gitops.ActGitOps
 	// branch, when non-empty, names the nested .act/ branch the claim
 	// auto-commit lands on and the optional --push targets on origin
 	// (act-5d6a). Empty preserves the historical HEAD/tracking-config
@@ -743,7 +737,15 @@ func (c *claimGitOps) Commit(message string) error {
 	// "ops" because under Phase 1 the wrapper's cwd is the nested .act/
 	// working tree; "ops" inside it resolves to <hostRoot>/.act/ops, the
 	// directory the op writer actually lays files into.
-	if _, err := c.runGit("add", "--", "ops"); err != nil {
+	//
+	// Route the stage through c.inner.StageOpFile (which is `git add -- ops`
+	// via *gitops.ActGitOps.run) so it inherits the SAME runner seam AND
+	// --git-dir/--work-tree override every other act-state mutation uses.
+	// A prior inline `git add` here (claimGitOps.runGit) shelled out with
+	// only cmd.Dir set, so in a worktree context git's cwd-discovery could
+	// walk up and stage into the WRONG repo's index (act-784b class — see
+	// act-f64d6e). StageOpFile pins it to the nested .act/.git.
+	if err := c.inner.StageOpFile("ops"); err != nil {
 		return fmt.Errorf("claimGitOps: stage ops: %w", err)
 	}
 	return c.inner.Commit(message)
@@ -751,21 +753,6 @@ func (c *claimGitOps) Commit(message string) error {
 
 func (c *claimGitOps) PullRebase() error { return c.inner.PullRebase() }
 func (c *claimGitOps) Push() error       { return c.inner.PushToBranch(c.branch) }
-
-// runGit is a tiny inline shellout used only by claimGitOps.Commit. We
-// don't import os/exec at package scope just for this wrapper, so we go
-// through the inner *gitops.ActGitOps' own runner indirection by calling a
-// known no-op-on-success command. The simplest path is to add `git add`
-// here directly.
-func (c *claimGitOps) runGit(args ...string) (string, error) {
-	cmd := execCommand("git", args...)
-	cmd.Dir = c.repoRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("git %s: %w (output: %s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
-}
 
 // FormatUpdateClaimHuman renders an UpdateClaimResult as a single
 // human-friendly line.

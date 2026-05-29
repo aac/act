@@ -18,6 +18,7 @@ package gitops
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1241,20 +1242,25 @@ func (g *GitOps) InternalContributors(limit int) (map[string]struct{}, error) {
 // Returns (true, nil) when ignored, (false, nil) when not ignored,
 // (false, err) on any other failure. `git check-ignore` semantics: exit
 // 0 = ignored, exit 1 = not ignored (no output), exit 128 = error.
+//
+// Like every other method on *GitOps, this routes through g.run so the
+// runner seam AND the g.gitDir/g.work-tree override apply: a check-ignore
+// invoked from a worktree (or a test pinned to a non-default git-dir)
+// reflects THAT repo's ignore rules, not whatever git's cwd-discovery
+// would walk up to find (act-784b class). The exit-1 ("not ignored")
+// case is normal and must be demoted to (false, nil) rather than treated
+// as an error; we recover it from the run() error via exec.ExitError.
 func (g *GitOps) CheckIgnored(path string) (bool, error) {
-	cmd := exec.Command("git", "check-ignore", path)
-	cmd.Dir = g.RepoRoot
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if _, err := g.run("check-ignore", path); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			switch exitErr.ExitCode() {
 			case 1:
 				// Not ignored: this is the normal "ignore returns false"
 				// path, not an error.
 				return false, nil
 			case 128:
-				return false, fmt.Errorf("gitops: check-ignore %q: %s", path, strings.TrimSpace(stderr.String()))
+				return false, fmt.Errorf("gitops: check-ignore %q: %w", path, err)
 			}
 		}
 		return false, err

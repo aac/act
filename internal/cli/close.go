@@ -37,7 +37,8 @@ type CloseOptions struct {
 	// to close. Resolved via the standard prefix pipeline.
 	ID string
 	// Reason is the optional `closed_reason`. Empty is allowed; payloads
-	// with `len(Reason) > 4096` are rejected with exit 2.
+	// with `len(Reason) > closeReasonMaxBytes` (500) are rejected with
+	// exit 2 — see `act help workflow` and TestDocClaim_CloseReasonCap_*.
 	Reason string
 	// AsJSON toggles JSON envelope rendering. The cli return shape is
 	// identical regardless; main.go decides how to render.

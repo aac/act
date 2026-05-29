@@ -465,7 +465,7 @@ func (s *Server) tools() []toolDescriptor {
 			Description: "Escape hatch: close an issue. Prefer act_finish for the recommended workflow.",
 			InputSchema: schemaObject(map[string]any{
 				"id":        schemaString("Issue id or prefix."),
-				"reason":    schemaString("Optional close reason (≤4096 bytes)."),
+				"reason":    schemaString("Optional close reason (≤500 bytes)."),
 				"no_commit": schemaBool("Skip auto-commit."),
 				"push":      schemaBool("Push after commit."),
 				"isolated":  schemaBool("Run without touching git state."),
