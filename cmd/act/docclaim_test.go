@@ -124,16 +124,23 @@ func TestDocClaim_Help_ListsMigrateToNested(t *testing.T) {
 	}
 }
 
-// TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour pins the claim that
-// `act help errors` documents exit 3 (issue_not_found) and exit 4
-// (push_exhausted, remote_unreachable). Before this fix the EXIT CODES
-// block listed only exits 1 and 2, leaving agents no help on resolving
-// not-found or push-retry errors.
+// TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive pins the claim that
+// `act help errors` documents exit 3 (issue_not_found), exit 4
+// (push_exhausted), and exit 5 (claim_lost). Before the exit-3/4 fix the
+// EXIT CODES block listed only exits 1 and 2; act-a373bb added exit 5 for
+// the reconciled claim_lost code.
+//
+// remote_unreachable is intentionally NOT asserted here: it is not a
+// close/push-path (exit-4) outcome. PushWithRetry collapses fetch failures
+// into push_exhausted, so the only emitter is `act bootstrap-worker`
+// (clone failure, exit 3). See act-6d9546; the EXIT CODES block no longer
+// lists it under exit 4.
 //
 // Semantics verified against docs/spec-v2.md error table:
 //   - exit 3: issue_not_found
-//   - exit 4: push_exhausted and remote_unreachable
-func TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour(t *testing.T) {
+//   - exit 4: push_exhausted
+//   - exit 5: claim_lost
+func TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive(t *testing.T) {
 	bin := actBinary(t)
 	if _, err := exec.LookPath(bin); err != nil {
 		t.Skipf("act binary not built at %s: %v", bin, err)
@@ -150,7 +157,8 @@ func TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour(t *testing.T) {
 		"issue_not_found",
 		"exit 4",
 		"push_exhausted",
-		"remote_unreachable",
+		"exit 5",
+		"claim_lost",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("act help errors: missing %q in EXIT CODES section\n%s", want, out)

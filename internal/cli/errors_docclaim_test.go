@@ -17,20 +17,20 @@ package cli
 // TestDocClaim_Errors_PushExhausted now fault-injects to produce push
 // exhaustion and asserts the RunClose exit code + envelope code.
 //
-// TestDocClaim_Errors_RemoteUnreachable calls closeErrorForPushFailure
-// directly with an ErrFetchFailed-wrapping error and asserts the mapping
-// produces exit=4 and envelope "remote_unreachable". The full RunClose
-// trigger path for remote_unreachable requires a non-fast-forward push
-// followed by a fetch failure; because PushWithRetry stores FetchAndRebase
-// errors as lastErr (retrying until exhaustion), a true end-to-end RunClose
-// test would produce push_exhausted rather than remote_unreachable. Testing
-// closeErrorForPushFailure directly is the correct boundary for this code
-// path — it is the function that maps the error to the documented envelope.
+// TestDocClaim_Errors_RemoteUnreachable (act-6d9546) drives the genuine
+// emitter of `remote_unreachable` at the user-visible boundary:
+// `act bootstrap-worker --from-remote <bad-url>`. A non-timeout clone failure
+// exits 3 with envelope `remote_unreachable` carrying details.url and
+// details.stderr_tail. The close/push path canNOT emit this code — PushWithRetry
+// stores a mid-loop fetch failure in lastErr and retries to exhaustion, so a
+// broken remote surfaces as push_exhausted, never remote_unreachable. The
+// previous version of this test called closeErrorForPushFailure directly
+// against a synthetic ErrFetchFailed-wrapping error, asserting an exit-4
+// mapping that no real input could ever produce; that classifier branch and
+// the spec's exit-4 claim were removed when the reachability was traced.
 // Deleting either test trips the sweep registry and breaks the build.
 
 import (
-	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/aac/act/internal/gitops"
@@ -89,53 +89,53 @@ func TestDocClaim_Errors_PushExhausted(t *testing.T) {
 }
 
 // TestDocClaim_Errors_RemoteUnreachable pins the behavioral contract for
-// `remote_unreachable` exit 4 documented in docs/spec-v2.md. The claim is
-// that when the underlying git fetch fails (ErrFetchFailed), the error is
-// classified into envelope code "remote_unreachable" with exit 4.
+// `remote_unreachable` exit 3 documented in docs/spec-v2.md's error table.
+// The genuine emitter is `act bootstrap-worker --from-remote <url>`: when the
+// initial `git clone` of the remote act-state fails for a non-timeout reason
+// (DNS, auth, unreachable / nonexistent URL), the staging dir is torn down
+// and the command exits 3 with envelope `remote_unreachable` carrying
+// details.url and details.stderr_tail.
 //
-// The test calls closeErrorForPushFailure directly with an ErrFetchFailed-
-// wrapping error and asserts the classification produces exit=4 and envelope
-// "remote_unreachable". This is the correct boundary for this code path
-// because PushWithRetry stores FetchAndRebase errors as lastErr (retrying
-// until exhaustion), so a full RunClose path with a broken remote produces
-// push_exhausted rather than remote_unreachable. The mapping from ErrFetchFailed
-// to the documented envelope lives in closeErrorForPushFailure; testing it
-// there ensures the guard catches a rename or removed branch in that function.
-//
-// Deleting this test trips the sweep registry and breaks the build.
+// Asserted at the RunBootstrapWorker boundary — the same surface the CLI
+// wires to exit code + JSON output — by pointing --from-remote at a
+// nonexistent local path so `git clone` fails fast without a network round
+// trip. Deleting this test trips the sweep registry and breaks the build.
 func TestDocClaim_Errors_RemoteUnreachable(t *testing.T) {
-	// Construct an error that wraps ErrFetchFailed but is not a
-	// *PushExhaustedError — this is the input shape that triggers the
-	// remote_unreachable classification path in closeErrorForPushFailure.
-	fetchErr := fmt.Errorf("%w: git fetch failed: exit status 128 (output: fatal: unable to connect)", gitops.ErrFetchFailed)
+	target := makeBootstrapTarget(t)
 
-	out, exitCode := closeErrorForPushFailure(fetchErr)
+	// A path that does not exist: `git clone <path>` fails immediately
+	// (non-timeout) → the remote_unreachable branch in RunBootstrapWorker.
+	badURL := target + "/does-not-exist-remote.git"
 
-	// Spec §error-envelope: remote_unreachable exits 4.
-	if exitCode != 4 {
-		t.Errorf("exit code = %d, want 4 (remote_unreachable); got out=%+v", exitCode, out)
+	out, exitCode := RunBootstrapWorker(BootstrapWorkerOptions{
+		FromRemoteURL: badURL,
+		Target:        target,
+	})
+
+	// Spec §error-envelope table: remote_unreachable exits 3.
+	if exitCode != 3 {
+		t.Errorf("exit code = %d, want 3 (remote_unreachable); got out=%+v", exitCode, out)
 	}
-	errOut, ok := out.(CloseErrorOutput)
+	m, ok := out.(map[string]any)
 	if !ok {
-		t.Fatalf("output type = %T, want CloseErrorOutput", out)
+		t.Fatalf("output type = %T, want map[string]any", out)
 	}
-	// The envelope Error field must be "remote_unreachable".
-	if errOut.Error != ErrRemoteUnreachable {
-		t.Errorf("envelope Error = %q, want %q", errOut.Error, ErrRemoteUnreachable)
+	if got, _ := m["error"].(string); got != ErrRemoteUnreachable {
+		t.Errorf("envelope error = %q, want %q", got, ErrRemoteUnreachable)
 	}
 	// Belt-and-braces: confirm ErrRemoteUnreachable has the value the spec claims.
 	if ErrRemoteUnreachable != "remote_unreachable" {
 		t.Fatalf("ErrRemoteUnreachable constant: want %q, got %q", "remote_unreachable", ErrRemoteUnreachable)
 	}
-	// The details must carry stderr_tail (the field documented in the spec row).
-	if errOut.Details == nil {
-		t.Errorf("CloseErrorOutput.Details is nil; want stderr_tail populated")
-	} else if _, ok := errOut.Details["stderr_tail"]; !ok {
-		t.Errorf("CloseErrorOutput.Details missing stderr_tail key; got %+v", errOut.Details)
+	// The details must carry url + stderr_tail (the fields the spec row names).
+	d, _ := m["details"].(map[string]any)
+	if d == nil {
+		t.Fatalf("envelope details is nil; want url + stderr_tail")
 	}
-	// Verify the classification is driven by ErrFetchFailed, not a
-	// catch-all: errors.Is must confirm the wrapping was detected.
-	if !errors.Is(fetchErr, gitops.ErrFetchFailed) {
-		t.Errorf("test precondition failed: fetchErr does not wrap ErrFetchFailed")
+	if got, _ := d["url"].(string); got != badURL {
+		t.Errorf("details.url = %q, want %q", got, badURL)
+	}
+	if _, ok := d["stderr_tail"]; !ok {
+		t.Errorf("details missing stderr_tail key; got %+v", d)
 	}
 }

@@ -763,7 +763,8 @@ var docClaimRegistry = []docClaim{
 	// The asserting test drives two sequential `act update --claim`
 	// subprocesses with different node_ids against the same issue and
 	// verifies exactly one winner (exit 0, claimed:true) and one loser
-	// (exit 1, claimed:false) at the subprocess boundary.
+	// (exit 5, claimed:false, error:claim_lost) at the subprocess boundary
+	// (act-a373bb reconciled the loser to exit 5 per spec §7.4).
 	{
 		name:         "claim-lost-last-write-wins",
 		docFile:      "README.md",
@@ -810,23 +811,31 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "migrate-to-nested",
 		testName:     "TestDocClaim_Help_ListsMigrateToNested",
 	},
-	// help-errors-exit-3 and help-errors-exit-4 (act-387e01): `act help errors`
+	// help-errors-exit-{3,4,5} (act-387e01, act-a373bb): `act help errors`
 	// EXIT CODES block previously listed only exits 1 and 2. Exit 3
-	// (issue_not_found) and exit 4 (push_exhausted, remote_unreachable) are
-	// documented in docs/spec-v2.md but were invisible to a reader of `act help
-	// errors`. The asserting test drives `act help errors` and asserts both
-	// exit-3 and exit-4 labels appear in the output.
+	// (issue_not_found) and exit 4 (push_exhausted) were added by act-387e01;
+	// exit 5 (claim_lost) by act-a373bb when the lost-claim code was
+	// reconciled to the spec. remote_unreachable is NOT listed under exit 4
+	// (act-6d9546): it is a bootstrap-worker exit-3 outcome, not a close-path
+	// one. The asserting test drives `act help errors` and asserts the
+	// exit-3/4/5 labels appear in the output.
 	{
 		name:         "help-errors-exit-3-issue-not-found",
 		docFile:      "cmd/act/help.go",
 		claimPattern: "exit 3   issue_not_found",
-		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour",
+		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive",
 	},
 	{
 		name:         "help-errors-exit-4-push-exhausted",
 		docFile:      "cmd/act/help.go",
 		claimPattern: "exit 4   push_exhausted",
-		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeAndFour",
+		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive",
+	},
+	{
+		name:         "help-errors-exit-5-claim-lost",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "exit 5   claim_lost",
+		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive",
 	},
 	// show-blocked-by-blocks (act-00e5cc): `act show --json <id>` includes
 	// `blocked_by` and `blocks` arrays. The spec claim lives in

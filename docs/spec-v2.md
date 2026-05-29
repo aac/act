@@ -512,7 +512,7 @@ Precedence rules:
 3. `--verify` + `--no-commit` is silently a no-op (no commit happens, hooks irrelevant).
 4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set.
 
-Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony. On retry exhaustion the command exits 4 with envelope `push_exhausted`; on a non-recoverable fetch failure during the retry loop, the command exits 4 with envelope `remote_unreachable`. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path.
+Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony. On retry exhaustion the command exits 4 with envelope `push_exhausted`; a fetch failure encountered mid-loop is carried inside that envelope's `details.last_error` rather than surfaced separately, because the retry helper retries fetch failures to exhaustion (it never bubbles a bare fetch error out of the loop — see §"push retry"). The `remote_unreachable` envelope is a `bootstrap-worker` clone-failure outcome, not a write-path one. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path.
 
 ### Offline mode (Phase 2, act-4a604d)
 
@@ -717,9 +717,9 @@ Each non-`--claim` field flag generates one op (so `--status blocked --priority 
 **JSON output (claim loss):**
 ```json
 {"ok": false, "claimed": false, "id":"act-a1b2c3d4e5f60718",
- "winner":"9c2bdead","reason":"lost-race"}
+ "winner":"9c2bdead","error":"claim_lost","reason":"lost-race"}
 ```
-Exit codes for `--claim`: `0` win, `1` loss or other logical error, `2` usage. Other update modes follow universal exit codes.
+Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
 
 **Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
 
@@ -979,7 +979,7 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
 | `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
 | `push_exhausted`           | 4    | `push retries exhausted after <N> attempts; last error: <msg>`             | `retry_count`, `shallow_unshallow_attempted`, `last_error` |
-| `remote_unreachable`       | 4    | `git fetch failed: <reason>`                                               | `remote`, `branch`, `stderr_tail`             |
+| `remote_unreachable`       | 3    | `act bootstrap-worker: clone <url>: <reason>`                              | `url`, `stderr_tail`                          |
 | `bootstrap_timeout`        | 4    | `act bootstrap-worker: clone <url> exceeded <N>s budget`                   | `timeout_seconds`, `url`                      |
 | `target_not_empty`         | 2    | `act bootstrap-worker: <path> exists and is non-empty; pass --force to overwrite` | `target`                                |
 | `blocked_by_external_dep`  | 2    | `<cmd>: <id> has <N> open external dep(s); clear with --ext-rm or override with --force` | `external_deps[]`               |

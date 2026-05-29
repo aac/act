@@ -548,9 +548,11 @@ func readSlowWriteLines(path string) ([]string, error) {
 //   - origin configured, push succeeds → return nil.
 //   - origin configured, push exhausts retries → return *PushExhaustedError
 //     unchanged so callers use errors.As to recover RetryCount /
-//     ShallowUnshallowAttempted.
-//   - origin configured, fetch failed in mid-loop → return the wrapped
-//     ErrFetchFailed; callers translate to envelope `remote_unreachable`.
+//     ShallowUnshallowAttempted. A fetch failure encountered mid-loop is
+//     retried to exhaustion and ends up carried in
+//     PushExhaustedError.LastError — PushWithRetry never bubbles a bare
+//     ErrFetchFailed out of the loop, so the write path surfaces
+//     push_exhausted, not remote_unreachable (act-6d9546).
 //   - Other push failures (e.g. auth) → return wrapped error.
 //
 // On entry into the PushWithRetry call (origin IS configured), the

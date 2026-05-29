@@ -648,6 +648,6 @@ EXIT CODES
              with --ext-rm or override with --force on update --claim / close
   exit 3   issue_not_found — id resolved to nothing (zero prefix matches)
   exit 4   push_exhausted — push retries exhausted after N attempts
-           remote_unreachable — git fetch failed (non-recoverable)
+  exit 5   claim_lost — concurrent claimer won; this claim lost the race
   The envelope is emitted before exit; success paths emit no envelope at all.
 `

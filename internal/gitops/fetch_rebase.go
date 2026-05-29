@@ -102,9 +102,13 @@ var (
 	ErrShallowRecovered = errors.New("gitops: shallow rebase recovered after --unshallow")
 
 	// ErrFetchFailed means `git fetch origin <branch>` itself failed —
-	// network error, missing branch, or auth failure. The original
-	// stderr is wrapped into the returned error message; callers
-	// translate to envelope code `remote_unreachable`.
+	// network error, missing branch, or auth failure. The original stderr
+	// is wrapped into the returned error message. Note (act-6d9546): the
+	// write-path caller PushWithRetry stores this in lastErr and retries to
+	// exhaustion, so it is NOT translated to envelope `remote_unreachable`;
+	// it ends up inside PushExhaustedError.LastError and the command exits
+	// push_exhausted. The read-cache caller treats fetch failures as
+	// non-fatal (falls through to on-disk state).
 	ErrFetchFailed = errors.New("gitops: fetch failed")
 )
 

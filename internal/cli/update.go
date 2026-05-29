@@ -88,11 +88,17 @@ type UpdateResult struct {
 
 // UpdateClaimResult is the JSON shape returned by `act update --claim`.
 // Field tags mirror spec §3 `act update` JSON output examples.
+//
+// On a claim loss the result carries Error=claim_lost so the JSON envelope
+// surfaces the canonical error slug (spec §error-envelope: claim_lost, exit
+// 5) alongside the structured claim fields (claimed:false, winner, reason).
+// The Error field is omitted on the win path.
 type UpdateClaimResult struct {
 	OK         bool     `json:"ok"`
 	Claimed    bool     `json:"claimed"`
 	ID         string   `json:"id"`
 	Winner     string   `json:"winner"`
+	Error      string   `json:"error,omitempty"`
 	Reason     string   `json:"reason,omitempty"`
 	OpsWritten []string `json:"ops_written,omitempty"`
 }
@@ -122,8 +128,9 @@ var validUpdateStatuses = map[string]bool{
 // Returns:
 //   - output: UpdateResult on non-claim success, UpdateClaimResult on
 //     claim, UpdateErrorOutput on failure.
-//   - exitCode: 0 success / claim win; 1 claim loss or logical failure;
-//     2 bad flags / forbidden combinations; 3 missing repo / unknown id.
+//   - exitCode: 0 success / claim win; 5 claim loss (envelope claim_lost);
+//     1 other logical failure; 2 bad flags / forbidden combinations;
+//     3 missing repo / unknown id.
 func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// Step 1: repo + .act/ required.
 	if !hasGitDir(repoRoot) {
@@ -548,7 +555,8 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 
 // runUpdateClaim dispatches the --claim flow via internal/claim.RunClaim.
 // On win (Result.Claimed == true): exit 0 with the win envelope.
-// On loss (Claimed == false): exit 1 with the loss envelope.
+// On loss (Claimed == false): exit 5 with the loss envelope (error
+// claim_lost), per spec §error-envelope's universal exit-code table.
 // On hard error (drift / write / commit / pull-rebase): exit 1 with an
 // UpdateErrorOutput.
 func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
@@ -662,13 +670,19 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 			OpsWritten: []string{"claim"},
 		}, 0
 	}
+	// Claim loss: exit 5 with envelope error `claim_lost` per spec
+	// §error-envelope (the universal exit-code table) and §3 `act update`.
+	// The structured fields (claimed:false, winner, reason:"lost-race")
+	// are preserved so JSON consumers keep the winner id and the
+	// lost-race detail; Error carries the canonical slug.
 	return UpdateClaimResult{
 		OK:      false,
 		Claimed: false,
 		ID:      res.IssueID,
 		Winner:  res.Winner,
+		Error:   ErrClaimLost,
 		Reason:  "lost-race",
-	}, 1
+	}, 5
 }
 
 // splitDepRm parses a "--dep-rm" argument into (id, edge_type). The

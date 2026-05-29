@@ -195,8 +195,10 @@ func TestRunUpdate_ClaimHappyPath(t *testing.T) {
 }
 
 // TestRunUpdate_ClaimLossWithPreExistingWinner: plant an earlier claim
-// op on disk so our --claim invocation loses; expect exit 1 with a
-// structured loss envelope.
+// op on disk so our --claim invocation loses; expect exit 5 (claim_lost)
+// with a structured loss envelope carrying error=claim_lost. The exit code
+// and slug match spec §error-envelope's universal exit-code table
+// (reconciled in act-a373bb).
 func TestRunUpdate_ClaimLossWithPreExistingWinner(t *testing.T) {
 	root, id := makeUpdateRepoWithIssue(t)
 
@@ -211,8 +213,8 @@ func TestRunUpdate_ClaimLossWithPreExistingWinner(t *testing.T) {
 		Claim:    true,
 		Isolated: true,
 	})
-	if code != 1 {
-		t.Fatalf("code = %d, want 1; out=%+v", code, out)
+	if code != 5 {
+		t.Fatalf("code = %d, want 5 (claim_lost); out=%+v", code, out)
 	}
 	res, ok := out.(UpdateClaimResult)
 	if !ok {
@@ -220,6 +222,9 @@ func TestRunUpdate_ClaimLossWithPreExistingWinner(t *testing.T) {
 	}
 	if res.Claimed || res.OK {
 		t.Errorf("Claimed=%v OK=%v, want false/false", res.Claimed, res.OK)
+	}
+	if res.Error != ErrClaimLost {
+		t.Errorf("Error = %q, want %q", res.Error, ErrClaimLost)
 	}
 	if res.Winner != "competitor" {
 		t.Errorf("Winner = %q, want competitor", res.Winner)

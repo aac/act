@@ -745,13 +745,13 @@ func TestDocClaim_NoDoctorOptOut(t *testing.T) {
 //
 // Asserted at the subprocess exit-code + stdout boundary:
 //   - Winner: exit 0, {"ok":true,"claimed":true,"winner":"<winnerNodeID>"}
-//   - Loser:  exit 1, {"ok":false,"claimed":false,"winner":"<winnerNodeID>"}
+//   - Loser:  exit 5, {"ok":false,"claimed":false,"winner":"<winnerNodeID>",
+//     "error":"claim_lost"}
 //
-// Spec §7.4 says the loser exits 5; the implementation exits 1. The test
-// asserts the actual boundary (exit 1 + claimed:false) so it catches
-// regression at the real surface. The exit-code gap is documented as a
-// known spec/impl discrepancy; updating the code to emit exit 5 should
-// also update this test.
+// Spec §7.4 and the universal exit-code table both say the loser exits 5
+// with envelope claim_lost; act-a373bb reconciled the implementation to
+// match. The test asserts that boundary (exit 5 + claimed:false +
+// error:claim_lost).
 func TestDocClaim_ClaimLost_LastWriteWins(t *testing.T) {
 	if actBinaryPath == "" {
 		t.Skip("actBinaryPath not set (TestMain did not run)")
@@ -802,13 +802,17 @@ func TestDocClaim_ClaimLost_LastWriteWins(t *testing.T) {
 	// Second claim: loser path. Fold sees two ops; winner's earlier HLC wins.
 	loseOut, _, loseCode := runAct(t, site, "update", "--claim", "--isolated", "--json", id)
 
-	// Primary assertion: exit 1 (the actual boundary code for a claim loss).
-	if loseCode != 1 {
-		t.Errorf("loser claim: exit %d, want 1; stdout:\n%s", loseCode, loseOut)
+	// Primary assertion: exit 5 (the reconciled claim_lost boundary code).
+	if loseCode != 5 {
+		t.Errorf("loser claim: exit %d, want 5 (claim_lost); stdout:\n%s", loseCode, loseOut)
 	}
 	// The loser output must carry claimed:false and the winner's node_id.
 	if !strings.Contains(loseOut, `"claimed":false`) {
 		t.Errorf("loser claim: stdout missing claimed:false\n%s", loseOut)
+	}
+	// The loser envelope must carry the canonical claim_lost error slug.
+	if !strings.Contains(loseOut, `"error":"claim_lost"`) {
+		t.Errorf("loser claim: stdout missing error:claim_lost\n%s", loseOut)
 	}
 	if !strings.Contains(loseOut, winnerNodeID) {
 		t.Errorf("loser claim: stdout missing winner node_id %q\n%s", winnerNodeID, loseOut)

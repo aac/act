@@ -110,12 +110,11 @@ func TestConcurrentDistinctOps(t *testing.T) {
 // on subprocess scheduling to produce a deterministic HLC ordering across
 // truly concurrent processes.
 //
-// Spec §7.4 says the loser exits 5 with error code claim_lost; the current
-// implementation exits 1 with {"ok":false,"claimed":false,"reason":"lost-race"}.
-// The test asserts the actual subprocess-boundary behavior (exit 1 + claimed:false).
-// The exit-code discrepancy is a known spec/implementation gap; asserting the
-// real boundary is the load-bearing property here (vs asserting the spec value
-// which would always fail until the gap is closed).
+// Spec §7.4: the loser exits 5 with error code claim_lost. The implementation
+// (reconciled in act-a373bb) emits exit 5 with envelope
+// {"ok":false,"claimed":false,"winner":...,"error":"claim_lost","reason":"lost-race"}.
+// The test asserts that subprocess-boundary behavior (exit 5 + claimed:false +
+// error:claim_lost).
 func TestConcurrentClaimRace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping concurrency e2e under -short")
@@ -201,10 +200,11 @@ func TestConcurrentClaimRace(t *testing.T) {
 
 			// Step 4: invocation B (loser). Runs after A with a later
 			// wall-clock HLC. After committing its own op, fold sees
-			// both ops; A's earlier HLC wins; B exits 1 with claimed:false.
+			// both ops; A's earlier HLC wins; B exits 5 (claim_lost) with
+			// claimed:false.
 			loseOut, _, loseCode := runAct(t, site, "update", "--claim", "--isolated", "--json", id)
-			if loseCode != 1 {
-				t.Errorf("iter %d: loser claim: exit %d, want 1; output:\n%s", iter, loseCode, loseOut)
+			if loseCode != 5 {
+				t.Errorf("iter %d: loser claim: exit %d, want 5 (claim_lost); output:\n%s", iter, loseCode, loseOut)
 			}
 			// Verify loser envelope shape at the subprocess boundary.
 			var loseResult map[string]any
@@ -213,6 +213,9 @@ func TestConcurrentClaimRace(t *testing.T) {
 			}
 			if loseResult["claimed"] != false {
 				t.Errorf("iter %d: loser claim: claimed=%v, want false", iter, loseResult["claimed"])
+			}
+			if loseResult["error"] != "claim_lost" {
+				t.Errorf("iter %d: loser claim: error=%v, want claim_lost", iter, loseResult["error"])
 			}
 			// winner field must be the actual winner's node_id, not the loser's.
 			if loseResult["winner"] != winnerNodeID {

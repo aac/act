@@ -471,13 +471,14 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			// PushWithRetry. On *PushExhaustedError we surface envelope
 			// `push_exhausted` (exit 4 per spec §error-envelope) with
 			// details.retry_count / shallow_unshallow_attempted populated
-			// from the structured error. On ErrFetchFailed (and only that
-			// sentinel) we surface envelope `remote_unreachable` (also exit
-			// 4). Other push errors surface as the legacy `push_failed`
-			// (exit 1) so the test suite for pre-3a behavior keeps passing.
-			// The commit has already landed; on push failure we do NOT roll
-			// it back — the close op is on disk locally and recoverable
-			// via the harvest path.
+			// from the structured error; a fetch failure during the retry
+			// loop is carried inside that error's last_error (act-6d9546 —
+			// PushWithRetry never bubbles a bare ErrFetchFailed, so the close
+			// path cannot emit `remote_unreachable`). Other push errors
+			// surface as the legacy `push_failed` (exit 1). The commit has
+			// already landed; on push failure we do NOT roll it back — the
+			// close op is on disk locally and recoverable via the harvest
+			// path.
 			if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
 				return closeErrorForPushFailure(err)
 			}
@@ -593,10 +594,17 @@ func FormatCloseAlreadyClosedHuman(res CloseAlreadyClosed) string {
 // AutoPushAfterCommit and produces the right CloseErrorOutput shape +
 // exit code. *PushExhaustedError → envelope `push_exhausted` with
 // details.retry_count and details.shallow_unshallow_attempted (exit 4
-// per spec §error-envelope). gitops.ErrFetchFailed → `remote_unreachable`
-// (also exit 4). Everything else → legacy `push_failed` (exit 1) so the
-// pre-Phase-2 behavior of "any other push class is a generic failure"
-// stays compatible.
+// per spec §error-envelope). Everything else → legacy `push_failed`
+// (exit 1).
+//
+// Note (act-6d9546): the close push path can NOT surface
+// `remote_unreachable`. PushWithRetry stores a mid-loop ErrFetchFailed in
+// lastErr and retries to exhaustion, so a genuine fetch failure during the
+// retry loop surfaces as `push_exhausted` (with the fetch error carried in
+// details.last_error), never as a bare ErrFetchFailed. `remote_unreachable`
+// is reachable only from `act bootstrap-worker` (clone failure, exit 3 — see
+// bootstrap_worker.go and the spec error table). There is therefore no
+// ErrFetchFailed branch here.
 func closeErrorForPushFailure(err error) (any, int) {
 	var pe *gitops.PushExhaustedError
 	if errors.As(err, &pe) {
@@ -611,15 +619,6 @@ func closeErrorForPushFailure(err error) (any, int) {
 			Error:   ErrPushExhausted,
 			Message: fmt.Sprintf("push retries exhausted after %d attempts; last error: %v", pe.RetryCount, pe.LastError),
 			Details: details,
-		}, 4
-	}
-	if errors.Is(err, gitops.ErrFetchFailed) {
-		return CloseErrorOutput{
-			Error:   ErrRemoteUnreachable,
-			Message: fmt.Sprintf("git fetch failed: %v", err),
-			Details: map[string]any{
-				"stderr_tail": CaptureStderrTail(err.Error()),
-			},
 		}, 4
 	}
 	return CloseErrorOutput{
