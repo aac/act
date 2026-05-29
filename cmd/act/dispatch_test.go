@@ -2,27 +2,23 @@ package main
 
 import (
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-// actBinary returns the absolute path to the freshly-built act binary at
-// ./bin/act, or skips the test if it isn't present (Makefile / CI builds it).
-// We avoid `go run` from a test because race-y rebuilds inside `go test ./...`
-// have caused intermittent ENOTEXIT in this repo before.
+// actBinary returns the absolute path to the freshly-built act binary.
+// The binary is compiled once per test run by TestMain (see testmain_test.go)
+// into a temp dir, so it always reflects the current source tree — a stale
+// or absent ./bin/act has no effect on these tests.
+// If the build failed (e.g. go not in PATH), the test is skipped with a
+// clear message mirroring the existing exec.LookPath skip behavior.
 func actBinary(t *testing.T) string {
 	t.Helper()
-	// Resolve relative to the package's own dir using runtime.Caller; works
-	// no matter where `go test` is invoked from.
-	_, here, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(here), "..", ".."))
-	bin := filepath.Join(repoRoot, "bin", "act")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
+	testBinaryOnce.Do(func() {}) // ensure init ran (no-op if TestMain fired)
+	if testBinaryOnce.err != nil {
+		t.Skipf("act binary could not be built: %v", testBinaryOnce.err)
 	}
-	return bin
+	return testBinaryOnce.path
 }
 
 // run executes the act binary with the given args and returns
