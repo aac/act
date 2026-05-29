@@ -23,5 +23,32 @@ Thumbs.db
 .act/
 .ask/
 
-# Operator-workflow artifacts (session state, not project deliverables)
+# Operator-workflow artifacts (session state, working papers — not project
+# deliverables). These were part of how act was built, not what a contributor
+# consumes; they remain in git history. See docs/README.md for the tracked set.
 docs/session-handoff.md
+docs/STATUS.md
+docs/dogfood-report.md
+docs/verification.md
+docs/usability-review.md
+docs/surface-gap-analysis.md
+docs/release-history-cleanup-memo.md
+docs/dispatcher-prompt.md
+docs/triage.md
+docs/pre-release-audit-bcce95.md
+# Brief iterations, rebuttals, and review rounds
+docs/brief.md
+docs/brief-v*.md
+docs/brief-review-*.md
+docs/brief-rebuttals*.md
+# Spec-review rounds
+docs/spec-review-*.md
+# Plan-review passes
+docs/reviews/
+# Pre-nested-repo issue markdown (superseded by .act/). Two files cited by
+# tracked source comments are kept tracked: docs/issues/act-2e8d.md and
+# docs/issues/act-e1d4.md.
+docs/issues/*.md
+docs/issues/.gitkeep
+!docs/issues/act-2e8d.md
+!docs/issues/act-e1d4.md
