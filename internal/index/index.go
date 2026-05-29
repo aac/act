@@ -551,6 +551,39 @@ func coerceInt(v any) int {
 	return 0
 }
 
+// BlocksOf returns the sorted list of issue ids whose deps[] contain
+// (parent_id=parentID, edge_type=blocks) — i.e. the set of issues that
+// are blocked by parentID. This is the reverse direction of the blocks
+// edge: if "act-AAA is blocked by act-BBB" is the forward direction,
+// then BlocksOf("act-BBB") returns ["act-AAA"].
+//
+// The query reads from the current index state without triggering a
+// rebuild; callers that need guaranteed freshness should Rebuild before
+// calling. Returns nil (not an error) if the index has no rows for this
+// parent.
+func (i *Index) BlocksOf(parentID string) ([]string, error) {
+	rows, err := i.db.Query(
+		`SELECT issue_id FROM issue_deps WHERE parent_id = ? AND edge_type = 'blocks' ORDER BY issue_id ASC`,
+		parentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("index: blocks_of %s: %w", parentID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("index: blocks_of scan %s: %w", parentID, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("index: blocks_of iter %s: %w", parentID, err)
+	}
+	return out, nil
+}
+
 // ListAll returns every (non-tombstoned) issue matching filter, ordered by
 // (priority asc, id asc) for stable output.
 func (i *Index) ListAll(filter Filter) ([]Row, error) {

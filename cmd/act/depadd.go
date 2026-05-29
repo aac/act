@@ -29,7 +29,8 @@ func runDepAdd(args []string) int {
 	// by an entry pointing at B (the blocker). The output strings on
 	// `act dep add` and `act show` read in this direction (e.g.
 	// "Added: A is blocked by B" and `dep: blocked-by B`).
-	typ := fs.String("type", "blocks", "edge type (blocks|relates|supersedes); for blocks, `act dep add A B --type blocks` means A is blocked by B; A is hidden from ready until B closes")
+	// Inspection hint: inspect with act show <id> (human) or act show <id> --json (blocked_by / blocks arrays).
+	typ := fs.String("type", "blocks", "edge type (blocks|relates|supersedes); for blocks, `act dep add A B --type blocks` means A is blocked by B; A is hidden from ready until B closes; inspect with act show <id> (human) or act show <id> --json (blocked_by / blocks arrays)")
 	blockedBy := fs.String("blocked-by", "", "directional alias: <a> --blocked-by <b> means a is blocked by b")
 	blocks := fs.String("blocks", "", "directional alias: <a> --blocks <b> means a blocks b")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")

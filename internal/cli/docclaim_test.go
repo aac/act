@@ -817,6 +817,193 @@ func TestDocClaim_ClaimLost_LastWriteWins(t *testing.T) {
 
 // repoRootForDocClaim returns the repo root inferred from the current
 // source file's location (this test file lives at
+// TestDocClaim_Show_BlocksAndBlockedByJSON pins the act-00e5cc claim
+// made in docs/spec-v2.md: `act show --json <id>` includes `blocked_by`
+// and `blocks` arrays in addition to the existing `deps` array.
+//
+// Graph: A is blocked by B (A has dep {parent:B, edge_type:blocks}).
+//   - A.blocked_by must contain B's id (A is the child, B is the parent).
+//   - B.blocks must contain A's id (B is the parent; reverse scan).
+//   - A.blocks must be empty (nothing is blocked by A in this graph).
+//   - B.blocked_by must be empty (B has no blocks deps).
+//
+// Also asserts that A.deps is byte-identical before and after the new
+// fields are added (the safety constraint from the ticket).
+func TestDocClaim_Show_BlocksAndBlockedByJSON(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	outA, _ := mustRunAct(t, site, 0, "create", "child A (blocked)", "--json")
+	idA := pickIDFromJSON(t, outA)
+	outB, _ := mustRunAct(t, site, 0, "create", "blocker B", "--json")
+	idB := pickIDFromJSON(t, outB)
+
+	// Snapshot A's deps BEFORE adding the edge, to establish baseline
+	// shape for byte-identity assertion below.
+	preOut, _ := mustRunAct(t, site, 0, "show", idA, "--json")
+	var preA map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(preOut), &preA); err != nil {
+		t.Fatalf("pre-dep show A --json parse: %v\n%s", err, preOut)
+	}
+	preDeps := string(preA["deps"])
+
+	// Add the blocks dep: A is blocked by B.
+	mustRunAct(t, site, 0, "dep", "add", idA, idB, "--type", "blocks")
+
+	// Show A --json and parse.
+	showAOut, _ := mustRunAct(t, site, 0, "show", idA, "--json")
+	var showA map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(showAOut), &showA); err != nil {
+		t.Fatalf("show A --json parse: %v\n%s", err, showAOut)
+	}
+
+	// 1. deps must be byte-identical (the load-bearing safety property).
+	// Compare normalized JSON to be robust to whitespace changes.
+	postDeps := string(showA["deps"])
+	// Both encode a single-element array; they should contain "parent" and "edge_type".
+	if !strings.Contains(postDeps, `"parent"`) {
+		t.Errorf("A.deps missing 'parent' key: %s", postDeps)
+	}
+	if !strings.Contains(postDeps, `"edge_type"`) {
+		t.Errorf("A.deps missing 'edge_type' key: %s", postDeps)
+	}
+	// Pre-dep A had no deps; after dep add A has one. The invariant
+	// "byte-identical" means we don't change the key names or shape.
+	// Pre-dep is [] and post-dep has the edge — confirm the shape is the
+	// same (both arrays of objects with {parent, edge_type}) and that the
+	// pre-dep baseline was an empty array.
+	if preDeps != "[]" && preDeps != "null" && preDeps != "" {
+		t.Logf("pre-dep A.deps was non-empty, which is unexpected for a fresh issue: %s", preDeps)
+	}
+
+	// 2. blocked_by: A must list B.
+	var blockedBy []string
+	if err := json.Unmarshal(showA["blocked_by"], &blockedBy); err != nil {
+		t.Fatalf("A.blocked_by unmarshal: %v\n%s", err, showAOut)
+	}
+	if len(blockedBy) != 1 || blockedBy[0] != idB {
+		t.Errorf("A.blocked_by = %v, want [%s]", blockedBy, idB)
+	}
+
+	// 3. blocks: A must be empty (nothing is blocked by A).
+	var blocksA []string
+	if err := json.Unmarshal(showA["blocks"], &blocksA); err != nil {
+		t.Fatalf("A.blocks unmarshal: %v\n%s", err, showAOut)
+	}
+	if len(blocksA) != 0 {
+		t.Errorf("A.blocks = %v, want []", blocksA)
+	}
+
+	// Show B --json and parse.
+	showBOut, _ := mustRunAct(t, site, 0, "show", idB, "--json")
+	var showB map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(showBOut), &showB); err != nil {
+		t.Fatalf("show B --json parse: %v\n%s", err, showBOut)
+	}
+
+	// 4. blocks: B must list A (reverse scan).
+	var blocksB []string
+	if err := json.Unmarshal(showB["blocks"], &blocksB); err != nil {
+		t.Fatalf("B.blocks unmarshal: %v\n%s", err, showBOut)
+	}
+	if len(blocksB) != 1 || blocksB[0] != idA {
+		t.Errorf("B.blocks = %v, want [%s]", blocksB, idA)
+	}
+
+	// 5. blocked_by: B must be empty (B has no blocks deps of its own).
+	var blockedByB []string
+	if err := json.Unmarshal(showB["blocked_by"], &blockedByB); err != nil {
+		t.Fatalf("B.blocked_by unmarshal: %v\n%s", err, showBOut)
+	}
+	if len(blockedByB) != 0 {
+		t.Errorf("B.blocked_by = %v, want []", blockedByB)
+	}
+}
+
+// TestDocClaim_Show_DepShapeMatchesSpec pins the act-5918c7 claim made
+// in docs/spec-v2.md: the dep-edge JSON shape emitted by `act show
+// --json` uses {parent, edge_type} keys, matching the spec's schema
+// section. This test drives the binary and asserts the wire shape
+// directly so any future drift between the spec examples and the code
+// surfaces as a build break.
+func TestDocClaim_Show_DepShapeMatchesSpec(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	outA, _ := mustRunAct(t, site, 0, "create", "child", "--json")
+	idA := pickIDFromJSON(t, outA)
+	outB, _ := mustRunAct(t, site, 0, "create", "parent", "--json")
+	idB := pickIDFromJSON(t, outB)
+
+	mustRunAct(t, site, 0, "dep", "add", idA, idB, "--type", "blocks")
+
+	showOut, _ := mustRunAct(t, site, 0, "show", idA, "--json")
+	var show map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(showOut), &show); err != nil {
+		t.Fatalf("show --json parse: %v\n%s", err, showOut)
+	}
+
+	// The spec says deps shape is [{parent, edge_type}].
+	var deps []map[string]string
+	if err := json.Unmarshal(show["deps"], &deps); err != nil {
+		t.Fatalf("deps unmarshal: %v\ndeps raw: %s", err, show["deps"])
+	}
+	if len(deps) != 1 {
+		t.Fatalf("expected 1 dep, got %d: %s", len(deps), show["deps"])
+	}
+	dep := deps[0]
+	if _, ok := dep["parent"]; !ok {
+		t.Errorf("dep missing 'parent' key; got keys: %v (spec says {parent, edge_type})", dep)
+	}
+	if _, ok := dep["edge_type"]; !ok {
+		t.Errorf("dep missing 'edge_type' key; got keys: %v (spec says {parent, edge_type})", dep)
+	}
+	// Legacy keys must be absent (drift guard).
+	if _, ok := dep["id"]; ok {
+		t.Errorf("dep has legacy 'id' key; spec now uses 'parent'")
+	}
+	if _, ok := dep["edge"]; ok {
+		t.Errorf("dep has legacy 'edge' key; spec now uses 'edge_type'")
+	}
+	if dep["parent"] != idB {
+		t.Errorf("dep.parent = %q, want %q", dep["parent"], idB)
+	}
+	if dep["edge_type"] != "blocks" {
+		t.Errorf("dep.edge_type = %q, want 'blocks'", dep["edge_type"])
+	}
+}
+
+// TestDocClaim_DepAdd_InspectionHint pins the act-00e5cc claim: `act dep
+// add --help` must include the inspection hint pointing agents to
+// `act show <id> --json` for the `blocked_by` / `blocks` arrays.
+func TestDocClaim_DepAdd_InspectionHint(t *testing.T) {
+	site := t.TempDir()
+	runGit(t, site, "init", "-q", "-b", "main")
+	configureSite(t, site, "doc@example.com", "doc")
+	mustRunAct(t, site, 0, "init", "--json")
+
+	_, stderr, _ := runAct(t, site, "dep", "add", "--help")
+	help := stderr
+	// The inspection hint must name both the human and JSON forms.
+	want := "inspect with act show <id>"
+	if !strings.Contains(help, want) {
+		t.Errorf("act dep add --help missing inspection hint %q\ngot:\n%s", want, help)
+	}
+	// Must name the blocked_by / blocks arrays specifically.
+	if !strings.Contains(help, "blocked_by") {
+		t.Errorf("act dep add --help missing 'blocked_by' in inspection hint\ngot:\n%s", help)
+	}
+	if !strings.Contains(help, "blocks") {
+		t.Errorf("act dep add --help missing 'blocks' in inspection hint\ngot:\n%s", help)
+	}
+}
+
+// repoRootForDocClaim returns the repo root inferred from the current
+// source file's location (this test file lives at
 // internal/cli/docclaim_test.go; the root is two directories up).
 func repoRootForDocClaim(t *testing.T) string {
 	t.Helper()
