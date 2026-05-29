@@ -183,7 +183,7 @@ type FoldDiffSummary struct {
 
 // Stable error code slug for the same-filename-different-content corruption
 // case. Defined locally so the constant block in errors.go stays untouched
-// (per CLAUDE.md "halt on breaking changes" + the locality of this code).
+// (per AGENTS.md "halt on breaking changes" + the locality of this code).
 const ErrOpFilenameCollision = "op_filename_collision"
 
 // Stable error code slug for "worker .act/ doesn't exist". Distinct from

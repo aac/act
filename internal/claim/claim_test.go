@@ -456,7 +456,7 @@ func TestRunClaim_ClaimAfterCloseExcluded(t *testing.T) {
 // claim protocol must short-circuit the rebase step (no remote, nothing
 // to rebase against) and complete as a normal win — without --isolated
 // being required by the caller. This is the local-first / fresh-repo
-// case CLAUDE.md's canonical loop now relies on.
+// case the act skill's canonical loop now relies on.
 func TestRunClaim_PullRebaseNoUpstreamIsNoopSuccess(t *testing.T) {
 	root := t.TempDir()
 	initRepo(t, root)
