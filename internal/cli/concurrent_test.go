@@ -390,6 +390,36 @@ func TestConcurrentDistinctOpsBidirectional(t *testing.T) {
 	}
 }
 
+// TestConcurrentClaimRace_TwoSiteConvergence is the faithful two-site
+// convergence variant of TestConcurrentClaimRace: two independent .act/.git
+// repos (siteA and siteB) each claim the same issue, then push/pull-rebase
+// to converge, and both sites must end up agreeing on exactly one HLC winner
+// (claimed:true) with the loser op retained in the fold output.
+//
+// This test is SKIPPED until Phase 2 multi-machine sync lands
+// (docs/coordination-plane-design.md, §"Phase 2 — act sync"). The
+// Phase 1 nested-.act/.git design has no mechanism for two independent
+// .act remotes to exchange op files via push/pull-rebase; once Phase 2
+// ships the nested repo gains its own `act remote` and `act remote sync`,
+// which provides exactly the two-site push/pull-rebase surface this test
+// requires.
+//
+// When Phase 2 lands:
+//  1. Remove the t.Skip call below.
+//  2. Build the two-site fixture via makeShared (or a new Phase 2 variant
+//     that wires two nested .act remotes instead of sharing the host origin).
+//  3. Assert that after push/pull-rebase convergence:
+//     - Both sites produce identical fold output for the contested issue.
+//     - Exactly one site reports claimed:true (winner); the other
+//       reports claimed:false, error:claim_lost (loser op retained).
+//     - Op-file counts on both sites are exactly 2 (one per claimant).
+//
+// Do NOT remove this placeholder — it documents the deferred Phase 2 work
+// that TestConcurrentClaimRace's single-site approximation cannot cover.
+func TestConcurrentClaimRace_TwoSiteConvergence(t *testing.T) {
+	t.Skip("Phase 2 dependency: faithful two-site convergence requires Phase 2 multi-machine sync (docs/coordination-plane-design.md, §Phase 2 — act sync); the single-site approximation in TestConcurrentClaimRace covers fold winner-selection until then")
+}
+
 // itoa is a tiny non-fmt int-to-string for subtest names.
 func itoa(n int) string {
 	if n == 0 {

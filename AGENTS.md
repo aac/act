@@ -25,7 +25,7 @@ A claim is **user-visible** when any of the following surfaces it to an agent or
 - "Prefix ok" on `--under <id>` → a test driving `act ready --under <unique-prefix>` and asserting it resolves (not "the resolver returned the right id").
 - The canonical-loop step "6. git push" in `act help` → a test asserting `act help` output contains `git push` in the loop section.
 - The commit-marker format claimed in `act help workflow` and the spec → a test reading `git log -1 --format=%B` for the `Act-Id:` trailer (not the op-file envelope).
-- The "claim is atomic; concurrent claimers resolve last-write-wins" claim in README → a concurrent test driving two parallel claims and asserting only one wins, the other gets `claim_lost`.
+- The "claim is atomic; concurrent claimers resolve last-write-wins" claim in README → a test driving two sequential `act update --claim --isolated` subprocesses with different node_ids against the same issue, asserting the first (earlier HLC) wins (exit 0, `claimed:true`) and the second loses (exit 5, `claimed:false`, `error:claim_lost`) at the subprocess boundary. Sequential invocation is equivalent to truly concurrent for fold winner-selection, which depends only on HLC ordering, not subprocess launch order.
 
 **What does NOT count** (still write tests, but not under this rule):
 - An internal helper's invariant that isn't documented anywhere user-visible (e.g. `ops.foldEnvelopes` returns the latest by HLC). Test it, but it isn't a doc claim.
