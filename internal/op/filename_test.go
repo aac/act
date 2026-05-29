@@ -287,6 +287,79 @@ func TestProbeAndWrite_CreatesShardDir(t *testing.T) {
 	}
 }
 
+// TestProbeAndWrite_ReadBackConfirmsPersistence asserts the fail-loud
+// persistence guarantee (act-40fce0): a successful ProbeAndWrite means the op
+// is durably on disk AND byte-identical when read back. We write a non-empty
+// body, then independently read the returned path and require exact equality
+// — proving the function did not return a synthetic success for bytes that
+// never landed.
+func TestProbeAndWrite_ReadBackConfirmsPersistence(t *testing.T) {
+	tmp := t.TempDir()
+	e := aprilEnv(t)
+	body := []byte(`{"persisted":true,"n":42}`)
+	var acq, rel int
+	path, _, err := ProbeAndWrite(tmp, e, body, nopLock(&acq, &rel))
+	if err != nil {
+		t.Fatalf("ProbeAndWrite: %v", err)
+	}
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("read-back of returned path failed: %v", rerr)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("read-back mismatch: got %q want %q", got, body)
+	}
+}
+
+// TestAtomicWrite_ReadBackFailureIsLoud asserts the read-back branch of
+// atomicWrite fails loud with ErrPersistenceUnconfirmed (act-40fce0). It uses
+// a writeReadBack seam (a package var defaulting to os.ReadFile) to inject a
+// read-back that returns the wrong bytes — simulating the silent-loss
+// signature where the rename "succeeded" but the op is not durably present
+// with the expected content. atomicWrite must refuse to claim success.
+func TestAtomicWrite_ReadBackFailureIsLoud(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "op.json")
+	body := []byte(`{"k":"v"}`)
+
+	// Inject a read-back that returns truncated bytes.
+	orig := readBackForTest
+	readBackForTest = func(name string) ([]byte, error) {
+		return []byte("x"), nil // wrong content → unconfirmed
+	}
+	defer func() { readBackForTest = orig }()
+
+	err := atomicWrite(dir, target, body)
+	if !errors.Is(err, ErrPersistenceUnconfirmed) {
+		t.Fatalf("atomicWrite err = %v, want ErrPersistenceUnconfirmed", err)
+	}
+	// The unconfirmed op file must be removed so a later read/harvest never
+	// sees a half-confirmed write.
+	if _, serr := os.Stat(target); !os.IsNotExist(serr) {
+		t.Fatalf("target %s still exists after unconfirmed write; want removed (stat err=%v)", target, serr)
+	}
+}
+
+// TestAtomicWrite_ReadBackErrorIsLoud asserts atomicWrite surfaces
+// ErrPersistenceUnconfirmed when the read-back itself errors (file not
+// readable), not just when bytes differ.
+func TestAtomicWrite_ReadBackErrorIsLoud(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "op.json")
+	body := []byte(`{"k":"v"}`)
+
+	orig := readBackForTest
+	readBackForTest = func(name string) ([]byte, error) {
+		return nil, errors.New("simulated read failure")
+	}
+	defer func() { readBackForTest = orig }()
+
+	err := atomicWrite(dir, target, body)
+	if !errors.Is(err, ErrPersistenceUnconfirmed) {
+		t.Fatalf("atomicWrite err = %v, want ErrPersistenceUnconfirmed", err)
+	}
+}
+
 func TestProbeAndWrite_LockErrorPropagates(t *testing.T) {
 	tmp := t.TempDir()
 	e := aprilEnv(t)

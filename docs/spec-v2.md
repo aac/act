@@ -1479,6 +1479,58 @@ exit 0."
 | `bootstrap_timeout` | 4 | `act bootstrap-worker --from-remote` | Clone exceeded the wall-clock budget. Carries `details.timeout_seconds` (the value enforced) and `details.url`. |
 | `target_not_empty` | 2 | `act bootstrap-worker` | Target `.act/` exists and is non-empty; `--force` is required to overwrite. Carries `details.target`. |
 
+## `act bootstrap-worker --from-cwd` (worker-cwd mode, act-40fce0)
+
+`act bootstrap-worker --from-cwd <orchestrator-path> [<target-path>]` is the
+source/target inversion of the default cwd-source mode. The **worker** runs
+it from inside its freshly-created worktree, naming the **orchestrator**'s
+repo root (or `.act/` directory) as the source; the target defaults to the
+process cwd when the positional `<target-path>` is omitted. It exists because
+a worktree created *during* an Agent dispatch does not exist when the
+orchestrator would otherwise run `act bootstrap-worker <target>` — so the
+orchestrator cannot bootstrap a not-yet-existing target, and the only
+previous workaround was a raw `cp -r <orchestrator>/.act .` from inside the
+worktree.
+
+### Behavior
+
+- Resolve the source: `<orchestrator-path>` may be a host repo root or a
+  `.act/` directory; both resolve to the orchestrator's `.act/` tree. Source
+  must have a nested `.act/.git` or exit 3.
+- Resolve the target: `<target-path>`, defaulting to cwd. Refuse a non-empty
+  target `.act/` unless `--force` (exit 2, envelope `target_not_empty`).
+  Refuse a source/target that resolve to the same `.act/` (exit 2,
+  `bad_flag`).
+- Copy the source `.act/` op log + `config.json` + `snapshots/` + `imports/`
+  + nested `.act/.git` into a private staging dir, then atomic-rename to
+  `<target>/.act/`. The host `hooks/` subtree is omitted (same rationale as
+  the other modes).
+- **The live `index.db` (and its `-wal` / `-shm` / `-journal` sidecars) is
+  NOT copied.** After the rename, the index is rebuilt locally from the
+  copied op log (`index.Rebuild`). This is the load-bearing difference from
+  `cp -r`: copying a live, orchestrator-open SQLite file produced the
+  fragile concurrent-SQLite / stale-index interaction behind the
+  orchestrate-worker silent-data-loss bug. The index is a pure derived
+  cache, so a local rebuild is always correct.
+- Round-trip validate via a `ready`-equivalent; tear the target down on
+  validation or index-rebuild failure.
+
+`--from-cwd`, `--from-remote`, and the default cwd-source path are mutually
+exclusive at the flag layer.
+
+### Op-write persistence guarantee
+
+Independent of bootstrap mode, every op write (`act create`, `act close`,
+`act dep add`, and the other write subcommands) MUST NOT return a synthetic
+success when the op cannot be confirmed durably persisted to a location
+`act harvest` will see. After writing the `.act/ops/<op>.json` file the
+writer fsyncs the file, fsyncs the containing directory, and **reads the
+file back**, requiring byte-equality with what was written; a read-back
+failure or mismatch surfaces a loud `write_failed`-class error (non-zero
+exit) and removes the unconfirmed file, never "Created act-XXXXXX". Silent
+success that later vanishes is the worst failure mode and is the class this
+guarantee closes.
+
 ## Doctor reconciliation (Phase 2 ticket 9)
 
 Phase 2 ticket 9 (act-aa4f19) extends `act doctor` with five new

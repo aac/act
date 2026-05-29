@@ -1,6 +1,7 @@
 package op
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,20 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrPersistenceUnconfirmed is returned by ProbeAndWrite when the op file
+// was written and renamed into place but a post-write read-back could not
+// confirm the bytes are durably present and byte-identical to what was
+// written. This is the load-bearing fail-loud guarantee (act-40fce0): an op
+// write that cannot be confirmed to have landed where `act harvest` will see
+// it MUST surface a loud error and a non-zero exit, never a synthetic
+// success. Silent success that later vanishes is the worst failure mode —
+// the orchestrate-worker silent-data-loss bug (a worker `act create` that
+// returned "Created act-XXXXXX" but whose op file was never observable by a
+// later `act harvest`) is exactly this class.
+//
+// Callers translate this to a `write_failed`-class error envelope (exit 1).
+var ErrPersistenceUnconfirmed = errors.New("op: write succeeded but read-back could not confirm persistence")
 
 // IsoLayout is the fixed-width 24-char NTFS-safe variant of the ISO-8601
 // millisecond UTC layout used for on-disk filenames per spec §Op file
@@ -141,7 +156,25 @@ func ProbeAndWrite(rootOps string, env Envelope, body []byte, fsLock func() (rel
 	return "", 0, ErrOpHashCollision
 }
 
-// atomicWrite writes body to a temp file in dir and renames it onto target.
+// atomicWrite writes body to a temp file in dir and renames it onto target,
+// then guarantees the write is durably persisted and observable:
+//
+//  1. write body to a temp file in the same directory,
+//  2. fsync the temp file (data + metadata),
+//  3. rename it onto target (atomic on POSIX within a filesystem),
+//  4. fsync the containing directory so the rename itself is durable
+//     (a rename can otherwise be lost across a crash even though the
+//     file's contents were fsynced),
+//  5. read the target file back and verify the bytes are byte-identical
+//     to body.
+//
+// Step 5 is the load-bearing fail-loud check (act-40fce0): if the read-back
+// fails or the bytes differ, the function returns ErrPersistenceUnconfirmed
+// so the calling command surfaces a loud error rather than a synthetic
+// success. This closes the orchestrate-worker silent-data-loss class where
+// a write "succeeded" but the op never landed where `act harvest` could see
+// it.
+//
 // On any error the temp file is removed so no `.tmp` file is left behind.
 func atomicWrite(dir, target string, body []byte) error {
 	f, err := os.CreateTemp(dir, ".op-*.json.tmp")
@@ -170,7 +203,52 @@ func atomicWrite(dir, target string, body []byte) error {
 		cleanup()
 		return fmt.Errorf("op: ProbeAndWrite: rename: %w", err)
 	}
+	// Fsync the containing directory so the rename (a directory-entry
+	// mutation) is itself durable. Without this a crash after a successful
+	// content fsync can still lose the file because the directory block
+	// hadn't been flushed. Best-effort: not every platform/filesystem lets
+	// you open a directory for fsync, and a failure here is not by itself
+	// proof the rename was lost — the read-back below is the authoritative
+	// confirmation, so a dir-fsync error is non-fatal.
+	syncDir(dir)
+	// Read-back verification — the fail-loud guarantee. The op MUST be
+	// observable at `target` with exactly the bytes we wrote, or we refuse
+	// to claim success. readBackForTest is a test seam (defaults to
+	// os.ReadFile) so the unconfirmed-persistence branch is deterministically
+	// exercisable.
+	got, rerr := readBackForTest(target)
+	if rerr != nil {
+		// The file we just renamed into place is not readable. This is the
+		// silent-loss signature: the write path believed it succeeded but
+		// the op is not where a reader (fold / harvest) will find it.
+		_ = os.Remove(target)
+		return fmt.Errorf("%w: read-back of %s: %v", ErrPersistenceUnconfirmed, target, rerr)
+	}
+	if !bytes.Equal(got, body) {
+		_ = os.Remove(target)
+		return fmt.Errorf("%w: read-back of %s returned %d bytes, expected %d",
+			ErrPersistenceUnconfirmed, target, len(got), len(body))
+	}
 	return nil
+}
+
+// readBackForTest is the read-back used by atomicWrite's persistence
+// confirmation. It defaults to os.ReadFile; tests override it to inject a
+// failed or mismatched read-back and exercise the ErrPersistenceUnconfirmed
+// branch deterministically. Production code never reassigns it.
+var readBackForTest = os.ReadFile
+
+// syncDir best-effort fsyncs a directory so a preceding rename into it is
+// durable. Errors are swallowed: directory fsync is unsupported on some
+// platforms (notably Windows) and the read-back in atomicWrite is the
+// authoritative persistence check, not this.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // filenameRe validates the on-disk op filename layout. The hash component

@@ -72,6 +72,7 @@ import (
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hlc"
+	"github.com/aac/act/internal/index"
 )
 
 // BootstrapWorkerOptions controls `act bootstrap-worker`.
@@ -88,9 +89,39 @@ type BootstrapWorkerOptions struct {
 	// <Target>/.act/. Mutually exclusive with the cwd-source path.
 	FromRemoteURL string
 
+	// FromCWDSourcePath, when non-empty, switches the command into the
+	// worker-cwd bootstrap mode (act-40fce0). This is the source/target
+	// inversion of the default cwd-source mode: the WORKER runs the
+	// command from inside its freshly-created worktree, names the
+	// ORCHESTRATOR's repo (or `.act/`) path as the source, and the target
+	// is the worker's own cwd (or an explicit Target). It exists because a
+	// worktree created DURING an Agent dispatch does not exist yet when the
+	// orchestrator would otherwise run `act bootstrap-worker <target>` — so
+	// the orchestrator cannot bootstrap a not-yet-existing target, and the
+	// only previous workaround was a raw `cp -r <orchestrator>/.act .` from
+	// inside the worktree.
+	//
+	// Critically, this mode does NOT copy a live `index.db` (or its
+	// `-wal` / `-shm` / `-journal` sidecars). The orchestrator may still
+	// have the index open; copying a live SQLite file in-flight is the
+	// fragile interaction behind the orchestrate-worker silent-data-loss
+	// bug. Instead it copies only the op log + config + snapshots +
+	// imports + the nested `.act/.git`, then REBUILDS `index.db` locally
+	// from the copied op log. The index is a pure derived cache, so a
+	// local rebuild is always correct and never depends on the source's
+	// in-memory SQLite state.
+	//
+	// Mutually exclusive with FromRemoteURL and with the default
+	// cwd-source mode (which is selected when both FromRemoteURL and
+	// FromCWDSourcePath are empty).
+	FromCWDSourcePath string
+
 	// Target is the path under which the new `.act/` will land. The
 	// command creates `<target>/.act/`; the parent path must exist (we
 	// don't try to mkdir arbitrary ancestors — that's the caller's job).
+	//
+	// In the FromCWDSourcePath (worker-cwd) mode, an empty Target means
+	// "use the process cwd" — the worker is bootstrapping itself in place.
 	Target string
 
 	// Force makes the command replace a non-empty existing `<target>/.act/`.
@@ -149,6 +180,22 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+
+	if opts.FromRemoteURL != "" && opts.FromCWDSourcePath != "" {
+		return map[string]any{
+			"error":   ErrBadFlag,
+			"message": "act bootstrap-worker: --from-remote and --from-cwd are mutually exclusive",
+		}, 2
+	}
+
+	// Worker-cwd mode (act-40fce0): the worker runs from inside its own
+	// worktree and names the orchestrator path as the source; target
+	// defaults to cwd. This branch must precede the generic Target=="" guard
+	// because the empty-Target default (use cwd) is legitimate here.
+	if opts.FromCWDSourcePath != "" {
+		return runBootstrapFromCWD(opts)
+	}
+
 	if opts.Target == "" {
 		return map[string]any{
 			"error":   ErrBadFlag,
@@ -353,11 +400,33 @@ type copyStats struct {
 	SnapshotsCopied int
 }
 
+// indexFileBasenames is the set of `.act/` top-level basenames that make up
+// the live SQLite index and its journals. The worker-cwd bootstrap mode
+// (act-40fce0) skips these during copy and rebuilds the index locally,
+// because copying a live/locked index.db in-flight is the fragile
+// interaction behind the orchestrate-worker silent-data-loss bug.
+var indexFileBasenames = map[string]bool{
+	"index.db":         true,
+	"index.db-wal":     true,
+	"index.db-shm":     true,
+	"index.db-journal": true,
+}
+
 // copyTreeWithStats recursively copies src → dst, creating dst if
 // necessary, and returns counts of regular files under ops/ and
 // snapshots/. Symlinks are recreated as symlinks; permissions on copied
 // files are preserved.
 func copyTreeWithStats(src, dst string) (copyStats, error) {
+	return copyTreeWithStatsOpts(src, dst, false)
+}
+
+// copyTreeWithStatsOpts is copyTreeWithStats with an explicit
+// excludeIndex toggle. When excludeIndex is true, the top-level
+// `index.db` and its `-wal` / `-shm` / `-journal` sidecars are NOT copied
+// — the caller is responsible for rebuilding the index locally from the
+// copied op log. Used by the worker-cwd bootstrap mode (act-40fce0) to
+// avoid copying a live SQLite file the orchestrator may still have open.
+func copyTreeWithStatsOpts(src, dst string, excludeIndex bool) (copyStats, error) {
 	var stats copyStats
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return stats, fmt.Errorf("mkdir %s: %w", dst, err)
@@ -383,6 +452,12 @@ func copyTreeWithStats(src, dst string) (copyStats, error) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		// Worker-cwd mode: skip the live index.db + journals (act-40fce0).
+		// These are top-level files under `.act/`; the rebuild happens
+		// after the copy from the copied op log.
+		if excludeIndex && !info.IsDir() && indexFileBasenames[rel] {
 			return nil
 		}
 		target := filepath.Join(dst, rel)
@@ -493,6 +568,237 @@ func readSourceNodeID(srcAct string) string {
 		return "00000000"
 	}
 	return cfg.NodeID
+}
+
+// runBootstrapFromCWD handles the worker-cwd mode (act-40fce0):
+//
+//	act bootstrap-worker --from-cwd <orchestrator-path> [<target>] [--force]
+//
+// Source/target inversion of the default cwd-source mode. The WORKER runs
+// this from inside its freshly-created worktree. The source is the
+// orchestrator's repo root or `.act/` path (FromCWDSourcePath); the target
+// is opts.Target, defaulting to the process cwd when empty (the common
+// "bootstrap myself in place" call shape — the worktree was just created and
+// the worker's cwd is its root).
+//
+// The load-bearing difference from every other bootstrap mode: it does NOT
+// copy a live `index.db` (or its journals). It copies only the op log,
+// config, snapshots, imports, and the nested `.act/.git`, then REBUILDS the
+// index locally from the copied op log. This closes the orchestrate-worker
+// silent-data-loss class — a raw `cp -r` of a live, orchestrator-open
+// index.db produced a fragile concurrent-SQLite / stale-index interaction;
+// rebuilding the derived cache from the source-of-truth op log is always
+// correct and never depends on the source's in-memory SQLite state.
+func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
+	// Resolve the SOURCE: the orchestrator path the worker named. Accept
+	// either a repo root or a `.act/` directory; resolve to the .act/ tree.
+	srcArg := opts.FromCWDSourcePath
+	srcRoot, err := gitops.FindHostRepoRoot(srcArg)
+	if err != nil {
+		// The arg may itself be (or be inside) a `.act/`; FindHostRepoRoot
+		// skips nested .act/.git, so a bare `.act/` path that has no
+		// surrounding host repo surfaces ErrStandaloneActUnsupported. Fall
+		// back to treating srcArg as a host root whose `.act/` we look for
+		// directly so the worker can name either shape.
+		if abs, aerr := filepath.Abs(srcArg); aerr == nil {
+			if _, serr := os.Stat(filepath.Join(abs, ".act")); serr == nil {
+				srcRoot = abs
+			} else if filepath.Base(abs) == ".act" {
+				// They named the .act/ dir itself; its parent is the root.
+				srcRoot = filepath.Dir(abs)
+			} else {
+				return map[string]any{
+					"error":   ErrNoRepo,
+					"message": fmt.Sprintf("act bootstrap-worker: --from-cwd %s: resolve source repo: %v", srcArg, err),
+				}, 3
+			}
+		} else {
+			return map[string]any{
+				"error":   ErrNoRepo,
+				"message": fmt.Sprintf("act bootstrap-worker: --from-cwd %s: abs: %v", srcArg, aerr),
+			}, 3
+		}
+	}
+	srcAct, err := gitops.FindActStatePath(srcRoot)
+	if err != nil {
+		return map[string]any{
+			"error":   ErrActNotInitialized,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd source %s has no .act/ — run `act init` first", srcRoot),
+		}, 3
+	}
+
+	// Pre-flight: source nested .git must exist (same invariant as the
+	// default cwd-source mode — without it the copy silently loses op
+	// history).
+	if _, err := os.Stat(filepath.Join(srcAct, ".git")); err != nil {
+		return map[string]any{
+			"error":   "act_state_not_initialized",
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd source %s missing nested .git — run `act migrate-to-nested` or `act init`", srcAct),
+		}, 3
+	}
+
+	// Resolve the TARGET: opts.Target, defaulting to cwd.
+	targetArg := opts.Target
+	if targetArg == "" {
+		cwd, gerr := os.Getwd()
+		if gerr != nil {
+			return map[string]any{
+				"error":   ErrNoRepo,
+				"message": fmt.Sprintf("act bootstrap-worker: --from-cwd: getcwd: %v", gerr),
+			}, 3
+		}
+		targetArg = cwd
+	}
+	absTarget, err := filepath.Abs(targetArg)
+	if err != nil {
+		return map[string]any{
+			"error":   ErrBadFlag,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd: abs(%q): %v", targetArg, err),
+		}, 2
+	}
+	if _, err := os.Stat(absTarget); err != nil {
+		return map[string]any{
+			"error":   ErrStatFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd target %s: %v", absTarget, err),
+		}, 3
+	}
+
+	// Refuse to bootstrap from a source into itself — copying `.act/` onto
+	// itself would be a destructive no-op surprise.
+	targetAct := filepath.Join(absTarget, ".act")
+	if canonicalPath(targetAct) == canonicalPath(srcAct) {
+		return map[string]any{
+			"error":   ErrBadFlag,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd source and target resolve to the same .act/ (%s)", canonicalPath(srcAct)),
+		}, 2
+	}
+
+	// Pre-flight: refuse non-empty target .act/ unless --force.
+	if nonEmpty, err := dirNonEmpty(targetAct); err != nil {
+		return map[string]any{
+			"error":   ErrStatFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd stat target .act/: %v", err),
+		}, 3
+	} else if nonEmpty && !opts.Force {
+		return map[string]any{
+			"error":   ErrTargetNotEmpty,
+			"message": fmt.Sprintf("act bootstrap-worker: %s exists and is non-empty; pass --force to overwrite", targetAct),
+			"details": map[string]any{"target": targetAct},
+		}, 2
+	}
+
+	// Stage path under the target.
+	stagingAct := filepath.Join(absTarget, ".act.bootstrap")
+	if err := os.RemoveAll(stagingAct); err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd clear staging %s: %v", stagingAct, err),
+		}, 3
+	}
+
+	// Copy the source `.act/` → staging, EXCLUDING the live index.db and
+	// its journals (the whole point of this mode).
+	stats, err := copyTreeWithStatsOpts(srcAct, stagingAct, true)
+	if err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd copy %s → %s: %v", srcAct, stagingAct, err),
+		}, 3
+	}
+
+	// Stamp the dispatch_hlc / meta file into staging BEFORE the rename.
+	nodeID := readSourceNodeID(srcAct)
+	now := opts.Now()
+	dispatchHLC := hlc.HLC{Wall: now.UTC().UnixMilli(), Logical: 0, NodeID: nodeID}
+	hlcJSON, err := dispatchHLC.MarshalJSON()
+	if err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrMarshalFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd marshal dispatch_hlc: %v", err),
+		}, 3
+	}
+	meta := bootstrapMeta{
+		SourceRoot:  srcRoot,
+		DispatchHLC: string(hlcJSON),
+		CopiedAt:    now.UTC().Format(rfc3339Millis),
+	}
+	metaBody, err := json.Marshal(meta)
+	if err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrMarshalFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd marshal meta: %v", err),
+		}, 3
+	}
+	if err := os.WriteFile(filepath.Join(stagingAct, BootstrapMetaFileName), metaBody, 0o644); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd write meta: %v", err),
+		}, 3
+	}
+
+	// Atomic-ish rename of staging → target .act/.
+	if _, err := os.Stat(targetAct); err == nil {
+		if err := os.RemoveAll(targetAct); err != nil {
+			_ = os.RemoveAll(stagingAct)
+			return map[string]any{
+				"error":   ErrWriteFailed,
+				"message": fmt.Sprintf("act bootstrap-worker: --from-cwd remove existing %s: %v", targetAct, err),
+			}, 3
+		}
+	}
+	if err := os.Rename(stagingAct, targetAct); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd rename %s → %s: %v", stagingAct, targetAct, err),
+		}, 3
+	}
+
+	// REBUILD the index locally from the copied op log. This is the
+	// load-bearing replacement for copying the live index.db: the derived
+	// cache is regenerated from the source-of-truth op log, so the worker
+	// never inherits the orchestrator's in-flight SQLite state. A rebuild
+	// failure tears the target down — an unusable index is a hard failure
+	// for a worker that will immediately run read commands.
+	idxPath := filepath.Join(targetAct, "index.db")
+	idx, oerr := index.Open(idxPath)
+	if oerr != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   ErrIndexOpenFailed,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd open local index %s: %v", idxPath, oerr),
+		}, 3
+	}
+	if rerr := idx.Rebuild(filepath.Join(targetAct, "ops")); rerr != nil {
+		_ = idx.Close()
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   ErrIndexRebuildFail,
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd rebuild local index: %v", rerr),
+		}, 3
+	}
+	_ = idx.Close()
+
+	// Round-trip validation against the new target.
+	if validErr := validateBootstrappedTarget(absTarget); validErr != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   "bootstrap_validation_failed",
+			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd validation against %s failed: %v", targetAct, validErr),
+		}, 3
+	}
+
+	return BootstrapWorkerResult{
+		SourceRoot:      srcRoot,
+		Target:          absTarget,
+		OpsCopied:       stats.OpsCopied,
+		SnapshotsCopied: stats.SnapshotsCopied,
+		DispatchHLC:     string(hlcJSON),
+	}, 0
 }
 
 // runBootstrapFromRemote handles `act bootstrap-worker --from-remote

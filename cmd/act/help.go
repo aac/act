@@ -153,6 +153,9 @@ BOOTSTRAPPING A WORKER WORKTREE
     act bootstrap-worker <target-path> --json   # machine-readable summary
     act bootstrap-worker --from-remote <url> <target-path>
                                                 # clone .act/ from a remote URL
+    act bootstrap-worker --from-cwd <orchestrator-path>
+                                                # worker seeds its OWN cwd
+                                                # (rebuilds index.db locally)
 
   The copy stages into <target>/.act.bootstrap/ first and atomic-renames
   to <target>/.act/ on success, so a mid-copy failure never leaves a
@@ -172,6 +175,13 @@ BOOTSTRAPPING A WORKER WORKTREE
   the command exits 4 with envelope code 'bootstrap_timeout'. A target
   with a non-empty pre-existing .act/ exits 2 with 'target_not_empty'
   unless --force is passed.
+
+  --from-cwd inverts source and target: the WORKER runs it from inside
+  its freshly-created worktree, names the orchestrator path as the
+  source, and the target defaults to cwd. Use this instead of a raw
+  'cp -r <orchestrator>/.act .' — that copies the orchestrator's live
+  index.db and causes silent op-write loss. --from-cwd copies only the
+  op log + config and rebuilds index.db locally, which is always correct.
 
 HARVESTING A WORKER'S OPS BACK
   Mirror of bootstrap-worker. When a dispatched sub-agent finishes work

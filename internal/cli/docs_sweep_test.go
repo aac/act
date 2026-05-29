@@ -451,6 +451,39 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`target_not_empty`",
 		testName:     "TestDocClaim_BootstrapFromRemote_TargetNotEmptyEnvelope",
 	},
+	// bootstrap-from-cwd-* (act-40fce0): the worker-cwd bootstrap mode
+	// (`act bootstrap-worker --from-cwd <orchestrator-path>`) lets a worker
+	// inside a freshly-created worktree bootstrap from the orchestrator
+	// WITHOUT a raw `cp -r` of a live index.db — the divergence behind the
+	// orchestrate-worker silent-data-loss bug. The help-text flag claim
+	// lives in cmd/act/help.go; the spec section claim lives in
+	// docs/spec-v2.md; the worker-protocol guidance lives in the embedded
+	// SKILL.md. Drift shape: someone removes the --from-cwd listing or the
+	// spec section and a cold-start worker falls back to `cp -r`.
+	{
+		name:         "bootstrap-from-cwd-help-listed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "--from-cwd",
+		testName:     "TestDocClaim_BootstrapFromCWD_HelpListsFlag",
+	},
+	{
+		name:         "bootstrap-from-cwd-spec-section",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "worker-cwd mode, act-40fce0",
+		testName:     "TestDocClaim_BootstrapFromCWD_HelpListsFlag",
+	},
+	{
+		name:         "bootstrap-from-cwd-spec-persistence-guarantee",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "Op-write persistence guarantee",
+		testName:     "TestDocClaim_BootstrapFromCWD_PersistenceGuarantee",
+	},
+	{
+		name:         "bootstrap-from-cwd-skill-ref",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "--from-cwd",
+		testName:     "TestDocClaim_Skill_MentionsFromCwd",
+	},
 	// harvest-narrow-* (Phase 2 ticket 8, act-e31aa1): when the worker's
 	// .act/.git has act.role=worker AND its remote.origin.url matches the
 	// orchestrator's canonical .act/.git path, harvest short-circuits with
