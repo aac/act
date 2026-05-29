@@ -9,7 +9,7 @@ package cli
 //      (claude-config repo, OUTSIDE this repo) — names the
 //      `act bootstrap-worker --from-remote` invocation that dispatchers
 //      use when the project's orchestrator has `act.role=orchestrator`.
-//   2. internal/skill/SKILL.md "Phase 2 dispatch (push-attached)"
+//   2. skills/act/SKILL.md "Phase 2 dispatch (push-attached)"
 //      section — explains the worker-side picture: push during
 //      execution, harvest as fallback.
 //   3. docs/migration-runbook.md "Phase 1.5 → Phase 2 cutover" section
@@ -81,13 +81,13 @@ func TestDocClaim_OrchestratePhase2_FromRemoteFlow(t *testing.T) {
 // agents fall back to the Phase 1.5 picture.
 func TestDocClaim_Skill_Phase2DispatchSection(t *testing.T) {
 	root := repoRootForDocClaim(t)
-	body, err := os.ReadFile(filepath.Join(root, "internal/skill/SKILL.md"))
+	body, err := os.ReadFile(filepath.Join(root, "skills/act/SKILL.md"))
 	if err != nil {
 		t.Fatalf("read SKILL.md: %v", err)
 	}
 	const want = "Phase 2 dispatch (push-attached)"
 	if !strings.Contains(string(body), want) {
-		t.Errorf("internal/skill/SKILL.md no longer contains section header %q\n"+
+		t.Errorf("skills/act/SKILL.md no longer contains section header %q\n"+
 			"  The Phase 2 dispatch picture for cold-start workers depends on this header.",
 			want)
 	}

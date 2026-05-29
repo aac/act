@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aac/act/internal/skill"
+	"github.com/aac/act/skills"
 )
 
 // TestDispatchInstallSkillHelp asserts the new subcommand is wired into

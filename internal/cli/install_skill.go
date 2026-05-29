@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/aac/act/internal/skill"
+	"github.com/aac/act/skills"
 )
 
 // InstallSkillOptions controls `act install-skill` behaviour. Dest is the

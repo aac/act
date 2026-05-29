@@ -76,7 +76,7 @@ The plan is roughly right-sized overall — the over-specification is a duplicat
 2. **Ticket 1 ↔ Ticket 6 share the `act.role` config key** (if open question #4 is resolved by adding the key). The plan's "Open question #4 may change ticket 1's scope" should be a hard pre-ticket-1 decision.
 3. **Tickets 2, 6, 7, 11 share fixture-remote infrastructure** (bare repo + `git daemon` or equivalent). Plan flags this in risks but doesn't make ticket 2 owner of the shared fixture. Without that, every later ticket reinvents.
 4. **Tickets 3 and 5 both touch `internal/gitops/gitops.go`** via the slow-write measurement (ticket 3) and the read-cache fetch path (ticket 5). The plan says they can run in parallel after ticket 2. They can't — both edit the same file. Fix: state explicitly that ticket 3 lands first, ticket 5 rebases.
-5. **Ticket 10 depends on `internal/skill/SKILL.md` being canonical for worker-protocol claims.** Plan doesn't say which doc is authoritative if the orchestrate doc and SKILL.md disagree. Fix: name SKILL.md as canonical and orchestrate.md as a thin pointer.
+5. **Ticket 10 depends on `skills/act/SKILL.md` being canonical for worker-protocol claims.** Plan doesn't say which doc is authoritative if the orchestrate doc and SKILL.md disagree. Fix: name SKILL.md as canonical and orchestrate.md as a thin pointer.
 6. **Ticket 9's `.act/.slow-writes` summary depends on ticket 3's file format.** The graph shows 9 after 6 and 8; it should also be after 3 (it is, transitively, via 6, but the read happens against ticket 3's file format). Cold agent on ticket 9 needs the format pinned.
 
 ---

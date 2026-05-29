@@ -376,7 +376,7 @@ The workflow doc captures the new lifecycle. **Symlink trap — see below.**
 
 **Test plan.** Doc-claim sweep — the act-side test reads the symlink target via `os.Readlink` and asserts on its contents. No runtime behavior tested.
 
-**Files touched.** `~/Workspace/claude-config/commands/orchestrate.md` (live edit via the symlink, with the cross-repo commit-and-push step), `internal/skill/SKILL.md` (worker-protocol section update — in the act repo), `docs/migration-runbook.md` (Phase 2 section). The act-repo bundle includes the symlink read-through-but-write-elsewhere note in the worker prompt template.
+**Files touched.** `~/Workspace/claude-config/commands/orchestrate.md` (live edit via the symlink, with the cross-repo commit-and-push step), `skills/act/SKILL.md` (worker-protocol section update — in the act repo), `docs/migration-runbook.md` (Phase 2 section). The act-repo bundle includes the symlink read-through-but-write-elsewhere note in the worker prompt template.
 
 ***Changes from v1:*** *Symlink trap addressed explicitly (synthesis S1). Worker prompt template now includes the cross-repo commit-and-push step. Acceptance criteria asserts both repos' state, not just the file content.*
 
