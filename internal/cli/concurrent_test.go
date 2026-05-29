@@ -411,7 +411,7 @@ func TestConcurrentDistinctOpsBidirectional(t *testing.T) {
 //  3. Assert that after push/pull-rebase convergence:
 //     - Both sites produce identical fold output for the contested issue.
 //     - Exactly one site reports claimed:true (winner); the other
-//       reports claimed:false, error:claim_lost (loser op retained).
+//     reports claimed:false, error:claim_lost (loser op retained).
 //     - Op-file counts on both sites are exactly 2 (one per claimant).
 //
 // Do NOT remove this placeholder — it documents the deferred Phase 2 work
