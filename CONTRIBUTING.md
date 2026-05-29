@@ -13,6 +13,25 @@ for this repo and covers the rules that govern what gets merged:
 
 Run `go test ./...` and `gofmt -l` before opening a PR.
 
+## MCP configuration
+
+The repo ships a `.mcp.json` pointing at the installed `act` binary (`"command": "act"`). This is the correct shape for Claude Code and Codex once `act` is on `PATH` via `go install github.com/aac/act/cmd/act@latest`.
+
+When developing against an uncommitted build, override locally — do **not** edit the tracked `.mcp.json`. The simplest approach is a project-local `settings.local.json` or a shell alias. Alternatively, rebuild to `./bin/act` and point a gitignored override file at it:
+
+```json
+{
+  "mcpServers": {
+    "act": {
+      "command": "./bin/act",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Save that as `.mcp.local.json` (gitignored) and load it with `claude --mcp-config .mcp.local.json`, or temporarily swap `.mcp.json` without committing the change.
+
 <!-- act:contributing-stanza:start -->
 
 ## act commit-marker convention
