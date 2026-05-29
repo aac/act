@@ -274,19 +274,19 @@ var docClaimRegistry = []docClaim{
 	// enforcement is out of scope for this registry.
 	{
 		name:         "skill-worker-bootstrap-ref",
-		docFile:      "internal/skill/SKILL.md",
+		docFile:      "skills/act/SKILL.md",
 		claimPattern: "bootstrap-worker",
 		testName:     "TestDocClaim_Skill_MentionsBootstrapWorker",
 	},
 	{
 		name:         "skill-worker-harvest-ref",
-		docFile:      "internal/skill/SKILL.md",
+		docFile:      "skills/act/SKILL.md",
 		claimPattern: "harvest",
 		testName:     "TestDocClaim_Skill_MentionsHarvest",
 	},
 	{
 		name:         "skill-worker-section",
-		docFile:      "internal/skill/SKILL.md",
+		docFile:      "skills/act/SKILL.md",
 		claimPattern: "Working in a worktree or sandbox",
 		testName:     "TestDocClaim_Skill_WorkerProtocolSection",
 	},
@@ -477,7 +477,7 @@ var docClaimRegistry = []docClaim{
 	// in-repo doc surfaces.
 	{
 		name:         "skill-phase2-dispatch-section",
-		docFile:      "internal/skill/SKILL.md",
+		docFile:      "skills/act/SKILL.md",
 		claimPattern: "Phase 2 dispatch (push-attached)",
 		testName:     "TestDocClaim_Skill_Phase2DispatchSection",
 	},

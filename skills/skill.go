@@ -15,7 +15,7 @@
 //	references/setup.md                     # read once per project
 //	references/worktree-subagents.md        # read before dispatching sub-agents
 //
-// New reference files added to ./references/ are automatically included
+// New reference files added to act/references/ are automatically included
 // in the embed because the directive uses a glob.
 package skill
 
@@ -24,19 +24,26 @@ import (
 	"io/fs"
 )
 
-//go:embed SKILL.md references/*.md
+//go:embed act/SKILL.md act/references/*.md
 var files embed.FS
 
-// FS returns the embedded skill file tree rooted at the package
-// directory. Callers walk it with fs.WalkDir to copy each entry to the
-// destination skills dir. The returned FS is read-only.
+// FS returns the embedded skill file tree rooted at the act/ subdirectory
+// (i.e. paths like "SKILL.md", "references/setup.md"). Callers walk it
+// with fs.WalkDir to copy each entry to the destination skills dir. The
+// returned FS is read-only.
 func FS() fs.FS {
-	return files
+	sub, err := fs.Sub(files, "act")
+	if err != nil {
+		// "act" is a fixed embed path; Sub only fails if the dir is absent,
+		// which is a build-time invariant — panic is the right signal.
+		panic("skill: embedded act/ subtree missing: " + err.Error())
+	}
+	return sub
 }
 
 // SkillMD returns the bytes of the top-level SKILL.md. Provided as a
 // convenience for callers that only need the canonical workflow file
 // (e.g. a future hypothetical `act help skill` that prints it).
 func SkillMD() ([]byte, error) {
-	return files.ReadFile("SKILL.md")
+	return files.ReadFile("act/SKILL.md")
 }

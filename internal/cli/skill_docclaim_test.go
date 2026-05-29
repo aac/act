@@ -1,6 +1,6 @@
 package cli
 
-// Doc-claim regression tests for the act skill (internal/skill/SKILL.md).
+// Doc-claim regression tests for the act skill (skills/act/SKILL.md).
 //
 // These tests pin user-visible claims made in the skill — specifically the
 // "Working in a worktree or sandbox" section added in act-9e7078, which
@@ -24,16 +24,16 @@ import (
 	"testing"
 )
 
-// readSkillBody returns the on-disk bytes of internal/skill/SKILL.md.
+// readSkillBody returns the on-disk bytes of skills/act/SKILL.md.
 // The file is the canonical source the `act install-skill` command
 // embeds and ships into ~/.claude/skills/act/SKILL.md, so asserting on
 // it asserts on what real agent sessions actually read.
 func readSkillBody(t *testing.T) string {
 	t.Helper()
 	root := repoRootForDocClaim(t)
-	body, err := os.ReadFile(filepath.Join(root, "internal/skill/SKILL.md"))
+	body, err := os.ReadFile(filepath.Join(root, "skills/act/SKILL.md"))
 	if err != nil {
-		t.Fatalf("read internal/skill/SKILL.md: %v", err)
+		t.Fatalf("read skills/act/SKILL.md: %v", err)
 	}
 	return string(body)
 }
@@ -46,7 +46,7 @@ func TestDocClaim_Skill_WorkerProtocolSection(t *testing.T) {
 	body := readSkillBody(t)
 	const claim = "Working in a worktree or sandbox"
 	if !strings.Contains(body, claim) {
-		t.Errorf("internal/skill/SKILL.md no longer contains worker-protocol section header %q.\n"+
+		t.Errorf("skills/act/SKILL.md no longer contains worker-protocol section header %q.\n"+
 			"  This section tells dispatched sub-agents that the orchestrator handles\n"+
 			"  bootstrap (at dispatch) and harvest (at teardown). If it's been moved or\n"+
 			"  renamed, update the docClaimRegistry entry 'skill-worker-section' to point\n"+
@@ -63,7 +63,7 @@ func TestDocClaim_Skill_MentionsBootstrapWorker(t *testing.T) {
 	body := readSkillBody(t)
 	const claim = "bootstrap-worker"
 	if !strings.Contains(body, claim) {
-		t.Errorf("internal/skill/SKILL.md no longer mentions %q.\n"+
+		t.Errorf("skills/act/SKILL.md no longer mentions %q.\n"+
 			"  Workers need to know the orchestrator pre-seeds .act/ via this subcommand;\n"+
 			"  if the reference is gone, the worker-protocol section is no longer\n"+
 			"  load-bearing. Either re-introduce the reference or drop the registry\n"+
@@ -79,7 +79,7 @@ func TestDocClaim_Skill_MentionsHarvest(t *testing.T) {
 	body := readSkillBody(t)
 	const claim = "harvest"
 	if !strings.Contains(body, claim) {
-		t.Errorf("internal/skill/SKILL.md no longer mentions %q.\n"+
+		t.Errorf("skills/act/SKILL.md no longer mentions %q.\n"+
 			"  Workers need to know the orchestrator collects their ops via this\n"+
 			"  subcommand at teardown; if the reference is gone, the worker-protocol\n"+
 			"  section is no longer load-bearing. Either re-introduce the reference\n"+

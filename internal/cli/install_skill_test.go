@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aac/act/internal/skill"
+	"github.com/aac/act/skills"
 )
 
 // TestRunInstallSkillFreshDest covers the canonical case: a clean
