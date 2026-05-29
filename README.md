@@ -63,6 +63,43 @@ act install-skill --dest PATH  # alternate destination
 
 `install-skill` is idempotent: files already matching the embedded copy are skipped; files that diverge are reported and left untouched unless `--force` is passed. Re-run after every `act` upgrade to keep agents on the current workflow.
 
+## Skill installation (Codex)
+
+The same embedded skill works for OpenAI Codex. The skill file is the same `SKILL.md`; only the destination path differs.
+
+**Via `act install-skill --target codex`** (recommended):
+
+```sh
+act install-skill --target codex   # writes to ~/.codex/skills/act/
+act install-skill --target codex --force  # overwrite local edits
+act install-skill --target codex --check  # verify installed matches embedded
+```
+
+**Via symlink** (if you prefer to point directly at the repo):
+
+```sh
+ln -s <repo>/skills/act ~/.codex/skills/act
+```
+
+Replace `<repo>` with the absolute path to your local clone.
+
+**Via `.codex-plugin/plugin.json`**: the repo ships `.codex-plugin/plugin.json`, which Codex reads to discover the skill directory (`"skills": "./skills/"`) and the MCP server config (`"mcpServers": "./.mcp.json"`). When Codex loads the plugin, the skill and MCP registration come in automatically — no manual install step.
+
+**MCP registration**: the `.mcp.json` at the repo root registers the act MCP server for both Claude Code and Codex:
+
+```json
+{
+  "mcpServers": {
+    "act": {
+      "command": "act",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Once `act` is on `PATH` (via `go install github.com/aac/act/cmd/act@latest`), point Codex at this file or copy the `mcpServers` block into your project's MCP config. See `CONTRIBUTING.md` for the local-dev override pattern.
+
 ## Status
 
 `act` is at v0.1 and actively dogfooded on this repo's own backlog plus a few adjacent projects. The Phase 1 nested-repo layout is as-built; Phase 1.5 worker isolation is shipping; Phase 2 push-attached coordination is in implementation.
