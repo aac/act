@@ -11,7 +11,7 @@ import (
 // into a temp dir, so it always reflects the current source tree — a stale
 // or absent ./bin/act has no effect on these tests.
 // If the build failed (e.g. go not in PATH), the test is skipped with a
-// clear message mirroring the existing exec.LookPath skip behavior.
+// clear message from actBinary itself.
 func actBinary(t *testing.T) string {
 	t.Helper()
 	testBinaryOnce.Do(func() {}) // ensure init ran (no-op if TestMain fired)
@@ -107,10 +107,6 @@ func TestUnknownDepVerbMsg(t *testing.T) {
 // TestDispatchUnknownSubcommand asserts the integrated dispatch path
 // surfaces the new message (not the legacy "not implemented yet").
 func TestDispatchUnknownSubcommand(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	_, stderr, code := runAct(t, "asdfqwer")
 	if code != 2 {
 		t.Errorf("exit = %d, want 2; stderr=%q", code, stderr)
@@ -123,10 +119,6 @@ func TestDispatchUnknownSubcommand(t *testing.T) {
 // TestDispatchBareDep asserts `act dep` with no verb prints the verb
 // list, not "not implemented yet".
 func TestDispatchBareDep(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	_, stderr, code := runAct(t, "dep")
 	if code != 2 {
 		t.Errorf("exit = %d, want 2; stderr=%q", code, stderr)
@@ -139,10 +131,6 @@ func TestDispatchBareDep(t *testing.T) {
 // TestDispatchDepHelp asserts `act dep --help` prints the dep usage
 // and exits 0 (not 2 with a misleading "not implemented yet").
 func TestDispatchDepHelp(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	for _, flag := range []string{"--help", "-h", "help"} {
 		_, stderr, code := runAct(t, "dep", flag)
 		if code != 0 {
@@ -155,10 +143,6 @@ func TestDispatchDepHelp(t *testing.T) {
 }
 
 func TestDispatchDepUnknownVerb(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	_, stderr, code := runAct(t, "dep", "rm")
 	if code != 2 {
 		t.Errorf("exit = %d, want 2; stderr=%q", code, stderr)
@@ -172,10 +156,6 @@ func TestDispatchDepUnknownVerb(t *testing.T) {
 // after `dep` is flag-shaped but not -h/--help/help — e.g. `act dep --json`.
 // Should route to the dep-usage / bad-flag path, not the unknown-verb path.
 func TestDispatchDepFlagShapedToken(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	_, stderr, code := runAct(t, "dep", "--json")
 	if code != 2 {
 		t.Errorf("exit = %d, want 2; stderr=%q", code, stderr)
@@ -191,10 +171,6 @@ func TestDispatchDepFlagShapedToken(t *testing.T) {
 // future refactor could accidentally widen the bypass to all `dep` paths
 // and silently lose user intent in fresh clones / CI checkouts.
 func TestDispatchDepAddNoState(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	// Stand up a throwaway git repo with no .act/ so findRepoRoot()
 	// resolves, then run dep add from inside it. The two id arguments
 	// never get resolved because the guard fires first.

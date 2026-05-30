@@ -17,10 +17,6 @@ import (
 // This is the over-cap rejection case (1 byte over → exit 2 with cap message).
 // See also TestDocClaim_CloseReasonCap_AtCapAccepted for the off-by-one guard.
 func TestDocClaim_CloseReasonCap_OverCapRejected(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	// 501-byte reason: one byte over the documented 500-byte cap.
 	reason := strings.Repeat("x", closeReasonMaxBytes+1)
 	dir := t.TempDir()
@@ -61,10 +57,6 @@ func TestDocClaim_CloseReasonCap_OverCapRejected(t *testing.T) {
 // The command still fails downstream (no .act/ in the temp dir), but the
 // absence of the "byte cap" message in stderr confirms the cap did not reject.
 func TestDocClaim_CloseReasonCap_AtCapAccepted(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	reason := strings.Repeat("x", closeReasonMaxBytes)
 	dir := t.TempDir()
 	// Need a git working tree so the command gets past hasGitDir() and

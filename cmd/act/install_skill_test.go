@@ -15,10 +15,6 @@ import (
 // the top-level dispatcher: the binary recognises it and routes to the
 // help flag (which Go's flag pkg renders to stderr).
 func TestDispatchInstallSkillKnown(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	// Run with --dest pointing at a tempdir so we don't touch ~/.claude.
 	dest := filepath.Join(t.TempDir(), "skills", "act")
 	_, stderr, code := runAct(t, "install-skill", "--dest", dest)
@@ -32,10 +28,6 @@ func TestDispatchInstallSkillKnown(t *testing.T) {
 // land byte-for-byte equal to the embedded copy, and that the reported
 // JSON envelope agrees with the on-disk state.
 func TestDispatchInstallSkillJSON(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	dest := filepath.Join(t.TempDir(), "skills", "act")
 
 	stdout, stderr, code := runAct(t, "install-skill", "--dest", dest, "--json")
@@ -82,10 +74,6 @@ func TestDispatchInstallSkillJSON(t *testing.T) {
 // TestDispatchInstallSkillIdempotentRun confirms a re-run against the
 // same dest exits 0 and produces no Written entries.
 func TestDispatchInstallSkillIdempotentRun(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	dest := filepath.Join(t.TempDir(), "skills", "act")
 
 	if _, _, code := runAct(t, "install-skill", "--dest", dest); code != 0 {
@@ -115,10 +103,6 @@ func TestDispatchInstallSkillIdempotentRun(t *testing.T) {
 // to discover surface area; if a subcommand isn't in help, it doesn't
 // exist as far as they're concerned.
 func TestHelpListsInstallSkill(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	stdout, _, code := runAct(t, "help")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
@@ -135,10 +119,6 @@ func TestHelpListsInstallSkill(t *testing.T) {
 // also names the subcommand, so an agent that types an unknown command
 // and sees the subcommand list discovers install-skill immediately.
 func TestUsageListsInstallSkill(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	_, stderr, _ := runAct(t, "--help")
 	if !strings.Contains(stderr, "install-skill") {
 		t.Errorf("usage missing install-skill; got: %s", stderr)
@@ -170,10 +150,6 @@ func runActWithHome(t *testing.T, home string, args ...string) (string, string, 
 // Asserted at the subprocess boundary with HOME override so no real ~/.claude
 // is touched.
 func TestDocClaim_InstallSkill_DefaultPreservesClaude(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	home := t.TempDir()
 	stdout, stderr, code := runActWithHome(t, home, "install-skill", "--json")
 	if code != 0 {
@@ -198,10 +174,6 @@ func TestDocClaim_InstallSkill_DefaultPreservesClaude(t *testing.T) {
 // ~/.codex/skills/act/ and that SKILL.md lands there byte-for-byte.
 // Asserted at the subprocess boundary with HOME override.
 func TestDocClaim_InstallSkill_TargetCodex(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	home := t.TempDir()
 	stdout, stderr, code := runActWithHome(t, home, "install-skill", "--target", "codex", "--json")
 	if code != 0 {
@@ -238,10 +210,6 @@ func TestDocClaim_InstallSkill_TargetCodex(t *testing.T) {
 // when the skill has been installed and matches the embedded copy.
 // Asserted at the subprocess boundary using --dest.
 func TestDocClaim_InstallSkill_CheckMatchAfterInstall(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	dest := filepath.Join(t.TempDir(), "skills", "act")
 
 	if _, _, code := runAct(t, "install-skill", "--dest", dest); code != 0 {
@@ -278,10 +246,6 @@ func TestDocClaim_InstallSkill_CheckMatchAfterInstall(t *testing.T) {
 // installed file has drifted from the embedded copy, and never overwrites.
 // Asserted at the subprocess boundary.
 func TestDocClaim_InstallSkill_CheckDetectsDrift(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	dest := filepath.Join(t.TempDir(), "skills", "act")
 
 	// Install first, then tamper.
@@ -325,10 +289,6 @@ func TestDocClaim_InstallSkill_CheckDetectsDrift(t *testing.T) {
 // `act install-skill --check --target codex` checks the codex path.
 // Asserted at the subprocess boundary with HOME override.
 func TestDocClaim_InstallSkill_CheckHonorsTargetCodex(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
 	home := t.TempDir()
 
 	// Install to codex first.

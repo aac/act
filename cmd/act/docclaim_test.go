@@ -27,11 +27,6 @@ import (
 // and asserts that the op stream appears in the human-format output.
 // Without the flag, the ops section must be absent.
 func TestDocClaim_IncludeOps_SubprocessShowsOpStream(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	dir := t.TempDir()
 
 	// Bootstrap a git repo and act state.
@@ -110,11 +105,6 @@ func TestDocClaim_IncludeOps_SubprocessShowsOpStream(t *testing.T) {
 // Asserted at the subprocess stdout boundary so a future split of the
 // helpOverview constant still has to keep the listing text.
 func TestDocClaim_Help_ListsMigrateToNested(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	dir := t.TempDir()
 	out, _, code := runActIn(t, dir, "help")
 	if code != 0 {
@@ -142,11 +132,6 @@ func TestDocClaim_Help_ListsMigrateToNested(t *testing.T) {
 //   - exit 4: push_exhausted
 //   - exit 5: claim_lost
 func TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	dir := t.TempDir()
 	out, _, code := runActIn(t, dir, "help", "errors")
 	if code != 0 {
@@ -187,11 +172,6 @@ func TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive(t *testing.T) {
 // to help text, put it inside an "EXAMPLE SESSION" block; the test only
 // scans lines that are NOT within an example session block.
 func TestDocClaim_Help_NoBareTrackerIDs(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	// Regex that matches a bare tracker ID anywhere on a line, except
 	// within example-session shell prompt lines (those start with "  $").
 	bareID := regexp.MustCompile(`act-[0-9a-f]{4,}`)
@@ -314,11 +294,6 @@ func equalStrings(a, b []string) bool {
 // guards: before the fix, --accept emitted one add_accept per criterion and the
 // list accumulated across edits.
 func TestDocClaim_AcceptReplace_SetReplacesNotUnion(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	dir, id := bootstrapAcceptRepo(t, "original A", "original B")
 
 	// First update: replace with set 1.
@@ -353,11 +328,6 @@ func TestDocClaim_AcceptReplace_SetReplacesNotUnion(t *testing.T) {
 // acceptance criterion: `act update --accept-rm <index>` drops exactly the
 // criterion at that zero-based index, leaving the others intact.
 func TestDocClaim_AcceptRm_RemovesIndividualCriterion(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	dir, id := bootstrapAcceptRepo(t, "keep-0", "drop-1", "keep-2")
 
 	if out, stderr, code := runActIn(t, dir, "update", id, "--accept-rm", "1"); code != 0 {
@@ -386,11 +356,6 @@ func TestDocClaim_AcceptRm_RemovesIndividualCriterion(t *testing.T) {
 // preserves the additive flow: it appends to the existing list rather than
 // replacing it.
 func TestDocClaim_AcceptAdd_AppendsToList(t *testing.T) {
-	bin := actBinary(t)
-	if _, err := exec.LookPath(bin); err != nil {
-		t.Skipf("act binary not built at %s: %v", bin, err)
-	}
-
 	dir, id := bootstrapAcceptRepo(t, "base-0")
 
 	if out, stderr, code := runActIn(t, dir, "update", id, "--accept-add", "added-1", "--accept-add", "added-2"); code != 0 {
