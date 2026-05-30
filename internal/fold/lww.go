@@ -40,11 +40,15 @@ import (
 //     prior-claim HLC is recorded under the reserved key __claim_hlc.
 //
 //   - acceptance_criteria (accept)
-//     Grow-shrink CRDT. add_accept appends a criterion to the visible list.
-//     remove_accept marks a criterion text into __accept_removed by resolving
-//     the requested index against the current effective (visible) list; the
-//     reserved set is filtered out at render time. This makes add/remove
-//     commutative: add+remove or remove-of-not-yet-added both converge.
+//     Grow-shrink CRDT with an LWW replace. add_accept appends a criterion to
+//     the visible list. remove_accept marks a criterion text into
+//     __accept_removed by resolving the requested index against the current
+//     effective (visible) list; the reserved set is filtered out at render
+//     time. This makes add/remove commutative: add+remove or remove-of-not-
+//     yet-added both converge. set_accept (the `act update --accept` replace
+//     primitive) carries the full list and overwrites it wholesale via the
+//     "accept" LWW gate, clearing __accept_removed; later-stamped add/remove
+//     ops resume grow-shrink from the new baseline.
 //
 //   - deps
 //     Grow-shrink CRDT keyed by (parent, edge_type) per §5.C.5. add_dep is

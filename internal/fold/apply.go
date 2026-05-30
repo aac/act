@@ -79,6 +79,8 @@ func ApplyDispatch(opType string) ApplyFunc {
 		return applyAddAccept
 	case "remove_accept":
 		return applyRemoveAccept
+	case "set_accept":
+		return applySetAccept
 	case "claim":
 		return applyClaim
 	case "close":
@@ -362,6 +364,32 @@ func applyRemoveAccept(state *IssueState, env op.Envelope, payload []byte, fullH
 	if cur, ok := state.LastHLC["accept"]; !ok || cur.Less(stamp) {
 		state.LastHLC["accept"] = stamp
 	}
+	return nil
+}
+
+// applySetAccept replaces the entire accept list with the op's Criteria via
+// an LWW gate on the "accept" field. This is the replace primitive behind
+// `act update --accept`: a single op carries the full intended list, so
+// repeated edits set rather than union. Because it replaces wholesale, it
+// also clears the __accept_removed set — a fresh list has no carried-over
+// removals to filter. An add_accept/remove_accept with a strictly greater
+// stamp still composes on top (grow-shrink semantics resume from the new
+// baseline); an earlier-stamped set loses the LWW gate and is ignored.
+func applySetAccept(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
+	var p op.SetAcceptPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("set_accept: unmarshal: %w", err)
+	}
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	if !gateLWW(state, "accept", stamp) {
+		return nil
+	}
+	criteria := make([]string, len(p.Criteria))
+	copy(criteria, p.Criteria)
+	state.Fields["accept"] = criteria
+	// A wholesale replace has no carried-over removals: drop the removed-set
+	// so RenderState doesn't filter the new criteria against stale entries.
+	delete(state.Fields, keyAcceptRemoved)
 	return nil
 }
 

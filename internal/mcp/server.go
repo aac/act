@@ -447,7 +447,9 @@ func (s *Server) tools() []toolDescriptor {
 				"priority":     schemaInteger("New priority (0-4)."),
 				"assignee":     schemaString("New assignee (empty string clears)."),
 				"description":  schemaString("New description."),
-				"accept":       schemaArrayOfString("Replace acceptance criteria."),
+				"accept":       schemaArrayOfString("Replace the acceptance criteria with exactly this list (the set REPLACES any prior criteria, it does not append). An empty array clears all criteria. Use accept_add to append, accept_rm to remove by index."),
+				"accept_add":   schemaArrayOfString("Append these criteria to the existing acceptance list (additive — contrast accept which replaces)."),
+				"accept_rm":    schemaArrayOfInteger("Remove acceptance criteria by zero-based index against the current list; out-of-range is a no-op."),
 				"dep_rm":       schemaArrayOfString("Dep ids to remove."),
 				"ext_add":      schemaArrayOfString("Opaque external-tracker refs to attach as blocking external deps (idempotent)."),
 				"ext_rm":       schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence)."),
@@ -602,6 +604,14 @@ func schemaArrayOfString(desc string) map[string]any {
 	}
 }
 
+func schemaArrayOfInteger(desc string) map[string]any {
+	return map[string]any{
+		"type":        "array",
+		"items":       map[string]any{"type": "integer"},
+		"description": desc,
+	}
+}
+
 func schemaEnum(values []string, desc string) map[string]any {
 	vs := make([]any, len(values))
 	for i, v := range values {
@@ -712,22 +722,24 @@ func (s *Server) callShow(raw json.RawMessage) (any, bool) {
 
 func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 	var args struct {
-		ID          string   `json:"id"`
-		Status      *string  `json:"status"`
-		Priority    *int     `json:"priority"`
-		Assignee    *string  `json:"assignee"`
-		Description *string  `json:"description"`
-		Accept      []string `json:"accept"`
-		DepRm       []string `json:"dep_rm"`
-		ExtAdd      []string `json:"ext_add"`
-		ExtRm       []string `json:"ext_rm"`
-		Claim       bool     `json:"claim"`
-		Wait        bool     `json:"wait"`
-		WaitTimeout string   `json:"wait_timeout"`
-		NoCommit    bool     `json:"no_commit"`
-		Push        bool     `json:"push"`
-		Isolated    bool     `json:"isolated"`
-		Verify      bool     `json:"verify"`
+		ID          string    `json:"id"`
+		Status      *string   `json:"status"`
+		Priority    *int      `json:"priority"`
+		Assignee    *string   `json:"assignee"`
+		Description *string   `json:"description"`
+		Accept      *[]string `json:"accept"`
+		AcceptAdd   []string  `json:"accept_add"`
+		AcceptRm    []int     `json:"accept_rm"`
+		DepRm       []string  `json:"dep_rm"`
+		ExtAdd      []string  `json:"ext_add"`
+		ExtRm       []string  `json:"ext_rm"`
+		Claim       bool      `json:"claim"`
+		Wait        bool      `json:"wait"`
+		WaitTimeout string    `json:"wait_timeout"`
+		NoCommit    bool      `json:"no_commit"`
+		Push        bool      `json:"push"`
+		Isolated    bool      `json:"isolated"`
+		Verify      bool      `json:"verify"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
@@ -740,13 +752,24 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		}
 		wait = d
 	}
+	// accept is pointer-typed so a present-but-empty array ("clear all
+	// criteria") is distinguishable from an absent key ("don't touch
+	// acceptance"). AcceptSet mirrors the CLI's flag-presence semantics.
+	var accept []string
+	acceptSet := args.Accept != nil
+	if acceptSet {
+		accept = *args.Accept
+	}
 	out, code := cli.RunUpdate(s.repoRoot, cli.UpdateOptions{
 		ID:          args.ID,
 		Status:      args.Status,
 		Priority:    args.Priority,
 		Assignee:    args.Assignee,
 		Description: args.Description,
-		Accept:      args.Accept,
+		Accept:      accept,
+		AcceptSet:   acceptSet,
+		AcceptAdd:   args.AcceptAdd,
+		AcceptRm:    args.AcceptRm,
 		DepRm:       args.DepRm,
 		ExtAdd:      args.ExtAdd,
 		ExtRm:       args.ExtRm,

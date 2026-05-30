@@ -1,0 +1,16 @@
+{
+  "hlc": {
+    "logical": 0,
+    "node_id": "11111111",
+    "wall": "2023-11-14T22:13:21.000Z"
+  },
+  "issue_id": "act-aaaa",
+  "node_id": "11111111",
+  "op_type": "set_accept",
+  "op_version": 1,
+  "payload": {
+    "criteria": ["new X", "new Y"]
+  },
+  "schema_version": 1,
+  "writer_version": "0.1.0"
+}

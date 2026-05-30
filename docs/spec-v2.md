@@ -116,7 +116,8 @@ Every op file's top-level object has exactly these keys, in this order:
 
 ```
 create | update_field | add_dep | remove_dep | add_accept | remove_accept |
-claim  | close        | redact  | import     | migrate    | tombstone
+set_accept | claim     | close   | redact     | import     | migrate      |
+tombstone
 ```
 
 #### Byte-exact JSON serialization rules
@@ -157,6 +158,11 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 
 // remove_accept — exactly one of index/text is required
 { "index": 0 } | { "text": "exact match string" }
+
+// set_accept — REPLACES the full acceptance list (LWW-gated on the accept
+// field). This is the replace primitive `act update --accept` emits, so
+// repeated edits set rather than union. Empty list clears all criteria.
+{ "criteria": ["string, 1..500 chars", ...] }
 
 // claim — atomic assignee + status; sugar over two update_fields, but recorded as one op
 { "assignee": "string" }
@@ -373,7 +379,7 @@ below are normative.
 |---|---|
 | `title`, `description`, `priority`, `type`, `assignee`, `parent` | LWW per field. Each carries its own `last_hlc`; an op with a strictly-greater HLC tuple wins; equal tuples cannot occur (op_hash differs). |
 | `status` | Constrained transition table. `closed` is terminal: an op transitioning out of `closed` is ignored unless its `op_type` is `reopen` (an explicit op kind). Within `{open, in_progress, blocked}` LWW applies. `claim` ops set `(assignee, status=in_progress)` atomically (see 4). |
-| `acceptance_criteria` | Grow-shrink set keyed by criterion hash. `add_accept` is idempotent set-add; `remove_accept` requires a referenced criterion hash and is set-remove. Adds and removes are commutative; on tie at the same hash, the op with greater HLC wins (remove-wins for equal HLC is impossible because op_hashes differ). |
+| `acceptance_criteria` | Grow-shrink set keyed by criterion hash, plus an LWW replace. `add_accept` is idempotent set-add; `remove_accept` requires a referenced criterion hash and is set-remove. Adds and removes are commutative; on tie at the same hash, the op with greater HLC wins (remove-wins for equal HLC is impossible because op_hashes differ). `set_accept` REPLACES the whole list via an LWW gate on the `accept` field and clears the removed-set; later-stamped add/remove ops resume grow-shrink from the new baseline. |
 | `deps` | Grow-shrink set keyed by `(target_id, edge_type)`. `add_dep` is set-add; `remove_dep` is set-remove. Same tie semantics as acceptance. |
 | `closed_at`, `closed_reason` | Set when status becomes `closed`; LWW thereafter, but only writable by ops whose payload also carries `status=closed`. |
 | `redact` | Tombstone-style: marks named fields for redaction. Subsequent fold renders those fields as `"<redacted>"`. Never mutates prior payloads on disk. |
@@ -695,14 +701,16 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act update <id>`
 
-**Synopsis:** `act update <id> [--status X] [--priority N] [--assignee Y] [--description T] [--accept "..."] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+**Synopsis:** `act update <id> [--status X] [--priority N] [--assignee Y] [--description T] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
 
 **Flags:**
 - `--status X` (enum open|in_progress|blocked|closed). `closed` requires `act close` instead — exit 2.
 - `--priority N` (int 0..3).
 - `--assignee Y` (string; empty string clears).
 - `--description T` (string).
-- `--accept "..."` (repeatable; each appends one criterion).
+- `--accept "..."` (repeatable). REPLACES the acceptance list with exactly the supplied criteria — it does not append. Emits one `set_accept` op so repeated edits set rather than union with prior criteria. Supplying `--accept` with no criteria clears the list.
+- `--accept-add "..."` (repeatable; each appends one criterion via `add_accept` — the additive sibling of `--accept`).
+- `--accept-rm N` (repeatable; removes the criterion at zero-based index `N` against the current list via `remove_accept`. Out-of-range is a no-op. Replace an individual criterion with `--accept-rm N --accept-add "new text"`).
 - `--dep-rm ID` (repeatable). Removes a dep edge; resolves id.
 - `--claim` (bool). Atomic claim protocol: write `claim` op, `git pull --rebase` (skipped under `--isolated`), refold, report win/loss. On win, optionally push if `--push`.
 - `--wait` (bool, only with `--claim`). On loss, poll until the issue becomes claimable again or status becomes terminal.

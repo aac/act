@@ -9,6 +9,7 @@ package main
 // internal/cli/docs_sweep_test.go pins each claim to its test symbol.
 
 import (
+	"encoding/json"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -233,5 +234,170 @@ func TestDocClaim_Help_NoBareTrackerIDs(t *testing.T) {
 				t.Errorf("act help %s: bare tracker ID found outside example block: %q", topic, line)
 			}
 		}
+	}
+}
+
+// bootstrapAcceptRepo inits a fresh git+act repo in a temp dir and creates one
+// issue carrying the supplied initial acceptance criteria (via repeated
+// --accept on create, the additive create flow). Returns (dir, issueID).
+func bootstrapAcceptRepo(t *testing.T, initialAccept ...string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main", dir},
+		{"-C", dir, "config", "user.email", "test@example.com"},
+		{"-C", dir, "config", "user.name", "Test"},
+		{"-C", dir, "config", "commit.gpgsign", "false"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if _, stderr, code := runActIn(t, dir, "init", "--json"); code != 0 {
+		t.Fatalf("act init: exit %d; stderr=%s", code, stderr)
+	}
+	createArgs := []string{"create", "accept-semantics probe", "--json"}
+	for _, c := range initialAccept {
+		createArgs = append(createArgs, "--accept", c)
+	}
+	createOut, _, code := runActIn(t, dir, createArgs...)
+	if code != 0 {
+		t.Fatalf("act create: exit %d; stdout=%s", code, createOut)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(createOut), &created); err != nil || created.ID == "" {
+		t.Fatalf("parse create id from %q: %v", createOut, err)
+	}
+	return dir, created.ID
+}
+
+// showAccept drives `act show <id> --json` and returns the materialized
+// acceptance_criteria list (the rendered `accept` field) at the subprocess
+// boundary — NOT via the fold helper.
+func showAccept(t *testing.T, dir, id string) []string {
+	t.Helper()
+	out, stderr, code := runActIn(t, dir, "show", id, "--json")
+	if code != 0 {
+		t.Fatalf("act show --json: exit %d; stderr=%s", code, stderr)
+	}
+	var got struct {
+		Accept []string `json:"accept"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("parse show json %q: %v", out, err)
+	}
+	return got.Accept
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestDocClaim_AcceptReplace_SetReplacesNotUnion pins the user-visible claim
+// (cmd/act/update.go --accept flag-help, MCP act_update.accept schema, spec
+// §"act update") that `act update --accept [...]` REPLACES the acceptance list
+// rather than unioning with prior criteria.
+//
+// The boundary test drives `act update --accept` twice with DIFFERENT sets and
+// asserts the materialized accept list (read via `act show --json`) equals the
+// LAST set — not the union. This is the exact drift the doc-discipline rule
+// guards: before the fix, --accept emitted one add_accept per criterion and the
+// list accumulated across edits.
+func TestDocClaim_AcceptReplace_SetReplacesNotUnion(t *testing.T) {
+	bin := actBinary(t)
+	if _, err := exec.LookPath(bin); err != nil {
+		t.Skipf("act binary not built at %s: %v", bin, err)
+	}
+
+	dir, id := bootstrapAcceptRepo(t, "original A", "original B")
+
+	// First update: replace with set 1.
+	if out, stderr, code := runActIn(t, dir, "update", id, "--accept", "first-1", "--accept", "first-2"); code != 0 {
+		t.Fatalf("act update --accept (set 1): exit %d; stdout=%s stderr=%s", code, out, stderr)
+	}
+	if got := showAccept(t, dir, id); !equalStrings(got, []string{"first-1", "first-2"}) {
+		t.Fatalf("after first --accept: got %v, want [first-1 first-2] (create's original criteria must be replaced, not unioned)", got)
+	}
+
+	// Second update: replace with set 2 (entirely different).
+	if out, stderr, code := runActIn(t, dir, "update", id, "--accept", "second-1"); code != 0 {
+		t.Fatalf("act update --accept (set 2): exit %d; stdout=%s stderr=%s", code, out, stderr)
+	}
+	got := showAccept(t, dir, id)
+	if !equalStrings(got, []string{"second-1"}) {
+		t.Errorf("after second --accept: got %v, want [second-1] (the LAST set, not the union of all sets ever passed)", got)
+	}
+	// Defensive: none of the prior criteria may survive.
+	for _, stale := range []string{"original A", "original B", "first-1", "first-2"} {
+		for _, c := range got {
+			if c == stale {
+				t.Errorf("stale criterion %q survived a --accept replace: %v", stale, got)
+			}
+		}
+	}
+}
+
+// TestDocClaim_AcceptRm_RemovesIndividualCriterion pins the claim (cmd/act/
+// update.go --accept-rm flag-help, MCP act_update.accept_rm schema, spec
+// §"act update") that there is a non-destructive way to remove an individual
+// acceptance criterion: `act update --accept-rm <index>` drops exactly the
+// criterion at that zero-based index, leaving the others intact.
+func TestDocClaim_AcceptRm_RemovesIndividualCriterion(t *testing.T) {
+	bin := actBinary(t)
+	if _, err := exec.LookPath(bin); err != nil {
+		t.Skipf("act binary not built at %s: %v", bin, err)
+	}
+
+	dir, id := bootstrapAcceptRepo(t, "keep-0", "drop-1", "keep-2")
+
+	if out, stderr, code := runActIn(t, dir, "update", id, "--accept-rm", "1"); code != 0 {
+		t.Fatalf("act update --accept-rm: exit %d; stdout=%s stderr=%s", code, out, stderr)
+	}
+	got := showAccept(t, dir, id)
+	if !equalStrings(got, []string{"keep-0", "keep-2"}) {
+		t.Errorf("after --accept-rm 1: got %v, want [keep-0 keep-2] (only the indexed criterion removed)", got)
+	}
+
+	// Replace-an-individual-criterion: --accept-rm + --accept-add in one call.
+	if out, stderr, code := runActIn(t, dir, "update", id, "--accept-rm", "0", "--accept-add", "replacement"); code != 0 {
+		t.Fatalf("act update --accept-rm+--accept-add: exit %d; stdout=%s stderr=%s", code, out, stderr)
+	}
+	got = showAccept(t, dir, id)
+	// remove_accept resolves index against the effective list BEFORE the add
+	// is folded; both ops carry independent HLCs. The net effective list is
+	// {keep-2, replacement}.
+	if !equalStrings(got, []string{"keep-2", "replacement"}) {
+		t.Errorf("after replace (rm 0 + add): got %v, want [keep-2 replacement]", got)
+	}
+}
+
+// TestDocClaim_AcceptAdd_AppendsToList pins the claim (cmd/act/update.go
+// --accept-add flag-help, MCP act_update.accept_add schema) that --accept-add
+// preserves the additive flow: it appends to the existing list rather than
+// replacing it.
+func TestDocClaim_AcceptAdd_AppendsToList(t *testing.T) {
+	bin := actBinary(t)
+	if _, err := exec.LookPath(bin); err != nil {
+		t.Skipf("act binary not built at %s: %v", bin, err)
+	}
+
+	dir, id := bootstrapAcceptRepo(t, "base-0")
+
+	if out, stderr, code := runActIn(t, dir, "update", id, "--accept-add", "added-1", "--accept-add", "added-2"); code != 0 {
+		t.Fatalf("act update --accept-add: exit %d; stdout=%s stderr=%s", code, out, stderr)
+	}
+	got := showAccept(t, dir, id)
+	if !equalStrings(got, []string{"base-0", "added-1", "added-2"}) {
+		t.Errorf("after --accept-add: got %v, want [base-0 added-1 added-2] (additive, not replace)", got)
 	}
 }

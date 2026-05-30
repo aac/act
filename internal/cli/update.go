@@ -37,8 +37,28 @@ type UpdateOptions struct {
 	Description *string
 
 	// Repeatables.
+	//
+	// Accept, when non-nil, REPLACES the acceptance list with exactly these
+	// criteria (one set_accept op). A nil slice means "--accept not supplied"
+	// — distinct from an empty non-nil slice, which clears all criteria. This
+	// is the replace primitive: repeated `act update --accept` edits set the
+	// list rather than unioning with prior criteria.
 	Accept []string
-	DepRm  []string
+	// AcceptSet records whether --accept was supplied at all, so an explicit
+	// `--accept ""`-equivalent (zero criteria) can clear the list while an
+	// absent flag is a no-op. The CLI layer (cmd/act/update.go) sets this from
+	// flag presence; the MCP layer sets it whenever the JSON `accept` key is
+	// present (including an empty array).
+	AcceptSet bool
+	// AcceptAdd appends criteria to the existing list (one add_accept op per
+	// entry) — the additive flow preserved for `--accept-add`. create-then-add
+	// remains the canonical additive path; this is its update-time sibling.
+	AcceptAdd []string
+	// AcceptRm removes individual criteria by zero-based index against the
+	// current effective (visible) list (one remove_accept op per entry). This
+	// is the non-destructive remove/replace affordance.
+	AcceptRm []int
+	DepRm    []string
 	// ExtAdd is the list of opaque external-tracker refs to attach as
 	// blocking external dependencies. Each entry generates one
 	// add_external_dep op. Re-adding a ref already on the issue is a no-op
@@ -224,8 +244,14 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		if opts.Description != nil {
 			conflicts = append(conflicts, "--description")
 		}
-		if len(opts.Accept) > 0 {
+		if opts.AcceptSet {
 			conflicts = append(conflicts, "--accept")
+		}
+		if len(opts.AcceptAdd) > 0 {
+			conflicts = append(conflicts, "--accept-add")
+		}
+		if len(opts.AcceptRm) > 0 {
+			conflicts = append(conflicts, "--accept-rm")
 		}
 		if len(opts.DepRm) > 0 {
 			conflicts = append(conflicts, "--dep-rm")
@@ -304,10 +330,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: non-claim mutation. We must have at least one mutating flag.
-	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && len(opts.Accept) == 0 && len(opts.DepRm) == 0 && len(opts.ExtAdd) == 0 && len(opts.ExtRm) == 0 {
+	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtAdd) == 0 && len(opts.ExtRm) == 0 {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
-			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --dep-rm, --ext-add, --ext-rm, or --claim must be supplied",
+			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --accept-add, --accept-rm, --dep-rm, --ext-add, --ext-rm, or --claim must be supplied",
 		}, 2
 	}
 
@@ -422,8 +448,49 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			return errOut, code
 		}
 	}
-	for _, c := range opts.Accept {
-		if errOut, code := addOp("add_accept", op.AddAcceptPayload{Criterion: c}); code != 0 {
+	// --accept REPLACES the acceptance list (one set_accept op). Empty (but
+	// supplied) clears it. Payload validation (per-criterion non-empty +
+	// 500-byte cap) is gated up-front so a bad criterion fails the whole
+	// update before any op hits disk.
+	if opts.AcceptSet {
+		pl := op.SetAcceptPayload{Criteria: opts.Accept}
+		if verr := pl.Validate(); verr != nil {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --accept: %v", verr),
+			}, 2
+		}
+		if errOut, code := addOp("set_accept", pl); code != 0 {
+			return errOut, code
+		}
+	}
+	// --accept-add APPENDS criteria (one add_accept op each). The additive
+	// flow, preserved for callers building a list incrementally.
+	for _, c := range opts.AcceptAdd {
+		pl := op.AddAcceptPayload{Criterion: c}
+		if verr := pl.Validate(); verr != nil {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --accept-add: %v", verr),
+			}, 2
+		}
+		if errOut, code := addOp("add_accept", pl); code != 0 {
+			return errOut, code
+		}
+	}
+	// --accept-rm removes individual criteria by zero-based index (one
+	// remove_accept op each). Indices resolve against the current effective
+	// (visible) list at apply time; an out-of-range index is an idempotent
+	// no-op at fold time (per remove_accept semantics).
+	for _, idx := range opts.AcceptRm {
+		pl := op.RemoveAcceptPayload{Index: idx}
+		if verr := pl.Validate(); verr != nil {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --accept-rm: %v", verr),
+			}, 2
+		}
+		if errOut, code := addOp("remove_accept", pl); code != 0 {
 			return errOut, code
 		}
 	}

@@ -969,6 +969,71 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "--check --target codex  # verify the codex install",
 		testName:     "TestDocClaim_InstallSkill_CheckHonorsTargetCodex",
 	},
+	// accept-replace-* (act-844f97): `act update --accept` was documented as
+	// "Replace acceptance criteria" (MCP) but implemented as append (one
+	// add_accept op per criterion), so edits unioned. The fix emits a single
+	// set_accept op that REPLACES the list, adds --accept-add for the additive
+	// flow, and surfaces the pre-existing remove_accept op as --accept-rm so an
+	// individual criterion can be removed/replaced. Five user-visible surfaces
+	// pin the new semantics: the CLI --accept / --accept-add / --accept-rm
+	// flag-help strings (cmd/act/update.go), the spec §"act update" flag block,
+	// and the spec op-fold CRDT note. Each asserting test drives the binary as
+	// a subprocess and reads the materialized list via `act show --json` — the
+	// user-visible boundary, not the fold helper.
+	{
+		name:         "accept-replace-cli-flag-help",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "the set REPLACES any prior criteria, it does not append",
+		testName:     "TestDocClaim_AcceptReplace_SetReplacesNotUnion",
+	},
+	{
+		name:         "accept-replace-spec-flag",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "REPLACES the acceptance list with exactly the supplied criteria",
+		testName:     "TestDocClaim_AcceptReplace_SetReplacesNotUnion",
+	},
+	{
+		name:         "accept-replace-spec-set-accept-crdt",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "`set_accept` REPLACES the whole list",
+		testName:     "TestDocClaim_AcceptReplace_SetReplacesNotUnion",
+	},
+	{
+		name:         "accept-rm-cli-flag-help",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "remove an acceptance criterion by zero-based index",
+		testName:     "TestDocClaim_AcceptRm_RemovesIndividualCriterion",
+	},
+	{
+		name:         "accept-rm-spec-flag",
+		docFile:      "docs/spec-v2.md",
+		claimPattern: "Replace an individual criterion with `--accept-rm N --accept-add",
+		testName:     "TestDocClaim_AcceptRm_RemovesIndividualCriterion",
+	},
+	{
+		name:         "accept-add-cli-flag-help",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "append an acceptance criterion to the existing list",
+		testName:     "TestDocClaim_AcceptAdd_AppendsToList",
+	},
+	{
+		name:         "accept-replace-mcp-schema",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "the set REPLACES any prior criteria, it does not append",
+		testName:     "TestDocClaim_MCP_AcceptReplacesNotUnion",
+	},
+	{
+		name:         "accept-rm-mcp-schema",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "Remove acceptance criteria by zero-based index",
+		testName:     "TestDocClaim_MCP_AcceptRmAndAdd",
+	},
+	{
+		name:         "accept-add-mcp-schema",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "Append these criteria to the existing acceptance list",
+		testName:     "TestDocClaim_MCP_AcceptRmAndAdd",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

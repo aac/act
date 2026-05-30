@@ -57,6 +57,7 @@ var ValidOpTypes = map[string]bool{
 	"remove_external_dep": true,
 	"add_accept":          true,
 	"remove_accept":       true,
+	"set_accept":          true,
 	"claim":               true,
 	"close":               true,
 	"reopen":              true,

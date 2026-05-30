@@ -246,6 +246,31 @@ func (p RemoveAcceptPayload) Validate() error {
 	return nil
 }
 
+// SetAcceptPayload is the payload for op_type=set_accept. Unlike add_accept
+// (which appends one criterion to the grow-set), set_accept carries the FULL
+// acceptance list and replaces it wholesale at fold time via an LWW gate on
+// the "accept" field. It is the replace primitive `act update --accept` emits
+// so repeated edits don't union with prior criteria. An empty Criteria slice
+// is a legitimate "clear all acceptance criteria" instruction.
+type SetAcceptPayload struct {
+	Criteria []string `json:"criteria"`
+}
+
+// Validate implements the set_accept write-time rules: each criterion obeys
+// the same non-empty + 500-byte cap as add_accept. An empty list is valid
+// (clears the acceptance criteria).
+func (p SetAcceptPayload) Validate() error {
+	for i, c := range p.Criteria {
+		if c == "" {
+			return fmt.Errorf("op: set_accept.criteria[%d] is empty", i)
+		}
+		if len(c) > 500 {
+			return fmt.Errorf("op: set_accept.criteria[%d] length %d > 500 bytes (see 'act help workflow' for cap rationale)", i, len(c))
+		}
+	}
+	return nil
+}
+
 // ClaimPayload is the payload for op_type=claim.
 type ClaimPayload struct {
 	Assignee string `json:"assignee"`
@@ -419,6 +444,12 @@ func ValidatePayload(opType string, payload []byte) error {
 		var p RemoveAcceptPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("op: unmarshal remove_accept payload: %w", err)
+		}
+		return p.Validate()
+	case "set_accept":
+		var p SetAcceptPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("op: unmarshal set_accept payload: %w", err)
 		}
 		return p.Validate()
 	case "claim":

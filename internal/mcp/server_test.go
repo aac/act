@@ -290,6 +290,105 @@ func TestActNextHappyPath(t *testing.T) {
 	}
 }
 
+// mcpShowAccept reads the materialized acceptance_criteria (`accept`) list for
+// id back through the MCP act_show handler — the same boundary an MCP client
+// observes, not the fold helper.
+func mcpShowAccept(t *testing.T, srv *Server, id string) []string {
+	t.Helper()
+	out, isErr := srv.callShow(json.RawMessage(`{"id":"` + id + `"}`))
+	if isErr {
+		t.Fatalf("callShow returned error: %+v", out)
+	}
+	m, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("callShow: want map, got %T: %+v", out, out)
+	}
+	// RenderState normalises accept to []string; a JSON round-trip would
+	// yield []any. Handle both so the assertion is robust to the in-process
+	// type the handler returns directly.
+	switch v := m["accept"].(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		got := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				got = append(got, s)
+			}
+		}
+		return got
+	}
+	return nil
+}
+
+// TestDocClaim_MCP_AcceptReplacesNotUnion pins the user-visible MCP schema
+// claim (act_update.accept = "Replace the acceptance criteria with exactly
+// this list ... it does not append") at the handler boundary. It calls
+// callUpdate twice with DIFFERENT accept arrays and asserts the materialized
+// list equals the LAST array, not the union.
+func TestDocClaim_MCP_AcceptReplacesNotUnion(t *testing.T) {
+	root := makeRealRepo(t)
+	id := seedIssue(t, root, "accept-replace-mcp")
+	srv := NewServer(root, false, nil, nil)
+
+	// First set.
+	if out, isErr := srv.callUpdate(json.RawMessage(`{"id":"` + id + `","accept":["first-1","first-2"],"isolated":true}`)); isErr {
+		t.Fatalf("callUpdate (set 1): %+v", out)
+	}
+	if got := mcpShowAccept(t, srv, id); !equalStr(got, []string{"first-1", "first-2"}) {
+		t.Fatalf("after first accept: got %v, want [first-1 first-2]", got)
+	}
+
+	// Second set: entirely different.
+	if out, isErr := srv.callUpdate(json.RawMessage(`{"id":"` + id + `","accept":["second-1"],"isolated":true}`)); isErr {
+		t.Fatalf("callUpdate (set 2): %+v", out)
+	}
+	got := mcpShowAccept(t, srv, id)
+	if !equalStr(got, []string{"second-1"}) {
+		t.Errorf("after second accept: got %v, want [second-1] (replace, not union)", got)
+	}
+}
+
+// TestDocClaim_MCP_AcceptRmAndAdd pins the MCP claim that accept_rm removes an
+// individual criterion and accept_add appends — the non-destructive
+// remove/replace and additive affordances surfaced through the MCP schema.
+func TestDocClaim_MCP_AcceptRmAndAdd(t *testing.T) {
+	root := makeRealRepo(t)
+	id := seedIssue(t, root, "accept-rm-add-mcp")
+	srv := NewServer(root, false, nil, nil)
+
+	// Seed three criteria via a replace.
+	if out, isErr := srv.callUpdate(json.RawMessage(`{"id":"` + id + `","accept":["keep-0","drop-1","keep-2"],"isolated":true}`)); isErr {
+		t.Fatalf("callUpdate (seed): %+v", out)
+	}
+	// Remove index 1.
+	if out, isErr := srv.callUpdate(json.RawMessage(`{"id":"` + id + `","accept_rm":[1],"isolated":true}`)); isErr {
+		t.Fatalf("callUpdate (accept_rm): %+v", out)
+	}
+	if got := mcpShowAccept(t, srv, id); !equalStr(got, []string{"keep-0", "keep-2"}) {
+		t.Errorf("after accept_rm [1]: got %v, want [keep-0 keep-2]", got)
+	}
+	// Append via accept_add.
+	if out, isErr := srv.callUpdate(json.RawMessage(`{"id":"` + id + `","accept_add":["added"],"isolated":true}`)); isErr {
+		t.Fatalf("callUpdate (accept_add): %+v", out)
+	}
+	if got := mcpShowAccept(t, srv, id); !equalStr(got, []string{"keep-0", "keep-2", "added"}) {
+		t.Errorf("after accept_add: got %v, want [keep-0 keep-2 added]", got)
+	}
+}
+
+func equalStr(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestActNextNoCandidates: empty ready set yields {claimed:false,
 // candidates:[]}.
 func TestActNextNoCandidates(t *testing.T) {

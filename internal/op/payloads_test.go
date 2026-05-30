@@ -421,6 +421,7 @@ func TestValidatePayload_AllOpTypes(t *testing.T) {
 		{"remove_external_dep", `{"ref":"linear:ENG-123"}`},
 		{"add_accept", `{"criterion":"works"}`},
 		{"remove_accept", `{"index":0}`},
+		{"set_accept", `{"criteria":["a","b"]}`},
 		{"claim", `{"assignee":"alice"}`},
 		{"close", `{"reason":"done"}`},
 		{"reopen", `{"reason":"regressed"}`},

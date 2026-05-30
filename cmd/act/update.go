@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/aac/act/internal/cli"
@@ -20,6 +21,20 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
+// intSliceFlag is a flag.Value implementation that accumulates repeated
+// integer flags (used by --accept-rm, which takes a zero-based index).
+type intSliceFlag []int
+
+func (s *intSliceFlag) String() string { return fmt.Sprintf("%v", []int(*s)) }
+func (s *intSliceFlag) Set(v string) error {
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("not an integer: %q", v)
+	}
+	*s = append(*s, n)
+	return nil
+}
+
 // runUpdate dispatches `act update <id>`. Positional <id> plus the rich
 // flag surface defined by spec §3 `act update`. Pointer-typed flags
 // distinguish "unset" from "explicitly cleared".
@@ -31,7 +46,11 @@ func runUpdate(args []string) int {
 	descriptionFlag := fs.String("description", "", "new description (empty string explicitly clears the existing description. Contrast 'act create --description \"\"' which is silently accepted as a no-op — see act-f2c7).")
 	descriptionFileFlag := fs.String("description-file", "", "read new description from file (UTF-8); use - for stdin")
 	var acceptFlag stringSliceFlag
-	fs.Var(&acceptFlag, "accept", "append an acceptance criterion (repeatable)")
+	fs.Var(&acceptFlag, "accept", "replace the acceptance criteria with exactly these (repeatable; the set REPLACES any prior criteria, it does not append). Supplying --accept with no value clears all criteria. Use --accept-add to append, --accept-rm to remove one.")
+	var acceptAddFlag stringSliceFlag
+	fs.Var(&acceptAddFlag, "accept-add", "append an acceptance criterion to the existing list (repeatable; additive — contrast --accept which replaces)")
+	var acceptRmFlag intSliceFlag
+	fs.Var(&acceptRmFlag, "accept-rm", "remove an acceptance criterion by zero-based index against the current list (repeatable); out-of-range is a no-op")
 	var depRmFlag stringSliceFlag
 	fs.Var(&depRmFlag, "dep-rm", "remove a dependency edge as <id> or <id>:<edge_type> (repeatable)")
 	var extAddFlag stringSliceFlag
@@ -72,6 +91,9 @@ func runUpdate(args []string) int {
 	opts := cli.UpdateOptions{
 		ID:          idArg,
 		Accept:      []string(acceptFlag),
+		AcceptSet:   visited["accept"],
+		AcceptAdd:   []string(acceptAddFlag),
+		AcceptRm:    []int(acceptRmFlag),
 		DepRm:       []string(depRmFlag),
 		ExtAdd:      []string(extAddFlag),
 		ExtRm:       []string(extRmFlag),
