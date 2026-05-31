@@ -309,7 +309,7 @@ func TestBootstrapWorker_JSONShape(t *testing.T) {
 	srcRoot, _ := makeBootstrapSource(t)
 	targetRoot := makeBootstrapTarget(t)
 
-	stdout, _ := mustRunAct(t, srcRoot, 0, "bootstrap-worker", targetRoot, "--json")
+	stdout, _ := mustRunAct(t, srcRoot, 0, "state", "import", targetRoot, "--json")
 	var got map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &got); err != nil {
 		t.Fatalf("unmarshal stdout: %v\n%s", err, stdout)
@@ -399,28 +399,74 @@ func equalStringSets(a, b []string) bool {
 	return true
 }
 
-// TestDocClaim_BootstrapWorker_HelpListsSubcommand is the user-visible
-// doc-claim test for the new subcommand. The claim is "act help"
-// includes `bootstrap-worker` in its subcommand listing — that's the
-// surface a cold-start agent uses to discover the command exists. The
-// docs_sweep_test.go registry has a matching entry pointing at this
-// test.
-func TestDocClaim_BootstrapWorker_HelpListsSubcommand(t *testing.T) {
+// TestDocClaim_StateImportExportDirectoryScoped is the user-visible
+// doc-claim test for the directory-scoped state-movement verbs (MF-D,
+// act-93370d). The claim: `act state import` / `act state export` are
+// directory-scoped and worktree-blind — their --help text and usage
+// lines carry NO "worker" or "worktree" vocabulary, and `act help`
+// lists the new subcommands. The docs_sweep_test.go registry has
+// matching entries pointing at this test.
+//
+// We assert at the help-string boundary (the surface a cold-start agent
+// reads to learn the command), not at an internal flag struct. The
+// flag-help text is emitted on stderr by the flag package under
+// ContinueOnError when --help is passed.
+func TestDocClaim_StateImportExportDirectoryScoped(t *testing.T) {
 	if actBinaryPath == "" {
 		t.Skip("actBinaryPath not set; build is required (TestMain ran)")
 	}
 	site := t.TempDir()
+
+	// `act help` lists both new subcommands by their directory-scoped
+	// invocation shape.
 	out, _ := mustRunAct(t, site, 0, "help")
-	if !strings.Contains(out, "bootstrap-worker") {
-		t.Errorf("act help missing bootstrap-worker in subcommand listing:\n%s", out)
+	for _, want := range []string{"act state import <dir>", "act state export <dir>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("act help missing %q in state-movement section:\n%s", want, out)
+		}
 	}
-	// And the --help-equivalent usage line emitted on missing positional
-	// must also name the subcommand and document the flags so an agent
-	// running bootstrap-worker without args gets a directly actionable
-	// message.
-	_, stderr, _ := runAct(t, site, "bootstrap-worker")
-	if !strings.Contains(stderr, "bootstrap-worker") || !strings.Contains(stderr, "--force") {
-		t.Errorf("bootstrap-worker usage message missing required parts:\n%s", stderr)
+
+	// The per-subcommand --help text and the usage line emitted on a
+	// missing positional must both be worktree-blind. We collect every
+	// user-visible string the two verbs surface and assert none contain
+	// "worker" or "worktree" (case-insensitive). This is the MF-D
+	// guarantee: act sheds all worktree vocabulary from these verbs.
+	bannedTokens := []string{"worker", "worktree"}
+	surfaces := map[string]string{}
+
+	importHelp, _, _ := runAct(t, site, "state", "import", "--help")
+	surfaces["state import --help"] = importHelp
+	exportHelp, _, _ := runAct(t, site, "state", "export", "--help")
+	surfaces["state export --help"] = exportHelp
+
+	_, importUsage, importCode := runAct(t, site, "state", "import")
+	surfaces["state import (usage)"] = importUsage
+	_, exportUsage, exportCode := runAct(t, site, "state", "export")
+	surfaces["state export (usage)"] = exportUsage
+
+	// Usage-on-missing-positional must be exit 2 (bad input) and name the
+	// flags so an agent running the verb blind gets actionable text.
+	if importCode != 2 {
+		t.Errorf("act state import (no args) exit = %d, want 2", importCode)
+	}
+	if exportCode != 2 {
+		t.Errorf("act state export (no args) exit = %d, want 2", exportCode)
+	}
+	if !strings.Contains(importUsage, "--force") {
+		t.Errorf("state import usage missing --force:\n%s", importUsage)
+	}
+	if !strings.Contains(exportUsage, "--dry-run") {
+		t.Errorf("state export usage missing --dry-run:\n%s", exportUsage)
+	}
+
+	for name, body := range surfaces {
+		lower := strings.ToLower(body)
+		for _, tok := range bannedTokens {
+			if strings.Contains(lower, tok) {
+				t.Errorf("%s surface contains banned worktree token %q (MF-D: state verbs must be worktree-blind):\n%s",
+					name, tok, body)
+			}
+		}
 	}
 }
 

@@ -123,7 +123,7 @@ func TestDocClaim_Help_ListsMigrateToNested(t *testing.T) {
 //
 // remote_unreachable is intentionally NOT asserted here: it is not a
 // close/push-path (exit-4) outcome. PushWithRetry collapses fetch failures
-// into push_exhausted, so the only emitter is `act bootstrap-worker`
+// into push_exhausted, so the only emitter is `act state import`
 // (clone failure, exit 3). See act-6d9546; the EXIT CODES block no longer
 // lists it under exit 4.
 //

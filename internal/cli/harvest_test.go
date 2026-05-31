@@ -17,8 +17,9 @@ package cli
 //	   → op_filename_collision.
 //	7. Fold error path: simulate fold failure; copy + commit still
 //	   succeed; JSON reports fold_error.
-//	8. TestDocClaim_Harvest_HelpListsSubcommand — registry-tracked
-//	   doc-claim test that `act help` lists the harvest subcommand.
+//	8. TestDocClaim_DeprecatedAliasesDelegate — registry-tracked
+//	   doc-claim test that the deprecated `harvest` / `bootstrap-worker`
+//	   aliases print a notice and delegate to the new state verbs.
 
 import (
 	"errors"
@@ -27,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -387,27 +389,126 @@ func TestHarvest_FoldErrorReported(t *testing.T) {
 	}
 }
 
-// TestDocClaim_Harvest_HelpListsSubcommand is the registry-tracked
-// doc-claim test. The claim: `act help` includes the harvest subcommand
-// listing line ("act harvest <worker-path>") so a cold-start agent can
-// discover the surface. docs_sweep_test.go has the matching registry
-// entry.
-func TestDocClaim_Harvest_HelpListsSubcommand(t *testing.T) {
+// TestDocClaim_DeprecatedAliasesDelegate is the registry-tracked doc-claim
+// test for the backward-compat aliases (MF-D, act-93370d). The claim:
+// `act bootstrap-worker <dir>` and `act harvest <dir>` remain as thin
+// deprecation aliases that (1) print a deprecation notice to stderr
+// pointing at the new verb, and (2) produce the SAME result as the new
+// verb. `act help` advertises the new verbs (state import / state export)
+// as the canonical surface.
+//
+// We assert the alias-vs-new-verb equivalence at the user-visible
+// boundary: bootstrap-worker and state import, run against fresh targets
+// seeded from the same source, must both succeed and copy the same op
+// set. Behavioral mechanics are unchanged — the alias just delegates.
+func TestDocClaim_DeprecatedAliasesDelegate(t *testing.T) {
 	if actBinaryPath == "" {
 		t.Skip("actBinaryPath not set; build is required (TestMain ran)")
 	}
 	site := t.TempDir()
+
+	// `act help` advertises the new canonical verbs.
 	out, _ := mustRunAct(t, site, 0, "help")
-	if !strings.Contains(out, "act harvest <worker-path>") {
-		t.Errorf("act help missing the canonical harvest invocation line:\n%s", out)
+	for _, want := range []string{"act state import <dir>", "act state export <dir>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("act help missing canonical verb %q:\n%s", want, out)
+		}
 	}
-	// The --help-equivalent usage line emitted on a missing positional
-	// must also name the subcommand and the documented flags so an
-	// agent running `act harvest` blind gets actionable text.
-	_, stderr, _ := runAct(t, site, "harvest")
-	if !strings.Contains(stderr, "harvest") || !strings.Contains(stderr, "--dry-run") {
-		t.Errorf("harvest usage message missing required parts:\n%s", stderr)
+
+	// --- Import alias: `act bootstrap-worker <dir>` delegates to
+	// `act state import <dir>`. ---
+	host := makeHarvestHost(t)
+	// Seed an op into the host so .act/ops/ has a real op file to copy;
+	// a freshly-initialized host has no issue ops yet.
+	mustRunAct(t, host, 0, "create", "alias-delegate probe", "--json")
+
+	// Target A seeded via the deprecated alias.
+	aliasTarget := filepath.Join(t.TempDir(), "via-alias")
+	if err := os.MkdirAll(aliasTarget, 0o755); err != nil {
+		t.Fatalf("mkdir alias target: %v", err)
 	}
+	_, aliasStderr, aliasCode := runAct(t, host, "bootstrap-worker", aliasTarget)
+	if aliasCode != 0 {
+		t.Fatalf("act bootstrap-worker <dir> exit = %d, want 0\nstderr:\n%s", aliasCode, aliasStderr)
+	}
+	if !strings.Contains(aliasStderr, "deprecated") || !strings.Contains(aliasStderr, "act state import") {
+		t.Errorf("bootstrap-worker alias did not print a deprecation notice pointing at the new verb:\n%s", aliasStderr)
+	}
+
+	// Target B seeded via the new verb.
+	newTarget := filepath.Join(t.TempDir(), "via-new-verb")
+	if err := os.MkdirAll(newTarget, 0o755); err != nil {
+		t.Fatalf("mkdir new-verb target: %v", err)
+	}
+	_, newStderr, newCode := runAct(t, host, "state", "import", newTarget)
+	if newCode != 0 {
+		t.Fatalf("act state import <dir> exit = %d, want 0\nstderr:\n%s", newCode, newStderr)
+	}
+	if strings.Contains(newStderr, "deprecated") {
+		t.Errorf("act state import (the new verb) should NOT print a deprecation notice:\n%s", newStderr)
+	}
+
+	// Same result: both targets carry a populated .act/ops/ with the same
+	// op set copied from the host.
+	aliasOps := relOpFiles(t, filepath.Join(aliasTarget, ".act", "ops"))
+	newOps := relOpFiles(t, filepath.Join(newTarget, ".act", "ops"))
+	if len(aliasOps) == 0 {
+		t.Fatalf("alias-seeded target has no ops under .act/ops/")
+	}
+	if !slicesEqualUnordered(aliasOps, newOps) {
+		t.Errorf("alias and new-verb seeded different op sets:\n  alias: %v\n  new:   %v", aliasOps, newOps)
+	}
+
+	// --- Export alias: `act harvest <dir>` delegates to
+	// `act state export <dir>` and prints a deprecation notice. ---
+	exportHost := makeHarvestHost(t)
+	worker := makeHarvestWorker(t, exportHost, 2)
+	_, harvestStderr, harvestCode := runAct(t, exportHost, "harvest", worker, "--dry-run")
+	if harvestCode != 0 {
+		t.Fatalf("act harvest <dir> --dry-run exit = %d, want 0\nstderr:\n%s", harvestCode, harvestStderr)
+	}
+	if !strings.Contains(harvestStderr, "deprecated") || !strings.Contains(harvestStderr, "act state export") {
+		t.Errorf("harvest alias did not print a deprecation notice pointing at the new verb:\n%s", harvestStderr)
+	}
+}
+
+// relOpFiles returns the sorted relative paths of every .json file under
+// opsDir. Used to compare the op set two seeding paths produced.
+func relOpFiles(t *testing.T, opsDir string) []string {
+	t.Helper()
+	var out []string
+	_ = filepath.Walk(opsDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".json") {
+			return nil
+		}
+		rel, rerr := filepath.Rel(opsDir, p)
+		if rerr != nil {
+			return rerr
+		}
+		out = append(out, rel)
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+// slicesEqualUnordered reports whether a and b contain the same elements
+// (order-insensitive). Both are sorted by the caller, so a direct compare
+// suffices, but we re-sort defensively.
+func slicesEqualUnordered(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ac := append([]string(nil), a...)
+	bc := append([]string(nil), b...)
+	sort.Strings(ac)
+	sort.Strings(bc)
+	for i := range ac {
+		if ac[i] != bc[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // nestedCommitCount returns the number of commits on the host's nested

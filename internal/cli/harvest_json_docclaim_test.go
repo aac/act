@@ -44,17 +44,19 @@ type harvestJSONEnvelope struct {
 	DryRun          bool             `json:"dry_run"`
 }
 
-// runHarvestJSON drives `act harvest <worker> --json --dry-run` in the
+// runHarvestJSON drives `act state export <dir> --json --dry-run` in the
 // host's working tree and returns the parsed envelope. We use --dry-run
 // so the test doesn't have to set up a writable nested .act/.git for the
 // commit; the JSON shape is identical to the non-dry-run path (the
-// harvest source code returns the same HarvestResult struct).
+// export source code returns the same HarvestResult struct). The old
+// `act harvest` alias delegates here, so driving the new verb exercises
+// the same boundary.
 func runHarvestJSON(t *testing.T, host, worker string) harvestJSONEnvelope {
 	t.Helper()
-	stdout, _ := mustRunAct(t, host, 0, "harvest", worker, "--dry-run", "--json")
+	stdout, _ := mustRunAct(t, host, 0, "state", "export", worker, "--dry-run", "--json")
 	var env harvestJSONEnvelope
 	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
-		t.Fatalf("harvest --json --dry-run: invalid JSON: %v\n%s", err, stdout)
+		t.Fatalf("state export --json --dry-run: invalid JSON: %v\n%s", err, stdout)
 	}
 	return env
 }

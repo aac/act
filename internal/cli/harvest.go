@@ -31,7 +31,7 @@
 //   - Otherwise: copy each harvest candidate into the host's
 //     `.act/ops/<issue-id>/<month>/`, stage every copied path via
 //     ActGitOps on the host's nested `.act/.git`, then run a single
-//     `git commit -m "act harvest: <N> ops from <basename>"`.
+//     `git commit -m "act state export: <N> ops from <basename>"`.
 //   - After commit, refold-and-rebuild the index via index.Rebuild
 //     (paths.Ops). A fold failure does NOT roll back the copy or commit —
 //     harvest is one-way append, and the op log on disk remains the source
@@ -115,6 +115,14 @@ type HarvestOptions struct {
 	// emitted line. The cmd-level dispatcher leaves it nil — its own
 	// stderr is the right destination.
 	Stderr io.Writer
+
+	// CmdName is the command name used as the prefix in error-envelope
+	// `message` strings and the harvest commit message (e.g.
+	// "act state export"). Empty defaults to the historical "act harvest"
+	// so direct-API callers and the deprecation alias keep their existing
+	// prefixes. The directory-scoped `act state export` dispatcher sets
+	// this so the user-visible prose carries no worktree vocabulary (MF-D).
+	CmdName string
 }
 
 // HarvestResult is the success payload. JSON shape is stable; new fields
@@ -200,10 +208,14 @@ const ErrWorkerStateNotFound = "worker_state_not_found"
 //	3  host precondition failure (no host repo, no host .act/)
 //	1  runtime failure (op_filename_collision, copy/stage/commit error)
 func RunHarvest(opts HarvestOptions) (any, int) {
+	cmd := opts.CmdName
+	if cmd == "" {
+		cmd = "act harvest"
+	}
 	if opts.WorkerPath == "" {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": "act harvest: <worker-path> is required",
+			"message": cmd + ": <worker-path> is required",
 		}, 2
 	}
 
@@ -214,7 +226,7 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 		if err != nil {
 			return map[string]any{
 				"error":   ErrNoRepo,
-				"message": fmt.Sprintf("act harvest: getcwd: %v", err),
+				"message": fmt.Sprintf(cmd+": getcwd: %v", err),
 			}, 3
 		}
 		hostStart = cwd
@@ -224,19 +236,19 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 		if errors.Is(err, gitops.ErrNoHostRepo) {
 			return map[string]any{
 				"error":   ErrNotInGit,
-				"message": fmt.Sprintf("act harvest: %v", err),
+				"message": fmt.Sprintf(cmd+": %v", err),
 			}, 3
 		}
 		return map[string]any{
 			"error":   ErrNoRepo,
-			"message": fmt.Sprintf("act harvest: resolve host repo: %v", err),
+			"message": fmt.Sprintf(cmd+": resolve host repo: %v", err),
 		}, 3
 	}
 	hostAct, err := gitops.FindActStatePath(hostRoot)
 	if err != nil {
 		return map[string]any{
 			"error":   ErrActNotInitialized,
-			"message": fmt.Sprintf("act harvest: host %s has no .act/ — run `act init` first", hostRoot),
+			"message": fmt.Sprintf(cmd+": host %s has no .act/ — run `act init` first", hostRoot),
 		}, 3
 	}
 
@@ -248,14 +260,14 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 	if err != nil {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": fmt.Sprintf("act harvest: abs(%q): %v", opts.WorkerPath, err),
+			"message": fmt.Sprintf(cmd+": abs(%q): %v", opts.WorkerPath, err),
 		}, 2
 	}
 	workerAct := filepath.Join(absWorker, ".act")
 	if info, serr := os.Stat(workerAct); serr != nil || !info.IsDir() {
 		return map[string]any{
 			"error":   ErrWorkerStateNotFound,
-			"message": fmt.Sprintf("act harvest: worker %s has no .act/ — pass a path that was seeded by `act bootstrap-worker`", absWorker),
+			"message": fmt.Sprintf(cmd+": directory %s has no .act/ — pass a path that was seeded by `act state import`", absWorker),
 		}, 2
 	}
 
@@ -319,7 +331,7 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 	if scanErr != nil {
 		return map[string]any{
 			"error":   ErrOpsScanFailed,
-			"message": fmt.Sprintf("act harvest: scan worker ops: %v", scanErr),
+			"message": fmt.Sprintf(cmd+": scan worker ops: %v", scanErr),
 		}, 1
 	}
 
@@ -342,7 +354,7 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 			}
 			return map[string]any{
 				"error":   ErrStatFailed,
-				"message": fmt.Sprintf("act harvest: stat %s: %v", dstPath, statErr),
+				"message": fmt.Sprintf(cmd+": stat %s: %v", dstPath, statErr),
 			}, 1
 		}
 		// Filename present at host. Compare bytes — if equal, skip; if
@@ -351,14 +363,14 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 		if dstInfo.IsDir() {
 			return map[string]any{
 				"error":   ErrStatFailed,
-				"message": fmt.Sprintf("act harvest: %s is a directory at host, expected op file", dstPath),
+				"message": fmt.Sprintf(cmd+": %s is a directory at host, expected op file", dstPath),
 			}, 1
 		}
 		sameContent, cerr := filesEqualByHash(srcPath, dstPath)
 		if cerr != nil {
 			return map[string]any{
 				"error":   ErrOpsReadFailed,
-				"message": fmt.Sprintf("act harvest: compare %s vs %s: %v", srcPath, dstPath, cerr),
+				"message": fmt.Sprintf(cmd+": compare %s vs %s: %v", srcPath, dstPath, cerr),
 			}, 1
 		}
 		if sameContent {
@@ -367,7 +379,7 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 		}
 		return map[string]any{
 			"error":   ErrOpFilenameCollision,
-			"message": fmt.Sprintf("act harvest: op filename %q exists at host with divergent content — refusing to overwrite (this is a corruption signal: HLC + content-hash should make filenames unique-per-content)", rel),
+			"message": fmt.Sprintf(cmd+": op filename %q exists at host with divergent content — refusing to overwrite (this is a corruption signal: HLC + content-hash should make filenames unique-per-content)", rel),
 			"details": map[string]any{
 				"path":   rel,
 				"worker": srcPath,
@@ -408,13 +420,13 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 			return map[string]any{
 				"error":   ErrWriteFailed,
-				"message": fmt.Sprintf("act harvest: mkdir parent of %s: %v", dstPath, err),
+				"message": fmt.Sprintf(cmd+": mkdir parent of %s: %v", dstPath, err),
 			}, 1
 		}
 		if err := copyFileForHarvest(srcPath, dstPath); err != nil {
 			return map[string]any{
 				"error":   ErrWriteFailed,
-				"message": fmt.Sprintf("act harvest: copy %s → %s: %v", srcPath, dstPath, err),
+				"message": fmt.Sprintf(cmd+": copy %s → %s: %v", srcPath, dstPath, err),
 			}, 1
 		}
 		copied = append(copied, dstPath)
@@ -429,15 +441,15 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 		if err := gops.StageOpFile(dstPath); err != nil {
 			return map[string]any{
 				"error":   ErrWriteFailed,
-				"message": fmt.Sprintf("act harvest: stage %s: %v", dstPath, err),
+				"message": fmt.Sprintf(cmd+": stage %s: %v", dstPath, err),
 			}, 1
 		}
 	}
-	commitMsg := fmt.Sprintf("act harvest: %d ops from %s", len(harvested), filepath.Base(absWorker))
+	commitMsg := fmt.Sprintf(cmd+": %d ops from %s", len(harvested), filepath.Base(absWorker))
 	if err := gops.Commit(commitMsg); err != nil {
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act harvest: commit: %v", err),
+			"message": fmt.Sprintf(cmd+": commit: %v", err),
 		}, 1
 	}
 	// No AutoPushAfterCommitToBranch here — intentional deviation from the

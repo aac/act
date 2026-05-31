@@ -46,7 +46,7 @@ func cpR(t *testing.T, src, dst string) {
 // fixture can be re-used.
 func countHarvestedFromWorker(t *testing.T, orchRoot, workerRoot string) int {
 	t.Helper()
-	so, _ := mustRunAct(t, orchRoot, 0, "harvest", "--json", "--dry-run", workerRoot)
+	so, _ := mustRunAct(t, orchRoot, 0, "state", "export", "--json", "--dry-run", workerRoot)
 	var res struct {
 		HarvestedOps []string `json:"harvested_ops"`
 	}
@@ -130,8 +130,8 @@ func TestBootstrapFromCWD_OrchestrateWorkerEndToEnd(t *testing.T) {
 		t.Fatalf("orchestrator harvest saw %d ops; expected >= 1 (the worker's create) — the silent-loss bug", harvested)
 	}
 
-	// Real (non-dry-run) harvest, then the orchestrator must see the issue.
-	mustRunAct(t, orchRoot, 0, "harvest", workerRoot)
+	// Real (non-dry-run) export, then the orchestrator must see the issue.
+	mustRunAct(t, orchRoot, 0, "state", "export", workerRoot)
 	orchShow := readShowJSON(t, orchRoot, workerID)
 	if orchShow["id"] != workerID {
 		t.Fatalf("orchestrator show %s after harvest: id=%v, want %s — op did not reach the orchestrator",

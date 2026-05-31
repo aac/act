@@ -82,17 +82,29 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "init, version, log, list, search, ready, mine, show,",
 		testName:     "TestDocClaim_ActHelpListsSubcommands",
 	},
+	// state-import/export (act-93370d, MF-D): the worktree-blind state
+	// movement verbs. The help text names the subcommands and their
+	// directory-scoped <dir> argument shape; the docclaim tests drive
+	// `act state import --help` / `act state export --help` and assert
+	// the help strings carry no "worker"/"worktree" vocabulary. The
+	// deprecated `bootstrap-worker`/`harvest` aliases delegate to these.
 	{
-		name:         "act-help-bootstrap-worker-subcommand",
+		name:         "act-help-state-import-subcommand",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "bootstrap-worker",
-		testName:     "TestDocClaim_BootstrapWorker_HelpListsSubcommand",
+		claimPattern: "act state import <dir>",
+		testName:     "TestDocClaim_StateImportExportDirectoryScoped",
 	},
 	{
-		name:         "act-help-harvest-subcommand",
+		name:         "act-help-state-export-subcommand",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "act harvest <worker-path>",
-		testName:     "TestDocClaim_Harvest_HelpListsSubcommand",
+		claimPattern: "act state export <dir>",
+		testName:     "TestDocClaim_StateImportExportDirectoryScoped",
+	},
+	{
+		name:         "state-deprecated-aliases-delegate",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "state import, state export",
+		testName:     "TestDocClaim_DeprecatedAliasesDelegate",
 	},
 	// harvest-json-* (act-c8028f): the harvest help text in cmd/act/help.go
 	// names three JSON-envelope fields that the orchestrator (and the act
@@ -252,15 +264,16 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "render description and closed_reason without truncation",
 		testName:     "TestDocClaim_Show_FullDisablesTruncation",
 	},
-	// skill-worker-* (act-9e7078): the worker-protocol section in the
-	// embedded SKILL.md tells dispatched sub-agents (a) that the
-	// orchestrator pre-seeds .act/ via bootstrap-worker before launch and
-	// (b) that the orchestrator harvests ops at teardown — so workers can
-	// run the canonical loop locally without mid-flight coordination. If
-	// either subcommand reference is dropped from the skill, a cold-start
-	// worker reads no doc and might invent its own coordination protocol
-	// (push from worktree, mid-flight rsync, etc.) — exactly the kind of
-	// drift the sweep catches.
+	// skill-worker-* (act-9e7078, renamed act-93370d): the worker-protocol
+	// section in the embedded SKILL.md tells dispatched sub-agents (a) that
+	// the orchestrator pre-seeds .act/ via `act state import` before launch
+	// and (b) that the orchestrator collects ops via `act state export` at
+	// teardown — so workers can run the canonical loop locally without
+	// mid-flight coordination. (These were `bootstrap-worker`/`harvest`
+	// before MF-D shed the worktree vocabulary.) If either subcommand
+	// reference is dropped from the skill, a cold-start worker reads no doc
+	// and might invent its own coordination protocol (push from worktree,
+	// mid-flight rsync, etc.) — exactly the kind of drift the sweep catches.
 	//
 	// The orchestrate command itself (~/.claude/commands/orchestrate.md)
 	// ALSO makes load-bearing claims about bootstrap-on-dispatch and
@@ -273,16 +286,16 @@ var docClaimRegistry = []docClaim{
 	// equivalent sweep to enforce those claims; cross-repo doc-claim
 	// enforcement is out of scope for this registry.
 	{
-		name:         "skill-worker-bootstrap-ref",
+		name:         "skill-worker-state-import-ref",
 		docFile:      "skills/act/SKILL.md",
-		claimPattern: "bootstrap-worker",
-		testName:     "TestDocClaim_Skill_MentionsBootstrapWorker",
+		claimPattern: "act state import",
+		testName:     "TestDocClaim_Skill_MentionsStateImport",
 	},
 	{
-		name:         "skill-worker-harvest-ref",
+		name:         "skill-worker-state-export-ref",
 		docFile:      "skills/act/SKILL.md",
-		claimPattern: "harvest",
-		testName:     "TestDocClaim_Skill_MentionsHarvest",
+		claimPattern: "act state export",
+		testName:     "TestDocClaim_Skill_MentionsStateExport",
 	},
 	{
 		name:         "skill-worker-section",

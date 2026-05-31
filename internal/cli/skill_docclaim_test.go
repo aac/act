@@ -54,35 +54,38 @@ func TestDocClaim_Skill_WorkerProtocolSection(t *testing.T) {
 	}
 }
 
-// TestDocClaim_Skill_MentionsBootstrapWorker asserts the skill points
-// workers at `act bootstrap-worker` as the orchestrator's pre-dispatch
-// seeding step. Without this reference a cold-start worker reading only
-// the skill won't know its .act/ was pre-seeded and might try to
-// `act init` over the top.
-func TestDocClaim_Skill_MentionsBootstrapWorker(t *testing.T) {
+// TestDocClaim_Skill_MentionsStateImport asserts the skill points workers
+// at `act state import` as the orchestrator's pre-dispatch seeding step.
+// Without this reference a cold-start worker reading only the skill won't
+// know its .act/ was pre-seeded and might try to `act init` over the top.
+// (Renamed from MentionsBootstrapWorker when MF-D shed the worktree
+// vocabulary — act-93370d.)
+func TestDocClaim_Skill_MentionsStateImport(t *testing.T) {
 	body := readSkillBody(t)
-	const claim = "bootstrap-worker"
+	const claim = "act state import"
 	if !strings.Contains(body, claim) {
 		t.Errorf("skills/act/SKILL.md no longer mentions %q.\n"+
 			"  Workers need to know the orchestrator pre-seeds .act/ via this subcommand;\n"+
 			"  if the reference is gone, the worker-protocol section is no longer\n"+
 			"  load-bearing. Either re-introduce the reference or drop the registry\n"+
-			"  entry 'skill-worker-bootstrap-ref'.", claim)
+			"  entry 'skill-worker-state-import-ref'.", claim)
 	}
 }
 
-// TestDocClaim_Skill_MentionsHarvest asserts the skill points workers at
-// `act harvest` as the orchestrator's at-teardown op-collection step.
-// Without this reference workers may invent their own coordination
+// TestDocClaim_Skill_MentionsStateExport asserts the skill points workers
+// at `act state export` as the orchestrator's at-teardown op-collection
+// step. Without this reference workers may invent their own coordination
 // (mid-flight pushes, manual rsync) instead of trusting the orchestrator.
-func TestDocClaim_Skill_MentionsHarvest(t *testing.T) {
+// (Renamed from MentionsHarvest when MF-D shed the worktree vocabulary —
+// act-93370d.)
+func TestDocClaim_Skill_MentionsStateExport(t *testing.T) {
 	body := readSkillBody(t)
-	const claim = "harvest"
+	const claim = "act state export"
 	if !strings.Contains(body, claim) {
 		t.Errorf("skills/act/SKILL.md no longer mentions %q.\n"+
 			"  Workers need to know the orchestrator collects their ops via this\n"+
 			"  subcommand at teardown; if the reference is gone, the worker-protocol\n"+
 			"  section is no longer load-bearing. Either re-introduce the reference\n"+
-			"  or drop the registry entry 'skill-worker-harvest-ref'.", claim)
+			"  or drop the registry entry 'skill-worker-state-export-ref'.", claim)
 	}
 }

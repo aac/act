@@ -142,6 +142,14 @@ type BootstrapWorkerOptions struct {
 
 	// Now is an injectable clock for tests; default time.Now.
 	Now func() time.Time
+
+	// CmdName is the command name used as the prefix in error-envelope
+	// `message` strings (e.g. "act state import"). Empty defaults to the
+	// historical "act bootstrap-worker" so direct-API callers and the
+	// deprecation alias keep their existing message prefixes. The
+	// directory-scoped `act state import` dispatcher sets this so the
+	// user-visible error prose carries no worktree vocabulary (MF-D).
+	CmdName string
 }
 
 // BootstrapWorkerResult is the success payload.
@@ -180,11 +188,15 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	cmd := opts.CmdName
+	if cmd == "" {
+		cmd = "act bootstrap-worker"
+	}
 
 	if opts.FromRemoteURL != "" && opts.FromCWDSourcePath != "" {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": "act bootstrap-worker: --from-remote and --from-cwd are mutually exclusive",
+			"message": cmd + ": --from-remote and --from-cwd are mutually exclusive",
 		}, 2
 	}
 
@@ -199,7 +211,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if opts.Target == "" {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": "act bootstrap-worker: <target-path> is required",
+			"message": cmd + ": <target-path> is required",
 		}, 2
 	}
 
@@ -216,7 +228,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		if err != nil {
 			return map[string]any{
 				"error":   ErrNoRepo,
-				"message": fmt.Sprintf("act bootstrap-worker: getcwd: %v", err),
+				"message": fmt.Sprintf(cmd+": getcwd: %v", err),
 			}, 3
 		}
 		srcStart = cwd
@@ -226,12 +238,12 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		if errors.Is(err, gitops.ErrNoHostRepo) {
 			return map[string]any{
 				"error":   ErrNotInGit,
-				"message": fmt.Sprintf("act bootstrap-worker: %v", err),
+				"message": fmt.Sprintf(cmd+": %v", err),
 			}, 3
 		}
 		return map[string]any{
 			"error":   ErrNoRepo,
-			"message": fmt.Sprintf("act bootstrap-worker: resolve host repo: %v", err),
+			"message": fmt.Sprintf(cmd+": resolve host repo: %v", err),
 		}, 3
 	}
 	srcAct, err := gitops.FindActStatePath(srcRoot)
@@ -240,7 +252,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		// initialised. Use the spec-canonical code.
 		return map[string]any{
 			"error":   ErrActNotInitialized,
-			"message": fmt.Sprintf("act bootstrap-worker: source %s has no .act/ — run `act init` first", srcRoot),
+			"message": fmt.Sprintf(cmd+": source %s has no .act/ — run `act init` first", srcRoot),
 		}, 3
 	}
 
@@ -252,7 +264,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if _, err := os.Stat(srcGitPath); err != nil {
 		return map[string]any{
 			"error":   "act_state_not_initialized",
-			"message": fmt.Sprintf("act bootstrap-worker: source %s missing nested .git — run `act migrate-to-nested` or `act init`", srcAct),
+			"message": fmt.Sprintf(cmd+": source %s missing nested .git — run `act migrate-to-nested` or `act init`", srcAct),
 		}, 3
 	}
 
@@ -263,13 +275,13 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if err != nil {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": fmt.Sprintf("act bootstrap-worker: abs(%q): %v", opts.Target, err),
+			"message": fmt.Sprintf(cmd+": abs(%q): %v", opts.Target, err),
 		}, 2
 	}
 	if _, err := os.Stat(absTarget); err != nil {
 		return map[string]any{
 			"error":   ErrStatFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: target %s: %v", absTarget, err),
+			"message": fmt.Sprintf(cmd+": target %s: %v", absTarget, err),
 		}, 3
 	}
 
@@ -279,12 +291,12 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if nonEmpty, err := dirNonEmpty(targetAct); err != nil {
 		return map[string]any{
 			"error":   ErrStatFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: stat target .act/: %v", err),
+			"message": fmt.Sprintf(cmd+": stat target .act/: %v", err),
 		}, 3
 	} else if nonEmpty && !opts.Force {
 		return map[string]any{
 			"error":   ErrTargetNotEmpty,
-			"message": fmt.Sprintf("act bootstrap-worker: %s exists and is non-empty; pass --force to overwrite", targetAct),
+			"message": fmt.Sprintf(cmd+": %s exists and is non-empty; pass --force to overwrite", targetAct),
 		}, 2
 	}
 
@@ -295,7 +307,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 	if err := os.RemoveAll(stagingAct); err != nil {
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: clear staging %s: %v", stagingAct, err),
+			"message": fmt.Sprintf(cmd+": clear staging %s: %v", stagingAct, err),
 		}, 3
 	}
 
@@ -305,7 +317,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: copy %s → %s: %v", srcAct, stagingAct, err),
+			"message": fmt.Sprintf(cmd+": copy %s → %s: %v", srcAct, stagingAct, err),
 		}, 3
 	}
 
@@ -323,7 +335,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrMarshalFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: marshal dispatch_hlc: %v", err),
+			"message": fmt.Sprintf(cmd+": marshal dispatch_hlc: %v", err),
 		}, 3
 	}
 	meta := bootstrapMeta{
@@ -336,14 +348,14 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrMarshalFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: marshal meta: %v", err),
+			"message": fmt.Sprintf(cmd+": marshal meta: %v", err),
 		}, 3
 	}
 	if err := os.WriteFile(filepath.Join(stagingAct, BootstrapMetaFileName), metaBody, 0o644); err != nil {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: write meta: %v", err),
+			"message": fmt.Sprintf(cmd+": write meta: %v", err),
 		}, 3
 	}
 
@@ -358,7 +370,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 			_ = os.RemoveAll(stagingAct)
 			return map[string]any{
 				"error":   ErrWriteFailed,
-				"message": fmt.Sprintf("act bootstrap-worker: remove existing %s: %v", targetAct, err),
+				"message": fmt.Sprintf(cmd+": remove existing %s: %v", targetAct, err),
 			}, 3
 		}
 	}
@@ -366,7 +378,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: rename %s → %s: %v", stagingAct, targetAct, err),
+			"message": fmt.Sprintf(cmd+": rename %s → %s: %v", stagingAct, targetAct, err),
 		}, 3
 	}
 
@@ -380,7 +392,7 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(targetAct)
 		return map[string]any{
 			"error":   "bootstrap_validation_failed",
-			"message": fmt.Sprintf("act bootstrap-worker: validation against %s failed: %v", targetAct, validErr),
+			"message": fmt.Sprintf(cmd+": validation against %s failed: %v", targetAct, validErr),
 		}, 3
 	}
 
@@ -590,6 +602,10 @@ func readSourceNodeID(srcAct string) string {
 // rebuilding the derived cache from the source-of-truth op log is always
 // correct and never depends on the source's in-memory SQLite state.
 func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
+	cmd := opts.CmdName
+	if cmd == "" {
+		cmd = "act bootstrap-worker"
+	}
 	// Resolve the SOURCE: the orchestrator path the worker named. Accept
 	// either a repo root or a `.act/` directory; resolve to the .act/ tree.
 	srcArg := opts.FromCWDSourcePath
@@ -609,13 +625,13 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 			} else {
 				return map[string]any{
 					"error":   ErrNoRepo,
-					"message": fmt.Sprintf("act bootstrap-worker: --from-cwd %s: resolve source repo: %v", srcArg, err),
+					"message": fmt.Sprintf(cmd+": --from-cwd %s: resolve source repo: %v", srcArg, err),
 				}, 3
 			}
 		} else {
 			return map[string]any{
 				"error":   ErrNoRepo,
-				"message": fmt.Sprintf("act bootstrap-worker: --from-cwd %s: abs: %v", srcArg, aerr),
+				"message": fmt.Sprintf(cmd+": --from-cwd %s: abs: %v", srcArg, aerr),
 			}, 3
 		}
 	}
@@ -623,7 +639,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 	if err != nil {
 		return map[string]any{
 			"error":   ErrActNotInitialized,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd source %s has no .act/ — run `act init` first", srcRoot),
+			"message": fmt.Sprintf(cmd+": --from-cwd source %s has no .act/ — run `act init` first", srcRoot),
 		}, 3
 	}
 
@@ -633,7 +649,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 	if _, err := os.Stat(filepath.Join(srcAct, ".git")); err != nil {
 		return map[string]any{
 			"error":   "act_state_not_initialized",
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd source %s missing nested .git — run `act migrate-to-nested` or `act init`", srcAct),
+			"message": fmt.Sprintf(cmd+": --from-cwd source %s missing nested .git — run `act migrate-to-nested` or `act init`", srcAct),
 		}, 3
 	}
 
@@ -644,7 +660,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		if gerr != nil {
 			return map[string]any{
 				"error":   ErrNoRepo,
-				"message": fmt.Sprintf("act bootstrap-worker: --from-cwd: getcwd: %v", gerr),
+				"message": fmt.Sprintf(cmd+": --from-cwd: getcwd: %v", gerr),
 			}, 3
 		}
 		targetArg = cwd
@@ -653,13 +669,13 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 	if err != nil {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd: abs(%q): %v", targetArg, err),
+			"message": fmt.Sprintf(cmd+": --from-cwd: abs(%q): %v", targetArg, err),
 		}, 2
 	}
 	if _, err := os.Stat(absTarget); err != nil {
 		return map[string]any{
 			"error":   ErrStatFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd target %s: %v", absTarget, err),
+			"message": fmt.Sprintf(cmd+": --from-cwd target %s: %v", absTarget, err),
 		}, 3
 	}
 
@@ -669,7 +685,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 	if canonicalPath(targetAct) == canonicalPath(srcAct) {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd source and target resolve to the same .act/ (%s)", canonicalPath(srcAct)),
+			"message": fmt.Sprintf(cmd+": --from-cwd source and target resolve to the same .act/ (%s)", canonicalPath(srcAct)),
 		}, 2
 	}
 
@@ -677,12 +693,12 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 	if nonEmpty, err := dirNonEmpty(targetAct); err != nil {
 		return map[string]any{
 			"error":   ErrStatFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd stat target .act/: %v", err),
+			"message": fmt.Sprintf(cmd+": --from-cwd stat target .act/: %v", err),
 		}, 3
 	} else if nonEmpty && !opts.Force {
 		return map[string]any{
 			"error":   ErrTargetNotEmpty,
-			"message": fmt.Sprintf("act bootstrap-worker: %s exists and is non-empty; pass --force to overwrite", targetAct),
+			"message": fmt.Sprintf(cmd+": %s exists and is non-empty; pass --force to overwrite", targetAct),
 			"details": map[string]any{"target": targetAct},
 		}, 2
 	}
@@ -692,7 +708,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 	if err := os.RemoveAll(stagingAct); err != nil {
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd clear staging %s: %v", stagingAct, err),
+			"message": fmt.Sprintf(cmd+": --from-cwd clear staging %s: %v", stagingAct, err),
 		}, 3
 	}
 
@@ -703,7 +719,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd copy %s → %s: %v", srcAct, stagingAct, err),
+			"message": fmt.Sprintf(cmd+": --from-cwd copy %s → %s: %v", srcAct, stagingAct, err),
 		}, 3
 	}
 
@@ -716,7 +732,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrMarshalFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd marshal dispatch_hlc: %v", err),
+			"message": fmt.Sprintf(cmd+": --from-cwd marshal dispatch_hlc: %v", err),
 		}, 3
 	}
 	meta := bootstrapMeta{
@@ -729,14 +745,14 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrMarshalFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd marshal meta: %v", err),
+			"message": fmt.Sprintf(cmd+": --from-cwd marshal meta: %v", err),
 		}, 3
 	}
 	if err := os.WriteFile(filepath.Join(stagingAct, BootstrapMetaFileName), metaBody, 0o644); err != nil {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd write meta: %v", err),
+			"message": fmt.Sprintf(cmd+": --from-cwd write meta: %v", err),
 		}, 3
 	}
 
@@ -746,7 +762,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 			_ = os.RemoveAll(stagingAct)
 			return map[string]any{
 				"error":   ErrWriteFailed,
-				"message": fmt.Sprintf("act bootstrap-worker: --from-cwd remove existing %s: %v", targetAct, err),
+				"message": fmt.Sprintf(cmd+": --from-cwd remove existing %s: %v", targetAct, err),
 			}, 3
 		}
 	}
@@ -754,7 +770,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd rename %s → %s: %v", stagingAct, targetAct, err),
+			"message": fmt.Sprintf(cmd+": --from-cwd rename %s → %s: %v", stagingAct, targetAct, err),
 		}, 3
 	}
 
@@ -770,7 +786,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(targetAct)
 		return map[string]any{
 			"error":   ErrIndexOpenFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd open local index %s: %v", idxPath, oerr),
+			"message": fmt.Sprintf(cmd+": --from-cwd open local index %s: %v", idxPath, oerr),
 		}, 3
 	}
 	if rerr := idx.Rebuild(filepath.Join(targetAct, "ops")); rerr != nil {
@@ -778,7 +794,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(targetAct)
 		return map[string]any{
 			"error":   ErrIndexRebuildFail,
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd rebuild local index: %v", rerr),
+			"message": fmt.Sprintf(cmd+": --from-cwd rebuild local index: %v", rerr),
 		}, 3
 	}
 	_ = idx.Close()
@@ -788,7 +804,7 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(targetAct)
 		return map[string]any{
 			"error":   "bootstrap_validation_failed",
-			"message": fmt.Sprintf("act bootstrap-worker: --from-cwd validation against %s failed: %v", targetAct, validErr),
+			"message": fmt.Sprintf(cmd+": --from-cwd validation against %s failed: %v", targetAct, validErr),
 		}, 3
 	}
 
@@ -815,17 +831,21 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 // orchestrator's nested .act/.git/config (best-effort read; missing
 // SourceCWD or missing config key both fall through to the default).
 func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
+	cmd := opts.CmdName
+	if cmd == "" {
+		cmd = "act bootstrap-worker"
+	}
 	absTarget, err := filepath.Abs(opts.Target)
 	if err != nil {
 		return map[string]any{
 			"error":   ErrBadFlag,
-			"message": fmt.Sprintf("act bootstrap-worker: abs(%q): %v", opts.Target, err),
+			"message": fmt.Sprintf(cmd+": abs(%q): %v", opts.Target, err),
 		}, 2
 	}
 	if _, err := os.Stat(absTarget); err != nil {
 		return map[string]any{
 			"error":   ErrStatFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: target %s: %v", absTarget, err),
+			"message": fmt.Sprintf(cmd+": target %s: %v", absTarget, err),
 		}, 3
 	}
 
@@ -834,12 +854,12 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 	if nonEmpty, err := dirNonEmpty(targetAct); err != nil {
 		return map[string]any{
 			"error":   ErrStatFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: stat target .act/: %v", err),
+			"message": fmt.Sprintf(cmd+": stat target .act/: %v", err),
 		}, 3
 	} else if nonEmpty && !opts.Force {
 		return map[string]any{
 			"error":   ErrTargetNotEmpty,
-			"message": fmt.Sprintf("act bootstrap-worker: %s exists and is non-empty; pass --force to overwrite", targetAct),
+			"message": fmt.Sprintf(cmd+": %s exists and is non-empty; pass --force to overwrite", targetAct),
 			"details": map[string]any{
 				"target": targetAct,
 			},
@@ -854,7 +874,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 	if err := os.RemoveAll(stagingAct); err != nil {
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: clear staging %s: %v", stagingAct, err),
+			"message": fmt.Sprintf(cmd+": clear staging %s: %v", stagingAct, err),
 		}, 3
 	}
 
@@ -878,7 +898,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return map[string]any{
 				"error":   ErrBootstrapTimeout,
-				"message": fmt.Sprintf("act bootstrap-worker: clone %s exceeded %ds budget", opts.FromRemoteURL, timeoutSec),
+				"message": fmt.Sprintf(cmd+": clone %s exceeded %ds budget", opts.FromRemoteURL, timeoutSec),
 				"details": map[string]any{
 					"timeout_seconds": timeoutSec,
 					"url":             opts.FromRemoteURL,
@@ -887,7 +907,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		}
 		return map[string]any{
 			"error":   ErrRemoteUnreachable,
-			"message": fmt.Sprintf("act bootstrap-worker: clone %s: %v", opts.FromRemoteURL, cloneErr),
+			"message": fmt.Sprintf(cmd+": clone %s: %v", opts.FromRemoteURL, cloneErr),
 			"details": map[string]any{
 				"url":         opts.FromRemoteURL,
 				"stderr_tail": CaptureStderrTail(string(cloneOut)),
@@ -902,7 +922,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: cloned tree at %s missing .git: %v", stagingAct, err),
+			"message": fmt.Sprintf(cmd+": cloned tree at %s missing .git: %v", stagingAct, err),
 		}, 3
 	}
 
@@ -921,7 +941,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: strip hooks/ from clone: %v", err),
+			"message": fmt.Sprintf(cmd+": strip hooks/ from clone: %v", err),
 		}, 3
 	}
 
@@ -932,7 +952,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 			_ = os.RemoveAll(stagingAct)
 			return map[string]any{
 				"error":   ErrWriteFailed,
-				"message": fmt.Sprintf("act bootstrap-worker: remove existing %s: %v", targetAct, err),
+				"message": fmt.Sprintf(cmd+": remove existing %s: %v", targetAct, err),
 			}, 3
 		}
 	}
@@ -940,7 +960,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: rename %s → %s: %v", stagingAct, targetAct, err),
+			"message": fmt.Sprintf(cmd+": rename %s → %s: %v", stagingAct, targetAct, err),
 		}, 3
 	}
 
@@ -952,7 +972,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(targetAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
-			"message": fmt.Sprintf("act bootstrap-worker: set %s=%s: %v", config.ActRoleKey, config.RoleWorker, err),
+			"message": fmt.Sprintf(cmd+": set %s=%s: %v", config.ActRoleKey, config.RoleWorker, err),
 		}, 3
 	}
 
@@ -961,7 +981,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		_ = os.RemoveAll(targetAct)
 		return map[string]any{
 			"error":   "bootstrap_validation_failed",
-			"message": fmt.Sprintf("act bootstrap-worker: validation against %s failed: %v", targetAct, validErr),
+			"message": fmt.Sprintf(cmd+": validation against %s failed: %v", targetAct, validErr),
 		}, 3
 	}
 

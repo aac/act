@@ -134,99 +134,99 @@ DEEPER DIVES
     init, version, log, list, search, ready, mine, show,
     create, close, reopen, delete, update,
     dep add, doctor, import, mcp, install-skill,
-    bootstrap-worker, harvest, remote, migrate-to-nested
+    state import, state export, remote, migrate-to-nested
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
   to issues already assigned to you. Both default to identity from
   .act/config.json node_id; --as <id> overrides.
 
-BOOTSTRAPPING A WORKER WORKTREE
-  When an orchestrator dispatches a sub-agent into a separate git worktree
-  (or any other empty directory), that target has no .act/ state yet.
-  'act bootstrap-worker' copies the current host repo's .act/ tree into
-  the target so the dispatched worker can run act commands against state
-  that mirrors the orchestrator's view:
+IMPORTING STATE INTO A DIRECTORY
+  'act state import' copies this repo's .act/ state tree into another
+  directory so a process working out of that directory can run act
+  commands against state that mirrors this repo's view. It is
+  directory-scoped: act serializes its own state into <dir>/.act/ and
+  does not care what the directory is for (a git worktree, a sandbox, a
+  backup — the caller's concern, not act's).
 
-    act bootstrap-worker <target-path>          # seed <target>/.act/ from cwd
-    act bootstrap-worker <target-path> --force  # replace non-empty target
-    act bootstrap-worker <target-path> --json   # machine-readable summary
-    act bootstrap-worker --from-remote <url> <target-path>
-                                                # clone .act/ from a remote URL
-    act bootstrap-worker --from-cwd <orchestrator-path>
-                                                # worker seeds its OWN cwd
-                                                # (rebuilds index.db locally)
+    act state import <dir>          # seed <dir>/.act/ from cwd
+    act state import <dir> --force  # replace a non-empty <dir>/.act/
+    act state import <dir> --json   # machine-readable summary
+    act state import --from-remote <url> <dir>
+                                    # clone .act/ from a remote URL
+    act state import --from-cwd <source-path>
+                                    # seed the CURRENT directory from
+                                    # <source-path> (rebuilds index.db
+                                    # locally)
 
-  The copy stages into <target>/.act.bootstrap/ first and atomic-renames
-  to <target>/.act/ on success, so a mid-copy failure never leaves a
-  partial state at the target. After the rename, an 'act ready' fold
-  runs against the new target as a round-trip validation; if validation
-  fails, the target is torn down. A small .act/.bootstrap-meta.json
+  The copy stages into <dir>/.act.bootstrap/ first and atomic-renames
+  to <dir>/.act/ on success, so a mid-copy failure never leaves a
+  partial state behind. After the rename, an 'act ready' fold runs
+  against the new directory as a round-trip validation; if validation
+  fails, the directory is torn down. A small .act/.bootstrap-meta.json
   records the source root, copied_at timestamp, and a dispatch_hlc that
-  future Phase 2 'act harvest' may use as a fallback ordering signal.
+  'act state export' may later use as a fallback ordering signal.
 
   --from-remote bypasses the cwd resolver: 'git clone --depth 1 <url>'
   populates the staging dir, the rename atomic-commits it, then
   act.role=worker is written to the new clone's nested .git/config so
-  the post-receive hook and upstream-sync trigger know they're running
-  on a worker. The clone is bounded by act.bootstrapTimeoutSeconds
-  (default 30s; override via --timeout-seconds N for tests); a stalled
-  clone past the budget is killed, .act.bootstrap/ is torn down, and
-  the command exits 4 with envelope code 'bootstrap_timeout'. A target
-  with a non-empty pre-existing .act/ exits 2 with 'target_not_empty'
-  unless --force is passed.
+  the post-receive hook and upstream-sync trigger know their role. The
+  clone is bounded by act.bootstrapTimeoutSeconds (default 30s; override
+  via --timeout-seconds N for tests); a stalled clone past the budget is
+  killed, .act.bootstrap/ is torn down, and the command exits 4 with
+  envelope code 'bootstrap_timeout'. A <dir> with a non-empty
+  pre-existing .act/ exits 2 with 'target_not_empty' unless --force is
+  passed.
 
-  --from-cwd inverts source and target: the WORKER runs it from inside
-  its freshly-created worktree, names the orchestrator path as the
-  source, and the target defaults to cwd. Use this instead of a raw
-  'cp -r <orchestrator>/.act .' — that copies the orchestrator's live
-  index.db and causes silent op-write loss. --from-cwd copies only the
-  op log + config and rebuilds index.db locally, which is always correct.
+  --from-cwd inverts source and target: run it from inside the
+  destination directory, name <source-path> as the source, and the
+  target defaults to cwd. Use this instead of a raw
+  'cp -r <source>/.act .' — that copies the source's live index.db and
+  causes silent op-write loss. --from-cwd copies only the op log +
+  config and rebuilds index.db locally, which is always correct.
 
-HARVESTING A WORKER'S OPS BACK
-  Mirror of bootstrap-worker. When a dispatched sub-agent finishes work
-  in its worktree, the orchestrator pulls the new ops back into the host
-  with 'act harvest':
+EXPORTING STATE FROM A DIRECTORY
+  Mirror of 'act state import'. 'act state export' pulls new ops from
+  another directory's .act/ back into this repo:
 
-    act harvest <worker-path>            # copy new ops + commit + re-fold
-    act harvest <worker-path> --dry-run  # list what would be harvested
-    act harvest <worker-path> --json     # machine-readable summary
+    act state export <dir>            # copy new ops + commit + re-fold
+    act state export <dir> --dry-run  # list what would be exported
+    act state export <dir> --json     # machine-readable summary
 
-  Identity is by op filename (HLC + content hash); harvest computes the
-  set difference between the worker's .act/ops/ and the host's .act/ops/,
-  copies new files into the host, stages them, and produces a single
-  commit on the nested .act/.git with message
-  'act harvest: <N> ops from <basename>'. Re-folds the index afterward;
-  a fold failure is surfaced in the JSON envelope but does not roll back
-  the copy or commit — harvest is one-way append.
+  Identity is by op filename (HLC + content hash); export computes the
+  set difference between <dir>/.act/ops/ and this repo's .act/ops/,
+  copies new files in, stages them, and produces a single commit on the
+  nested .act/.git with message 'act state export: <N> ops from
+  <basename>'. Re-folds the index afterward; a fold failure is surfaced
+  in the JSON envelope but does not roll back the copy or commit —
+  export is one-way append.
 
-  Re-running harvest with no new ops is a no-op (zero ops, exit 0). A
-  worker op whose filename exists at the host with divergent content is
-  rejected with code op_filename_collision (a corruption signal, not a
-  silent overwrite). Harvest does NOT push the host's commit to its git
-  remote — that's the orchestrator's responsibility.
+  Re-running export with no new ops is a no-op (zero ops, exit 0). An op
+  whose filename exists in this repo with divergent content is rejected
+  with code op_filename_collision (a corruption signal, not a silent
+  overwrite). Export does NOT push this repo's commit to its git remote
+  — that's the caller's responsibility.
 
-  Push-attached workers: when the worker's
-  .act/.git/config has act.role=worker AND its remote.origin.url
-  matches the orchestrator's canonical .act/.git path (resolved from
-  cwd of the act harvest invocation), harvest short-circuits with
-  the literal stderr line "harvest skipped, worker was push-attached"
-  and emits an empty envelope (harvested_ops=[], skipped_ops=[],
-  skipped=true, skip_reason=worker_push_attached). The worker pushed
-  its ops directly to the orchestrator during execution; there is
-  nothing left to copy. Phase 1.5 sandboxed workers (no act.role
-  config, or origin doesn't match) fall through to the file-diff-
-  and-copy path described above — the safe default.
+  Push-attached source: when the source directory's .act/.git/config has
+  act.role=worker AND its remote.origin.url matches this repo's
+  canonical .act/.git path (resolved from cwd of the export
+  invocation), export short-circuits with the literal stderr line
+  "harvest skipped, worker was push-attached" and emits an empty
+  envelope (harvested_ops=[], skipped_ops=[], skipped=true,
+  skip_reason=worker_push_attached). The source already pushed its ops
+  directly during execution; there is nothing left to copy. A source
+  with no act.role config (or an origin that doesn't match) falls
+  through to the file-diff-and-copy path above — the safe default.
 
   The --json envelope carries:
 
     harvested_ops      list of op file paths (relative to .act/ops/) that
-                       were newly copied into the host this run. On
+                       were newly copied into this repo this run. On
                        --dry-run, the set that WOULD be copied.
-    skipped_ops        list of {path, reason} entries for worker ops the
-                       host already had (reason: already_present).
+    skipped_ops        list of {path, reason} entries for source ops this
+                       repo already had (reason: already_present).
     fold_diff_summary  {issues_indexed, ops_added} counts captured from
-                       the index rebuild after the harvest commit. Zero
+                       the index rebuild after the export commit. Zero
                        on --dry-run and on zero-op no-ops.
 
 ACT REMOTE (PHASE 2 COORDINATION PLANE)
