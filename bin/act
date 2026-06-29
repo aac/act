@@ -1,0 +1,10 @@
+#!/bin/sh
+# Selects the bundled platform binary (sibling <name>-<os>-<arch>).
+name=$(basename "$0")
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m)
+case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
+bin="$dir/$name-$os-$arch"
+[ -x "$bin" ] || { echo "$name: no bundled binary for $os/$arch at $bin" >&2; exit 127; }
+exec "$bin" "$@"
