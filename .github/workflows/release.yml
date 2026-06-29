@@ -1,0 +1,28 @@
+name: Release
+
+# Thin caller for the plugin-release-kit reusable workflow under the
+# commit-to-main release model. On manual dispatch with a version, the kit
+# bumps the version across the manifests, cross-compiles every arch,
+# version-STAMPS (-ldflags -X .../internal/version.Binary=<version>) and
+# ad-hoc darwin-signs the binaries, runs verify-release, and COMMITS the
+# built+stamped bin/ artifacts to the default branch. That commit IS the
+# release — there are NO tags, NO GitHub Releases, and nothing is built
+# locally.
+#
+# Pinned to an immutable kit commit SHA (supply-chain safety; this workflow
+# runs with contents:write and pushes to the default branch). Bump the pin
+# deliberately to adopt kit updates.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "x.y.z"
+        required: true
+
+jobs:
+  release:
+    uses: aac/plugin-release-kit/.github/workflows/release-plugin.yml@633a24735e1063c979619770787aa67752b0111e
+    with:
+      version: ${{ inputs.version }}
+    permissions:
+      contents: write

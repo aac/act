@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "act": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/act",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "act": {
+      "command": "./bin/act",
+      "args": ["mcp"],
+      "cwd": "."
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "act",
+  "owner": {
+    "name": "Andrew Cove"
+  },
+  "plugins": [
+    {
+      "name": "act",
+      "source": "./",
+      "description": "Agent-first task tracker. A single Go binary plus MCP server over an append-only JSON op-log in a nested .act/ git repo. Agents claim, work, close, and push tracked issues; concurrent agents merge with plain git semantics. No server, no database, no schema setup.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Andrew Cove"
+      },
+      "homepage": "https://github.com/aac/act",
+      "repository": "https://github.com/aac/act",
+      "license": "Apache-2.0",
+      "keywords": ["task-tracker", "agents", "cli", "coordination", "mcp"],
+      "category": "agent-tools"
+    }
+  ]
+}

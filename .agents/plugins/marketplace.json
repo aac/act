@@ -1,0 +1,20 @@
+{
+  "name": "act",
+  "interface": {
+    "displayName": "act"
+  },
+  "plugins": [
+    {
+      "name": "act",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/aac/act.git"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_FIRST_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

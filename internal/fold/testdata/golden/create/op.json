@@ -1,0 +1,18 @@
+{
+  "hlc": {
+    "logical": 0,
+    "node_id": "11111111",
+    "wall": "2023-11-14T22:13:20.000Z"
+  },
+  "issue_id": "act-aaaa",
+  "node_id": "11111111",
+  "op_type": "create",
+  "op_version": 1,
+  "payload": {
+    "nonce": "00000000000000000000000000000000",
+    "title": "hello world",
+    "type": "task"
+  },
+  "schema_version": 1,
+  "writer_version": "0.1.0"
+}

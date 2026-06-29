@@ -1,0 +1,73 @@
+# Built binary (local dev). The committed bin/ launcher + per-arch binaries
+# (the plugin's shipped artifacts) are negated below and tracked.
+/act
+act.exe
+/bin/*
+!/bin/act
+!/bin/act-darwin-amd64
+!/bin/act-darwin-arm64
+!/bin/act-linux-amd64
+!/bin/act-linux-arm64
+
+# Go build artifacts
+/vendor/
+dist/
+coverage.out
+
+# Runtime index (rebuilt from op log)
+.act/index.db
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor state
+.vscode/
+.idea/
+*.swp
+/.claude/
+.act/
+.ask/
+
+# Operator-workflow artifacts (session state, working papers — not project
+# deliverables). These were part of how act was built, not what a contributor
+# consumes; they remain in git history. See docs/README.md for the tracked set.
+docs/session-handoff.md
+docs/STATUS.md
+docs/dogfood-report.md
+docs/verification.md
+docs/usability-review.md
+docs/surface-gap-analysis.md
+docs/release-history-cleanup-memo.md
+docs/dispatcher-prompt.md
+docs/triage.md
+docs/pre-release-audit-bcce95.md
+# Brief iterations, rebuttals, and review rounds
+docs/brief.md
+docs/brief-v*.md
+docs/brief-review-*.md
+docs/brief-rebuttals*.md
+# Spec-review rounds
+docs/spec-review-*.md
+# Plan-review passes
+docs/reviews/
+# Phase 2 build plan (13-ticket implementation plan — internal process, not
+# contributor reference; the design rationale lives in coordination-plane-design.md)
+docs/coordination-plane-phase2-plan.md
+# Pre-nested-repo issue markdown (superseded by .act/).
+docs/issues/*.md
+docs/issues/.gitkeep
+
+# Personal-project dev detail — not for the public act repo (see act-840886)
+docs/aac-website-dogfood-debrief.md
+.claude/settings.local.json
+
+# Scope-review pass (2026-06): revised-file drafts pending review.
+# Operator-workflow artifacts — never shipped.
+*.revised.md
+
+# Inline-annotation drafts (operator-workflow artifact)
+*.annotated.md
+docs/orchestration-design.md
+docs/act-evaluation.md
+docs/dogfood/

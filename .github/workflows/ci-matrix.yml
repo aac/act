@@ -1,0 +1,93 @@
+name: Release Smoke
+
+# Release-time smoke per the spec §7.8.
+# Builds the act binary, runs the full Go test suite (no `-short`, includes
+# concurrency tests), and drives the canonical end-to-end smoke workflow
+# via .github/scripts/smoke.sh.
+#
+# Triggered on `v*` tag push only — runs alongside the release build so a
+# tagged release that breaks the smoke surfaces a failure notification.
+# Per-push / per-PR runs were dropped to cut Actions burn; regressions in
+# normal development show up via the plain `ci.yml` job and through
+# dogfooding.
+#
+# Originally a 3-row matrix (cc-laptop / cc-web / cowork) intended to
+# simulate the three target agent sandboxes, but the rows had no
+# behavioral differentiation — cc-laptop and cowork were identical
+# (`smoke.sh` never read the `MATRIX_PUSH` flag that was supposed to gate
+# network), and cc-web differed only in the `setup-go` cache flag. Collapsed
+# to a single job. Restore the matrix when `smoke.sh` actually grows
+# sandbox-distinguishing behavior (e.g. a `--no-network` mode) worth
+# exercising in parallel rows.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules
+        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-release-smoke-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-release-smoke-
+
+      - name: Install jq
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y jq
+          fi
+          jq --version
+
+      - name: Build act
+        run: go build -o "${{ runner.temp }}/act" ./cmd/act
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Gofmt
+        run: '! gofmt -l . | grep .'
+
+      - name: Test (full, no -short, includes concurrency)
+        run: go test ./...
+
+      - name: Smoke workflow
+        env:
+          ACT_BIN: ${{ runner.temp }}/act
+        run: |
+          set -euo pipefail
+          bash .github/scripts/smoke.sh "${ACT_BIN}"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "PASS: release smoke"
+            echo "PASS: release smoke" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "FAIL: release smoke"
+            echo "FAIL: release smoke" >> "$GITHUB_STEP_SUMMARY"
+          fi

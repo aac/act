@@ -1,0 +1,16 @@
+{
+  "hlc": {
+    "logical": 0,
+    "node_id": "22222222",
+    "wall": "2023-11-14T22:13:21.000Z"
+  },
+  "issue_id": "act-aaaa",
+  "node_id": "22222222",
+  "op_type": "claim",
+  "op_version": 1,
+  "payload": {
+    "assignee": "alice"
+  },
+  "schema_version": 1,
+  "writer_version": "0.1.0"
+}

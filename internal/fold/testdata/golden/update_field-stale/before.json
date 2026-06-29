@@ -1,0 +1,46 @@
+{
+  "id": "act-aaaa",
+  "fields": {
+    "accept": [],
+    "created_at": "2023-11-14T22:13:30.000Z",
+    "priority": 1,
+    "status": "open",
+    "title": "current",
+    "type": "task"
+  },
+  "last_hlc": {
+    "accept": {
+      "HLC": {
+        "wall": "2023-11-14T22:13:30.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "956618f184c1332c801526b83277d90e415b7778fec8573678bf7793f24d06a6"
+    },
+    "priority": {
+      "HLC": {
+        "wall": "2023-11-14T22:13:30.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "956618f184c1332c801526b83277d90e415b7778fec8573678bf7793f24d06a6"
+    },
+    "title": {
+      "HLC": {
+        "wall": "2023-11-14T22:13:30.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "956618f184c1332c801526b83277d90e415b7778fec8573678bf7793f24d06a6"
+    },
+    "type": {
+      "HLC": {
+        "wall": "2023-11-14T22:13:30.000Z",
+        "logical": 0,
+        "node_id": "11111111"
+      },
+      "Hash": "956618f184c1332c801526b83277d90e415b7778fec8573678bf7793f24d06a6"
+    }
+  },
+  "tombstoned": false
+}
