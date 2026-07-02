@@ -901,7 +901,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "ux-help-subcommand-list-comma-separated",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "dep add, doctor, import, mcp, install-skill,",
+		claimPattern: "dep add, doctor, import, mcp,",
 		testName:     "TestDocClaim_BareAct_DepAddNotThreeItems",
 	},
 	{
@@ -1078,43 +1078,6 @@ var docClaimRegistry = []docClaim{
 		docFile:      "cmd/act/close.go",
 		claimPattern: "override open external dep gate",
 		testName:     "TestDocClaim_BlockedByExtDep_ForceOverrides",
-	},
-	// install-skill-target-* (act-8550, Codex Phase 3): the `--target` flag and
-	// `--check` flag added to `act install-skill`. Three user-visible doc claims
-	// live in cmd/act/help.go's INSTALLING THE SKILL section: (1) the codex
-	// target path, (2) the --check read-only mode, and (3) the default-is-claude
-	// preservation. The drift shape: someone updates the help text to show a
-	// different codex path, or removes the --check example, and a cold-start
-	// agent or user reading the help section installs to the wrong place.
-	{
-		name:         "install-skill-target-codex-path",
-		docFile:      "cmd/act/help.go",
-		claimPattern: "--target codex        # writes to ~/.codex/skills/act/",
-		testName:     "TestDocClaim_InstallSkill_TargetCodex",
-	},
-	{
-		name:         "install-skill-check-flag",
-		docFile:      "cmd/act/help.go",
-		claimPattern: "--check               # read-only: verify installed matches embedded",
-		testName:     "TestDocClaim_InstallSkill_CheckMatchAfterInstall",
-	},
-	{
-		name:         "install-skill-default-preserves-claude",
-		docFile:      "cmd/act/help.go",
-		claimPattern: "Default target is claude (~/.claude/skills/act/)",
-		testName:     "TestDocClaim_InstallSkill_DefaultPreservesClaude",
-	},
-	{
-		name:         "install-skill-check-never-writes",
-		docFile:      "cmd/act/help.go",
-		claimPattern: "--check never writes",
-		testName:     "TestDocClaim_InstallSkill_CheckDetectsDrift",
-	},
-	{
-		name:         "install-skill-check-target-codex",
-		docFile:      "cmd/act/help.go",
-		claimPattern: "--check --target codex  # verify the codex install",
-		testName:     "TestDocClaim_InstallSkill_CheckHonorsTargetCodex",
 	},
 	// accept-replace-* (act-844f97): `act update --accept` was documented as
 	// "Replace acceptance criteria" (MCP) but implemented as append (one

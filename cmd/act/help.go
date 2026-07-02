@@ -147,7 +147,7 @@ DEEPER DIVES
   subcommand, not three items):
     init, version, log, list, search, ready, mine, show,
     create, close, reopen, delete, update, next, finish,
-    dep add, doctor, import, mcp, install-skill,
+    dep add, doctor, import, mcp,
     state import, state export, remote
 
   'act mine' lists issues currently assigned to your node that are
@@ -302,28 +302,17 @@ ACT REMOTE (PHASE 2 COORDINATION PLANE)
   sync). No filesystem-path heuristic; the config key is the only
   mechanism for role decision.
 
-INSTALLING THE SKILL
-  The canonical Claude Code skill for act (SKILL.md plus reference
-  docs) is embedded in this binary. To drop it into your skills
-  directory so agents pick it up on every session:
+GETTING THE SKILL
+  The canonical Claude Code / Codex skill for act (SKILL.md plus
+  reference docs) ships with the plugin — install it and agents pick
+  the skill up automatically:
 
-    act install-skill                       # writes to ~/.claude/skills/act/
-    act install-skill --target codex        # writes to ~/.codex/skills/act/
-    act install-skill --force               # overwrite local edits to canonical files
-    act install-skill --dest PATH           # alternate destination (overrides --target)
-    act install-skill --json                # machine-readable install summary
-    act install-skill --check               # read-only: verify installed matches embedded
-    act install-skill --check --target codex  # verify the codex install
+    /plugin install act@act
 
-  Default target is claude (~/.claude/skills/act/). --dest overrides
-  --target when both are supplied.
-
-  install-skill is idempotent: files already matching the embedded
-  copy are skipped; files that diverge are listed and left untouched
-  unless --force is passed. Re-run after every 'act' upgrade.
-
-  --check never writes; it exits 0 if every embedded file matches the
-  installed copy, or 1 if any file is missing or differs (drift).
+  Running just the binary (go install / curl) does not install the
+  skill: the binary is CLI-only. To use the skill without the plugin,
+  clone the repo and copy skills/act/ into your skills directory
+  (~/.claude/skills/ or ~/.codex/skills/), or point your agent at it.
 `
 
 const helpWorkflow = `act — workflow

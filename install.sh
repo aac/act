@@ -12,7 +12,7 @@
 #   1. Detects the target harness (claude or codex), or accepts --target flag.
 #   2. Verifies Go is installed.
 #   3. Builds act from source into $PREFIX/bin/act (default ~/.local/bin).
-#   4. Runs act install-skill to populate ~/.claude/skills/act (or codex equiv).
+#   4. Copies skills/act/ from the checkout into ~/.claude/skills/act (or codex equiv).
 #   5. Registers the act MCP server in the agent's config:
 #        Claude: claude mcp add --scope user act -- act mcp
 #        Codex : codex mcp add act -- act mcp
@@ -194,9 +194,22 @@ mkdir -p "$BIN_DIR"
 say "binary: ${BIN_PATH}"
 
 # ---- install skill ----------------------------------------------------------
+# The skill ships as plain files in the checkout (skills/act/); copy them into
+# the harness skills dir. No longer embedded in the binary — the plugin install
+# is the canonical skill path, and this source install just copies from the repo.
 
-say "installing act skill..."
-"$BIN_PATH" install-skill 2>/dev/null || warn "act install-skill failed (non-fatal; skill may need manual install)"
+case "$TARGET" in
+  claude) SKILL_DEST="${HOME}/.claude/skills/act" ;;
+  codex)  SKILL_DEST="${HOME}/.codex/skills/act" ;;
+  *)      SKILL_DEST="" ;;
+esac
+if [ -n "$SKILL_DEST" ] && [ -d "${REPO_DIR}/skills/act" ]; then
+  say "installing act skill to ${SKILL_DEST}..."
+  mkdir -p "$SKILL_DEST"
+  cp -R "${REPO_DIR}/skills/act/." "$SKILL_DEST/" || warn "skill copy failed (non-fatal; copy ${REPO_DIR}/skills/act manually)"
+else
+  warn "skill not installed (skills/act not found in ${REPO_DIR}); copy it manually if needed"
+fi
 
 # ---- register MCP server ----------------------------------------------------
 

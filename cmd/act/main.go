@@ -150,8 +150,6 @@ func main() {
 		os.Exit(runMCP(args))
 	case "mine":
 		os.Exit(runMine(args))
-	case "install-skill":
-		os.Exit(runInstallSkill(args))
 	case "state":
 		os.Exit(runState(args))
 	case "bootstrap-worker":
@@ -182,7 +180,7 @@ func usage() {
 // the full tutorial.
 func bareUsageMsg() string {
 	return "usage: act <subcommand> [flags]\n" +
-		"subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, next, finish, dep add, doctor, import, mcp, mine, install-skill, state import, state export, remote\n" +
+		"subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, next, finish, dep add, doctor, import, mcp, mine, state import, state export, remote\n" +
 		"(run 'act help' for the full subcommand tutorial)"
 }
 

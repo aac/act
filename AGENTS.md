@@ -2,8 +2,8 @@
 
 Conventions for anyone (agent or human) working **on the `act` codebase itself** — how
 to develop, test, and reason about changes here. This is build-side; it is *not* how to
-*use* `act` as a task tracker (that lives in the `act` skill — `act install-skill`, then
-`act help`). Written for a contributor with no prior context.
+*use* `act` as a task tracker (that lives in the `act` skill, which ships with the plugin;
+run `act help`). Written for a contributor with no prior context.
 
 ## Where things live (doc boundaries)
 
@@ -82,6 +82,7 @@ your workflow.
 ## Relationship to the act skill
 
 The canonical *workflow* for any project using act (claim, work, close, push) lives in
-the `act` skill, embedded in the binary and installed with `act install-skill`. This
+the `act` skill (`skills/act/SKILL.md`), which ships with the plugin (`/plugin install
+act@act`) and is auto-discovered; a source install copies it from the checkout. This
 file holds only conventions for developing act itself; when a rule here proves general
 enough to apply to any act-using project, it gets promoted into the skill.

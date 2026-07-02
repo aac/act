@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- `act install-skill` command and the in-binary skill `go:embed`. Skill delivery is
+  now plugin-first: `/plugin install act@act` ships and auto-discovers the skill. The
+  bare binary is CLI-only; a source install (`install.sh`) copies `skills/act/` from the
+  checkout, and non-plugin users can copy it from a repo clone.
+
 ## [0.2.0] - 2026-06-28
 
 This release reshapes act around a nested-repo storage model, adds an optional
