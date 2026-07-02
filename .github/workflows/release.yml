@@ -21,7 +21,7 @@ on:
 
 jobs:
   release:
-    uses: aac/plugin-release-kit/.github/workflows/release-plugin.yml@4d4fc1305ddc5f7717e909923b1be0bb849f8a8c
+    uses: aac/plugin-release-kit/.github/workflows/release-plugin.yml@faa493fd1efd6b6e6f5359286005338652cf0d64
     with:
       version: ${{ inputs.version }}
     permissions:
