@@ -53,24 +53,68 @@ var serverVersion = version.Binary
 // stdio transport's serial nature and keeps the cli's repo-state mutations
 // race-free.
 type Server struct {
-	repoRoot string
+	// resolveRoot lazily resolves the host repo root. It is invoked on the
+	// first tool call (not at construction), so the initialize/tools-list
+	// handshake answers in ANY cwd — see NewDeferredServer and act-119180.
+	resolveRoot func() (string, error)
+
+	// repoRoot / rootErr / rootResolved cache the resolveRoot result. The
+	// server is single-threaded (Run dispatches one request at a time), so a
+	// plain bool guard is sufficient — no mutex needed.
+	repoRoot     string
+	rootErr      error
+	rootResolved bool
+
 	readOnly bool
 	in       io.Reader
 	out      io.Writer
 }
 
-// NewServer constructs a Server with the given repo root. repoRoot is used
-// as the cwd-equivalent for every tool dispatch; the caller is responsible
-// for chdir / .act/ presence checks (the cmd layer handles exit 3 on
-// missing .act/). When readOnly is true, write tools are refused with a
-// read_only_violation regardless of any per-call read_only argument.
+// NewServer constructs a Server with a pre-resolved repo root. repoRoot is
+// used as the cwd-equivalent for every tool dispatch. When readOnly is true,
+// write tools are refused with a read_only_violation regardless of any
+// per-call read_only argument.
+//
+// Use this when the host repo root is already known (e.g. tests). For the
+// stdio entrypoint, prefer NewDeferredServer so a missing host repo / .act/
+// does not abort the initialize handshake.
 func NewServer(repoRoot string, readOnly bool, in io.Reader, out io.Writer) *Server {
+	s := NewDeferredServer(func() (string, error) { return repoRoot, nil }, readOnly, in, out)
+	// Pre-resolved: populate the cache eagerly so callers that dispatch through
+	// the per-tool callX helpers directly (tests) see repoRoot without first
+	// routing through handleToolsCall's lazy hostRoot gate.
+	s.repoRoot = repoRoot
+	s.rootResolved = true
+	return s
+}
+
+// NewDeferredServer constructs a Server whose host repo root is resolved
+// lazily on the first tool call via resolveRoot, rather than eagerly at
+// construction. This is what lets `act mcp` answer a JSON-RPC initialize (and
+// tools/list) handshake in ANY cwd — including one with no host git repo or no
+// .act/ — with the "no host repo" / "no act state" error deferred to the tool
+// calls that actually need tracker state (act-119180). MCP clients such as
+// Codex register the server (command ./bin/act, cwd .) in a bare context and
+// would otherwise see the process exit before initialize ever completes.
+func NewDeferredServer(resolveRoot func() (string, error), readOnly bool, in io.Reader, out io.Writer) *Server {
 	return &Server{
-		repoRoot: repoRoot,
-		readOnly: readOnly,
-		in:       in,
-		out:      out,
+		resolveRoot: resolveRoot,
+		readOnly:    readOnly,
+		in:          in,
+		out:         out,
 	}
+}
+
+// hostRoot lazily resolves and caches the host repo root. Resolution is
+// deferred to tool-call time (act-119180) so initialize/tools-list succeed in
+// any cwd; the resolver error (no host repo, etc.) is cached and surfaced to
+// every tool call that needs tracker state.
+func (s *Server) hostRoot() (string, error) {
+	if !s.rootResolved {
+		s.repoRoot, s.rootErr = s.resolveRoot()
+		s.rootResolved = true
+	}
+	return s.repoRoot, s.rootErr
 }
 
 // jsonRPCRequest is the inbound shape on stdin. id is `any` so we round-trip
@@ -261,6 +305,14 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 	if isWriteTool(p.Name) && s.readOnly {
 		s.writeToolError(enc, req.ID, "method_not_allowed",
 			fmt.Sprintf("server is read-only; tool %q not permitted", p.Name))
+		return
+	}
+	// Resolve the host repo root lazily (act-119180). Deferred from startup to
+	// here so initialize/tools-list answer in any cwd; every current tool needs
+	// tracker state, so a resolution failure surfaces as a no_repo tool-error
+	// envelope rather than aborting the server before the handshake completes.
+	if _, err := s.hostRoot(); err != nil {
+		s.writeToolError(enc, req.ID, "no_repo", fmt.Sprintf("act mcp: %v", err))
 		return
 	}
 	args := p.Arguments

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -137,6 +138,94 @@ func TestInitialize(t *testing.T) {
 	info, _ := m["serverInfo"].(map[string]any)
 	if info["name"] != serverName {
 		t.Errorf("serverInfo.name = %v", info["name"])
+	}
+}
+
+// runOneDeferred feeds a single JSON-RPC line to a Server built with a lazy
+// resolver, exercising the deferred-resolution path (act-119180) rather than a
+// pre-resolved root.
+func runOneDeferred(t *testing.T, resolve func() (string, error), req map[string]any) jsonRPCResponse {
+	t.Helper()
+	in := &bytes.Buffer{}
+	out := &bytes.Buffer{}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal req: %v", err)
+	}
+	in.Write(body)
+	in.WriteByte('\n')
+	srv := NewDeferredServer(resolve, false, in, out)
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var resp jsonRPCResponse
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &resp); err != nil {
+		t.Fatalf("unmarshal resp: %v\nraw=%s", err, out.String())
+	}
+	return resp
+}
+
+// TestInitializeNoRepo is the act-119180 regression at the unit level: when the
+// host repo root cannot be resolved (bare cwd — no git repo / no .act/), the
+// initialize handshake must STILL answer with serverInfo. Resolution is
+// deferred to tool-call time, so a resolver that always errors does not abort
+// the handshake.
+func TestInitializeNoRepo(t *testing.T) {
+	resolveFails := func() (string, error) {
+		return "", errors.New("gitops: no host git repo found in cwd or any parent")
+	}
+	resp := runOneDeferred(t, resolveFails, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params":  map[string]any{},
+	})
+	if resp.Error != nil {
+		t.Fatalf("initialize returned JSON-RPC error in bare cwd: %+v", resp.Error)
+	}
+	m, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type %T", resp.Result)
+	}
+	info, _ := m["serverInfo"].(map[string]any)
+	if info["name"] != serverName {
+		t.Fatalf("serverInfo.name = %v, want %q; handshake did not complete in bare cwd", info["name"], serverName)
+	}
+}
+
+// TestToolsCallNoRepoDeferredError is the other half of act-119180: a tool call
+// that needs tracker state, made when the repo can't be resolved, must surface
+// the "no host repo" error as a tool-result envelope (isError) — NOT as a
+// process exit or a JSON-RPC transport error. This proves the error is deferred
+// to the call rather than raised at startup.
+func TestToolsCallNoRepoDeferredError(t *testing.T) {
+	resolveFails := func() (string, error) {
+		return "", errors.New("gitops: no host git repo found in cwd or any parent")
+	}
+	resp := runOneDeferred(t, resolveFails, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": "act_list", "arguments": map[string]any{}},
+	})
+	if resp.Error != nil {
+		t.Fatalf("tools/call returned JSON-RPC transport error, want tool-result envelope: %+v", resp.Error)
+	}
+	m, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type %T", resp.Result)
+	}
+	if isErr, _ := m["isError"].(bool); !isErr {
+		t.Fatalf("tools/call result isError = false, want true (deferred no_repo): %+v", m)
+	}
+	content, _ := m["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("tools/call result has no content: %+v", m)
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	if !strings.Contains(text, "no_repo") || !strings.Contains(text, "no host git repo") {
+		t.Fatalf("tool-error text = %q; want no_repo envelope naming the missing host repo", text)
 	}
 }
 

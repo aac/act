@@ -933,9 +933,12 @@ func emitShowError(asJSON bool, payload map[string]any) {
 //
 //	--read-only       refuse all write tools regardless of per-call args
 //	--workdir DIR     chdir before serving (overrides cwd for repo
-//	                  resolution); required when launched outside a repo.
+//	                  resolution).
 //
-// Exit codes follow spec: 0 clean shutdown, 2 bad flag, 3 missing .act/.
+// Exit codes: 0 clean shutdown, 2 bad flag/chdir failure, 1 transport error.
+// Repo resolution is deferred to tool-call time (act-119180), so a missing
+// host repo / .act/ no longer aborts startup — the handshake serves in any cwd
+// and tools that need tracker state return a no_repo envelope instead.
 func runMCP(args []string) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	readOnly := fs.Bool("read-only", false, "refuse all write tools")
@@ -951,17 +954,15 @@ func runMCP(args []string) int {
 		}
 	}
 
-	root, err := findRepoRoot()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "act mcp: %v\n", err)
-		return 3
-	}
-	if _, err := os.Stat(filepath.Join(root, ".act")); err != nil {
-		fmt.Fprintf(os.Stderr, "act mcp: missing .act/ at %s: run `act init` first\n", root)
-		return 3
-	}
-
-	srv := mcp.NewServer(root, *readOnly, os.Stdin, os.Stdout)
+	// Resolve the host repo root lazily: the MCP initialize/tools-list
+	// handshake must succeed in ANY cwd — including one with no host git repo
+	// or no .act/ — so resolution is deferred to the first tool call rather
+	// than failing startup here (act-119180). An eager exit-3 here would abort
+	// MCP registration before initialize is answered; clients like Codex start
+	// the server (command ./bin/act, cwd .) in a bare context. Tools that need
+	// tracker state surface the "no host repo" / missing-.act/ error themselves
+	// (the cli layer returns a no_repo envelope when .act/ is absent).
+	srv := mcp.NewDeferredServer(findRepoRoot, *readOnly, os.Stdin, os.Stdout)
 	if err := srv.Run(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "act mcp: %v\n", err)
 		return 1

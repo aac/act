@@ -65,6 +65,55 @@ func runActIn(t *testing.T, dir string, args ...string) (string, string, int) {
 	return "", "", -1
 }
 
+// TestMCPInitializeInBareDir is the act-119180 regression at the binary
+// boundary: `act mcp` launched in a bare temp dir (no git repo, no .act/) must
+// answer a JSON-RPC initialize handshake with a serverInfo result rather than
+// exiting before the handshake completes. Codex registers the plugin MCP server
+// (command ./bin/act, cwd .) in exactly this kind of bare context; the old
+// eager exit-3 aborted registration.
+func TestMCPInitializeInBareDir(t *testing.T) {
+	bin := actBinary(t)
+	dir := t.TempDir() // bare: no `git init`, no `act init`
+	cmd := exec.Command(bin, "mcp")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
+	var outB, errB strings.Builder
+	cmd.Stdout = &outB
+	cmd.Stderr = &errB
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("act mcp in bare dir exited non-zero: %v\nstderr=%s\nstdout=%s", err, errB.String(), outB.String())
+	}
+	out := strings.TrimSpace(outB.String())
+	for _, want := range []string{`"serverInfo"`, `"act-mcp"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("initialize response missing %q\nstdout=%s\nstderr=%s", want, out, errB.String())
+		}
+	}
+}
+
+// TestMCPToolCallInBareDirDefersError is the companion: a tool call needing
+// tracker state, made against `act mcp` in a bare dir, returns a no_repo
+// tool-error envelope (deferred to the call) rather than crashing the server.
+func TestMCPToolCallInBareDirDefersError(t *testing.T) {
+	bin := actBinary(t)
+	dir := t.TempDir()
+	cmd := exec.Command(bin, "mcp")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n" +
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"act_list","arguments":{}}}` + "\n")
+	var outB, errB strings.Builder
+	cmd.Stdout = &outB
+	cmd.Stderr = &errB
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("act mcp in bare dir exited non-zero: %v\nstderr=%s", err, errB.String())
+	}
+	out := outB.String()
+	if !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "no_repo") {
+		t.Fatalf("tools/call in bare dir did not return a deferred no_repo envelope\nstdout=%s", out)
+	}
+}
+
 // TestUnknownSubcommandMsg locks in the canonical "unknown subcommand"
 // shape so a future change to the message format is a deliberate edit
 // to the test rather than a silent UX regression.
