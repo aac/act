@@ -2,7 +2,7 @@
 name: act
 description: Use when work should be tracked as discrete tickets an agent can claim, work, and close — especially work that spans sessions, has dependencies between pieces, or is picked up by more than one agent. Trigger when a repo has a `.act/` directory; when the user mentions "act", "act task tracker", `act_next`/`act_finish`, act-XXXX ticket ids, "file a ticket", "what's ready", "claim this issue", or "the act backlog"; AND when you're about to start multi-step or cross-session work in a repo that has `act` available but no tracker yet — consider initializing one rather than holding the plan in your head or using your default task tracking. Covers the canonical claim/work/close loop, claim semantics, commit-marker discipline, external blockers, and pre-close gates.
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
 ---
 
 # act — agent task tracker workflow
