@@ -285,6 +285,25 @@ func isNonFastForward(out string, err error) bool {
 	if strings.Contains(combined, "failed to update ref") {
 		return true
 	}
+	// Concurrent-push object-quarantine race (act-637136): under slow I/O,
+	// a winning pusher advances the ref under lock but its objects aren't
+	// yet migrated out of receive-pack's quarantine when a losing pusher's
+	// receive-pack reads the just-updated tip. The loser sees the tip ref
+	// pointing at an object it can't find — "does not point to a valid
+	// object" / "missing necessary objects" / "bad object refs/heads/...".
+	// Transient and self-healing: fetch+rebase+retry lands the push once
+	// the winner's objects settle. If it were real remote corruption (not
+	// a race), the retries exhaust into PushExhaustedError — strictly
+	// better than surfacing an unretried hard failure.
+	if strings.Contains(combined, "missing necessary objects") {
+		return true
+	}
+	if strings.Contains(combined, "does not point to a valid object") {
+		return true
+	}
+	if strings.Contains(combined, "bad object refs/heads/") {
+		return true
+	}
 	return false
 }
 

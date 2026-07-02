@@ -284,6 +284,51 @@ func TestPushWithRetry_EmptyBranch(t *testing.T) {
 	}
 }
 
+// TestIsNonFastForward_ClassifiesContentionRaces locks the classifier's
+// recognition of the recoverable concurrent-push contention classes. The
+// regression that motivated the last entries: under slow I/O, concurrent
+// pushes to a shared bare origin race git's receive-pack object-quarantine
+// window, so a losing pusher sees "does not point to a valid object" /
+// "missing necessary objects" / "bad object refs/heads/<branch>" — a
+// transient race that must be retried (fetch+rebase+push), not surfaced as
+// a fatal non-contention failure. See act-637136.
+func TestIsNonFastForward_ClassifiesContentionRaces(t *testing.T) {
+	// A non-nil error is required (isNonFastForward short-circuits on nil).
+	// The real loop puts git's combined push output in `out` and the exit
+	// status in `err`; mirror that here.
+	exitErr := errors.New("exit status 1")
+	cases := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"non-fast-forward", " ! [rejected] main -> main (non-fast-forward)", true},
+		{"fetch first", " ! [rejected] main -> main (fetch first)", true},
+		{"updates were rejected", "error: failed to push some refs; Updates were rejected because the tip is behind", true},
+		{"cannot lock ref", "error: cannot lock ref 'refs/heads/main'", true},
+		{"failed to update ref", "error: failed to update ref refs/heads/main", true},
+		// The act-637136 race signatures.
+		{"missing necessary objects", " ! [remote rejected] main -> main (missing necessary objects)", true},
+		{"does not point to a valid object", "remote: error: refs/heads/main does not point to a valid object!", true},
+		{"bad object refs/heads", "remote: fatal: bad object refs/heads/main", true},
+		// Negatives: genuine non-contention failures must NOT be retried.
+		{"auth failure", "fatal: Authentication failed for 'https://example/repo.git'", false},
+		{"no such remote", "fatal: 'origin' does not appear to be a git repository", false},
+		{"empty output", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNonFastForward(tc.out, exitErr); got != tc.want {
+				t.Errorf("isNonFastForward(%q) = %v, want %v", tc.out, got, tc.want)
+			}
+		})
+	}
+	// nil err is never a rejection, regardless of output text.
+	if isNonFastForward("non-fast-forward", nil) {
+		t.Errorf("isNonFastForward with nil err = true, want false")
+	}
+}
+
 // TestBackoffFor verifies the backoff math: starts at base, doubles
 // each retry, caps at cap.
 func TestBackoffFor(t *testing.T) {
