@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-02
+
+### Fixed
+- `act mcp` now answers the JSON-RPC `initialize` handshake in any working directory,
+  including one with no host git repo or `.act/`. Repo resolution is deferred to the
+  tool calls that need tracker state (they return a `no_repo` envelope when it is
+  absent), so MCP clients such as Codex that launch the server in a bare context
+  (`./bin/act`, cwd `.`) complete registration instead of the server exiting before
+  `initialize`.
+
+### Changed
+- Codex marketplace authentication policy `ON_FIRST_USE` → `ON_USE` (the real Codex
+  enum value).
+
+## [0.3.0] - 2026-07-02
+
 ### Removed
 - `act install-skill` command and the in-binary skill `go:embed`. Skill delivery is
   now plugin-first: `/plugin install act@act` ships and auto-discovers the skill. The
