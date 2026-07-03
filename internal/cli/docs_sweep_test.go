@@ -394,6 +394,17 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ReadCache_TTLFiveSeconds",
 	},
 	{
+		// act-97415e: the `act.readCacheTTLSeconds` key overrides the
+		// default 5s read-cache window per-repo (previously inert — the
+		// cache hardcoded the const). The spec Read-cache section carries
+		// the claim; TestDocClaim_ReadCache_ConfiguredTTLOverridesDefault
+		// exercises both widen and narrow at the MaybeRefresh boundary.
+		name:         "cache-ttl-config-override",
+		docFile:      "docs/spec.md",
+		claimPattern: "overrides the default window per-repo",
+		testName:     "TestDocClaim_ReadCache_ConfiguredTTLOverridesDefault",
+	},
+	{
 		name:         "cache-dispatch-mode-bypass",
 		docFile:      "docs/spec.md",
 		claimPattern: "ACT_DISPATCH_MODE=1",

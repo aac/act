@@ -28,6 +28,7 @@ package cli
 import (
 	"errors"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/aac/act/internal/config"
@@ -35,16 +36,34 @@ import (
 	"github.com/aac/act/internal/gitops"
 )
 
-// ReadCacheTTL is the freshness window for read-path commands. Within
-// this duration of the last FETCH_HEAD touch, read-path commands skip
-// the fetch and read on-disk state directly.
-//
-// TODO(act-97415e): the `act.readCacheTTLSeconds` config key already exists
-// (internal/config) but nothing consumes it — this hardcoded constant is
-// still the only value that applies, so the key is currently inert. Replace
-// this with a config-driven lookup of ReadCacheTTLSeconds (fall back to 5s
-// when unset) so operators can tune the window per-repo.
+// ReadCacheTTL is the default freshness window for read-path commands.
+// Within this duration of the last FETCH_HEAD touch, read-path commands
+// skip the fetch and read on-disk state directly. It is the fallback for
+// resolveReadCacheTTL when `act.readCacheTTLSeconds` is unset or invalid;
+// it matches config.DefaultEnableDefaults().ReadCacheTTLSeconds (5s).
 const ReadCacheTTL = 5 * time.Second
+
+// resolveReadCacheTTL picks the read-cache freshness window for the .act/
+// state rooted at actRoot (the `.act/` directory, i.e. Layout(repo).Root).
+// Order of precedence:
+//
+//  1. act.readCacheTTLSeconds from the nested .act/.git/config when the key
+//     is readable and parses to a positive integer.
+//  2. ReadCacheTTL (the compiled-in default, == DefaultEnableDefaults()).
+//
+// Best-effort: any error deriving or reading the key falls through to the
+// default. A non-positive or unparseable value is ignored (the operator
+// gets the default rather than a zero-length window that would defeat the
+// cache entirely).
+func resolveReadCacheTTL(actRoot string) time.Duration {
+	cfgPath := config.ActGitConfigPath(actRoot)
+	if v, err := config.GetGitConfig(cfgPath, config.ReadCacheTTLSecondsKey); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return ReadCacheTTL
+}
 
 // envDispatchMode is the bypass env var documented in the spec's
 // "Read-cache" section. The value is checked for the literal "1" — any
@@ -109,8 +128,9 @@ func MaybeRefresh(repoRoot string, opts MaybeRefreshOptions) (MaybeRefreshResult
 	bypass := opts.Fresh || dispatchModeOn()
 
 	if !bypass {
+		ttl := resolveReadCacheTTL(paths.Root)
 		mtime, err := gitops.FetchHeadMtime(paths.Root)
-		if err == nil && !mtime.IsZero() && time.Since(mtime) < ReadCacheTTL {
+		if err == nil && !mtime.IsZero() && time.Since(mtime) < ttl {
 			return MaybeRefreshResult{Reason: "hit"}, nil
 		}
 		// Either no FETCH_HEAD yet (cold), or stale, or stat failed —

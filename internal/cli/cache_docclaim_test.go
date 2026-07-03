@@ -52,6 +52,60 @@ func TestDocClaim_ReadCache_TTLFiveSeconds(t *testing.T) {
 	}
 }
 
+// TestDocClaim_ReadCache_ConfiguredTTLOverridesDefault — asserts the spec's
+// Read-cache claim that `act.readCacheTTLSeconds` in `.act/.git/config`
+// overrides the default window per-repo (act-97415e). Before this the key
+// was inert: the cache hardcoded the 5s const and ignored config.
+//
+// Two directions prove the value is actually read (not just "any config →
+// wide window"): a large value WIDENS the window so a FETCH_HEAD that would
+// be stale under the 5s default is served as a hit; a small value NARROWS
+// it so a FETCH_HEAD that would be a hit under the default is a miss.
+//
+// Boundary: MaybeRefreshResult.Reason, mirroring TestDocClaim_ReadCache_
+// TTLFiveSeconds — the staged FETCH_HEAD mtime is the controlled input.
+func TestDocClaim_ReadCache_ConfiguredTTLOverridesDefault(t *testing.T) {
+	cfgKey := config.ReadCacheTTLSecondsKey
+
+	t.Run("widen", func(t *testing.T) {
+		root, _ := makeRepoWithRemoteOrigin(t)
+		cfgPath := config.ActGitConfigPath(config.Layout(root).Root)
+		if err := config.SetGitConfig(cfgPath, cfgKey, "30"); err != nil {
+			t.Fatalf("set %s=30: %v", cfgKey, err)
+		}
+
+		// 10s in the past: a miss under the 5s default, but inside the
+		// configured 30s window → must be a hit.
+		touchFetchHead(t, root, time.Now().Add(-10*time.Second))
+		res, err := MaybeRefresh(root, MaybeRefreshOptions{})
+		if err != nil {
+			t.Fatalf("MaybeRefresh: %v", err)
+		}
+		if res.Reason != "hit" {
+			t.Errorf("with TTL=30 and a 10s-old FETCH_HEAD, reason = %q, want hit (the configured window did not widen)", res.Reason)
+		}
+	})
+
+	t.Run("narrow", func(t *testing.T) {
+		root, _ := makeRepoWithRemoteOrigin(t)
+		cfgPath := config.ActGitConfigPath(config.Layout(root).Root)
+		if err := config.SetGitConfig(cfgPath, cfgKey, "1"); err != nil {
+			t.Fatalf("set %s=1: %v", cfgKey, err)
+		}
+
+		// 3s in the past: a hit under the 5s default, but outside the
+		// configured 1s window → must be a miss.
+		touchFetchHead(t, root, time.Now().Add(-3*time.Second))
+		res, err := MaybeRefresh(root, MaybeRefreshOptions{})
+		if err != nil {
+			t.Fatalf("MaybeRefresh: %v", err)
+		}
+		if res.Reason == "hit" {
+			t.Errorf("with TTL=1 and a 3s-old FETCH_HEAD, reason = hit, want a miss (the configured window did not narrow)")
+		}
+	})
+}
+
 // TestDocClaim_ReadCache_DispatchModeEnvBypass — asserts the spec's
 // `ACT_DISPATCH_MODE=1` env-var bypass works. Staged FETCH_HEAD is fresh
 // (would be a hit); the env var forces a fetch anyway.

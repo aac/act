@@ -1311,7 +1311,7 @@ Read-path commands (`act show`, `act ready`, `act log`, `act list`, `act search`
 
 **TTL.** A 5-second TTL bounds the freshness window, measured against the mtime of `.act/.git/FETCH_HEAD`. Within the window, the read command reads on-disk state directly. Outside the window, the command calls `gitops.FetchAndRebase(branch)` first, then reads. A read on a cold cache (no `FETCH_HEAD` yet) is always a miss.
 
-The TTL is currently a constant (5 seconds). Phase 2 ticket 1a introduces the `act.readCacheTTLSeconds` config key that will replace this constant with a per-repo override; the default and semantics remain unchanged.
+The default TTL is 5 seconds. The `act.readCacheTTLSeconds` key in `.act/.git/config` overrides the default window per-repo: a positive integer sets the freshness window in seconds (a larger value widens it, serving on-disk state longer between fetches; a smaller value narrows it). An unset, non-positive, or unparseable value falls back to the 5-second default. The bypass paths below ignore the window entirely regardless of its configured value.
 
 **Bypass mechanisms.** Three paths force a fetch regardless of FETCH_HEAD age:
 
