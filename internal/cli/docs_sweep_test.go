@@ -394,6 +394,21 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ReadCache_TTLFiveSeconds",
 	},
 	{
+		// act-ffc00d: the MCP server resolves the host repo per-call from a
+		// client-supplied workspace (Codex's proprietary
+		// `_meta."x-codex-turn-metadata".workspaces`) rather than its own
+		// process cwd — which under the Codex plugin launch model is the
+		// plugin install dir, not the user's project. The spec `act mcp`
+		// Host-repo resolution paragraph carries the claim;
+		// TestDocClaim_MCP_CodexWorkspaceRoutesToClientWorkspace (internal/mcp)
+		// drives a tools/call with the _meta hint and asserts the write lands
+		// in the named workspace, not the server cwd.
+		name:         "mcp-codex-workspace-resolution",
+		docFile:      "docs/spec.md",
+		claimPattern: "x-codex-turn-metadata",
+		testName:     "TestDocClaim_MCP_CodexWorkspaceRoutesToClientWorkspace",
+	},
+	{
 		// act-76cd7a: act.fetchTimeoutSeconds now bounds the `git fetch`
 		// steps in gitops.FetchAndRebase (previously inert — defined,
 		// defaulted, written by `remote enable`, but never consumed). The

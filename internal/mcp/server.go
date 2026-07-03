@@ -25,10 +25,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/version"
 )
 
@@ -115,6 +117,75 @@ func (s *Server) hostRoot() (string, error) {
 		s.rootResolved = true
 	}
 	return s.repoRoot, s.rootErr
+}
+
+// effectiveRoot resolves the host repo root for one tool call. It prefers a
+// workspace the CLIENT names out-of-band over the server's process cwd
+// (act-ffc00d).
+//
+// Why this exists: a plugin host launches `act mcp` as a long-lived process
+// with a cwd it chooses, which is NOT the user's project. Claude Code happens
+// to launch it in the project dir (its `.mcp.json` sets no cwd), so cwd-based
+// resolution works there. Codex launches it with cwd = the plugin's install
+// dir (its `.codex-plugin/mcp.json` pins `cwd "."`, needed only to locate the
+// relative `./bin/act`), and advertises no MCP `roots` capability — so cwd is
+// the plugin cache and every repo-relative tool would operate there. Codex
+// does, however, carry the real workspace on every `tools/call` in a
+// proprietary `_meta` block; we read it and resolve the host repo from it.
+//
+// Precedence: a client-supplied workspace is authoritative (resolve the host
+// repo from it, or surface that workspace's error — never silently fall back
+// to cwd, which is the plugin dir and the bug). Only when no workspace hint is
+// present do we fall back to the cwd-based resolver (the Claude / direct-CLI
+// path).
+func (s *Server) effectiveRoot(rawParams json.RawMessage) (string, error) {
+	ws := workspacesFromMeta(rawParams)
+	if len(ws) == 0 {
+		return s.hostRoot()
+	}
+	var firstErr error
+	for _, w := range ws {
+		root, err := gitops.FindHostRepoRoot(w)
+		if err == nil {
+			return root, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return "", firstErr
+}
+
+// workspacesFromMeta extracts client-declared workspace roots from a
+// tools/call params `_meta`. Today the only source is Codex's proprietary
+// `x-codex-turn-metadata.workspaces` (a map keyed by absolute workspace path);
+// the keys are returned sorted so multi-workspace selection is deterministic.
+// Returns nil when the block is absent (Claude, direct CLI) — the caller then
+// falls back to cwd-based resolution. Parse failures are treated as "absent"
+// so a malformed or unexpected `_meta` never breaks a tool call.
+func workspacesFromMeta(rawParams json.RawMessage) []string {
+	if len(rawParams) == 0 {
+		return nil
+	}
+	var p struct {
+		Meta struct {
+			Codex struct {
+				Workspaces map[string]json.RawMessage `json:"workspaces"`
+			} `json:"x-codex-turn-metadata"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(rawParams, &p); err != nil {
+		return nil
+	}
+	if len(p.Meta.Codex.Workspaces) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(p.Meta.Codex.Workspaces))
+	for k := range p.Meta.Codex.Workspaces {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // jsonRPCRequest is the inbound shape on stdin. id is `any` so we round-trip
@@ -307,14 +378,21 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 			fmt.Sprintf("server is read-only; tool %q not permitted", p.Name))
 		return
 	}
-	// Resolve the host repo root lazily (act-119180). Deferred from startup to
-	// here so initialize/tools-list answer in any cwd; every current tool needs
-	// tracker state, so a resolution failure surfaces as a no_repo tool-error
-	// envelope rather than aborting the server before the handshake completes.
-	if _, err := s.hostRoot(); err != nil {
+	// Resolve the host repo root for this call (act-119180, act-ffc00d).
+	// Deferred from startup to here so initialize/tools-list answer in any cwd;
+	// and resolved per-call so a client-supplied workspace (Codex's `_meta`)
+	// overrides the server's process cwd — which under the Codex plugin launch
+	// model is the plugin install dir, not the user's project. Every current
+	// tool needs tracker state, so a resolution failure surfaces as a no_repo
+	// tool-error envelope rather than aborting the server.
+	root, err := s.effectiveRoot(req.Params)
+	if err != nil {
 		s.writeToolError(enc, req.ID, "no_repo", fmt.Sprintf("act mcp: %v", err))
 		return
 	}
+	s.repoRoot = root
+	s.rootResolved = true
+	s.rootErr = nil
 	args := p.Arguments
 	if len(args) == 0 {
 		args = []byte("{}")

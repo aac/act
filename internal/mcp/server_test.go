@@ -1389,3 +1389,73 @@ func TestUnknownMethod(t *testing.T) {
 		t.Errorf("error code = %d, want %d", resp.Error.Code, errMethodNotFound)
 	}
 }
+
+// opsContain reports whether any op file under <root>/.act/ops contains substr.
+// Used to assert WHICH repo a write-tool call landed in (act-ffc00d).
+func opsContain(t *testing.T, root, substr string) bool {
+	t.Helper()
+	found := false
+	_ = filepath.Walk(filepath.Join(root, ".act", "ops"), func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if b, rerr := os.ReadFile(p); rerr == nil && strings.Contains(string(b), substr) {
+			found = true
+		}
+		return nil
+	})
+	return found
+}
+
+// TestDocClaim_MCP_CodexWorkspaceRoutesToClientWorkspace pins act-ffc00d: a
+// tools/call carrying Codex's proprietary `_meta` workspace hint must operate
+// on that workspace, NOT the server's process cwd — which under the Codex
+// plugin launch model is the plugin install dir, not the user's project. We
+// build a server whose cwd-based resolver returns the WRONG dir (standing in
+// for the plugin cache), send an act_create whose `_meta` names a different
+// workspace, and assert the created op landed in the workspace and NOT in the
+// resolver's dir. A companion call WITHOUT `_meta` confirms the cwd fallback
+// still routes there, so the routing is driven by the hint, not accident.
+func TestDocClaim_MCP_CodexWorkspaceRoutesToClientWorkspace(t *testing.T) {
+	pluginDir := makeRepo(t) // stands in for the server's launch cwd (plugin cache)
+	workspace := makeRepo(t) // the user's real project, named in _meta
+
+	resolve := func() (string, error) { return pluginDir, nil }
+
+	// (1) Create WITH a Codex workspace hint → must land in `workspace`.
+	respWS := runOneDeferred(t, resolve, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "act_create",
+			"arguments": map[string]any{"title": "routed-by-meta"},
+			"_meta": map[string]any{
+				"x-codex-turn-metadata": map[string]any{
+					"workspaces": map[string]any{workspace: map[string]any{}},
+				},
+			},
+		},
+	})
+	if respWS.Error != nil {
+		t.Fatalf("create with _meta: JSON-RPC error %+v", respWS.Error)
+	}
+	if !opsContain(t, workspace, "routed-by-meta") {
+		t.Errorf("act_create with Codex _meta did not write to the client workspace %s", workspace)
+	}
+	if opsContain(t, pluginDir, "routed-by-meta") {
+		t.Errorf("act_create with Codex _meta wrote to the server cwd %s (the act-ffc00d bug)", pluginDir)
+	}
+
+	// (2) Create WITHOUT any _meta → cwd fallback, must land in pluginDir.
+	if resp := runOneDeferred(t, resolve, map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "act_create",
+			"arguments": map[string]any{"title": "routed-by-cwd"},
+		},
+	}); resp.Error != nil {
+		t.Fatalf("create without _meta: JSON-RPC error %+v", resp.Error)
+	}
+	if !opsContain(t, pluginDir, "routed-by-cwd") {
+		t.Errorf("act_create without _meta did not fall back to the server cwd %s", pluginDir)
+	}
+}
