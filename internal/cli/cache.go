@@ -39,10 +39,11 @@ import (
 // this duration of the last FETCH_HEAD touch, read-path commands skip
 // the fetch and read on-disk state directly.
 //
-// TODO(act-72d20e / ticket 1a): once the `act.readCacheTTLSeconds` config
-// key lands in internal/config, replace this constant with a config-
-// driven lookup so operators can tune the window per-repo. Until then
-// the 5-second default matches the ticket spec verbatim.
+// TODO(act-97415e): the `act.readCacheTTLSeconds` config key already exists
+// (internal/config) but nothing consumes it — this hardcoded constant is
+// still the only value that applies, so the key is currently inert. Replace
+// this with a config-driven lookup of ReadCacheTTLSeconds (fall back to 5s
+// when unset) so operators can tune the window per-repo.
 const ReadCacheTTL = 5 * time.Second
 
 // envDispatchMode is the bypass env var documented in the spec's

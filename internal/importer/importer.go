@@ -474,7 +474,3 @@ func Resolve(importsDir, bootstrapID string) (localID string, ok bool, err error
 	v, hit := all[bootstrapID]
 	return v, hit, nil
 }
-
-// TODO(act-6eff): wire Resolve into cmd/act show and cmd/act log so the
-// resolver pipeline (spec §"Pre-import id resolution") falls through to
-// .act/imports/*.json after on-disk prefix resolution misses.

@@ -12,11 +12,11 @@ import (
 	"github.com/aac/act/internal/canonicaljson"
 )
 
-// HLCState mirrors hlc.HLC. Defined locally because the hlc package has not
-// yet declared its concrete type (act-9cae); once that lands this can become
-// an alias: `type HLCState = hlc.HLC`.
-//
-// TODO(act-9cae): replace with a type alias to hlc.HLC.
+// HLCState is the persisted subset of an HLC in .act/config.json's last_hlc:
+// just the (wall, logical) pair. It deliberately does NOT alias hlc.HLC —
+// that type also carries a NodeID field, which config's last_hlc does not
+// persist, so `type HLCState = hlc.HLC` would change the on-disk shape. Keep
+// it a distinct local type.
 type HLCState struct {
 	Wall    int64  `json:"wall"`
 	Logical uint32 `json:"logical"`
