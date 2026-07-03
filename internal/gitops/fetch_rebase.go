@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
+
+	"github.com/aac/act/internal/config"
 )
 
 // envForceShallowRebase is a test-only env var that forces the next N
@@ -138,8 +142,14 @@ func (g *GitOps) FetchAndRebase(branch string) error {
 		return fmt.Errorf("gitops: FetchAndRebase: empty branch")
 	}
 
+	// Resolve the fetch wall-time budget once for both the initial fetch
+	// and any --unshallow retry below. Zero means unbounded (today's
+	// behavior), so a repo that never set act.fetchTimeoutSeconds is not
+	// regressed — see resolveFetchTimeout.
+	fetchTimeout := g.resolveFetchTimeout()
+
 	// Step 1: fetch origin/<branch>.
-	if out, err := g.runCombined("fetch", "origin", branch); err != nil {
+	if out, err := g.runCombinedTimeout(fetchTimeout, "fetch", "origin", branch); err != nil {
 		return fmt.Errorf("%w: %v (output: %s)", ErrFetchFailed, err, strings.TrimSpace(out))
 	}
 
@@ -190,8 +200,8 @@ func (g *GitOps) FetchAndRebase(branch string) error {
 		// the next git command refuses with "you are currently rebasing".
 		_, _ = g.runCombined("rebase", "--abort")
 
-		// One unshallow attempt.
-		if uout, uerr := g.runCombined("fetch", "--unshallow", "origin", branch); uerr != nil {
+		// One unshallow attempt (same wall-time budget as the initial fetch).
+		if uout, uerr := g.runCombinedTimeout(fetchTimeout, "fetch", "--unshallow", "origin", branch); uerr != nil {
 			// Unshallow itself failed (e.g. remote refused, or the clone
 			// was never shallow). Treat as terminal recovery failure.
 			return fmt.Errorf("%w: unshallow: %v (output: %s)",
@@ -300,4 +310,76 @@ func (g *GitOps) runCombined(args ...string) (string, error) {
 	cmd.Dir = g.RepoRoot
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// resolveFetchTimeout picks the wall-time budget for the `git fetch` steps.
+// Precedence:
+//
+//  1. g.FetchTimeout when > 0 (explicit override / test injection).
+//  2. act.fetchTimeoutSeconds from the .act/.git/config at g.RepoRoot, when
+//     it parses to a positive integer (seconds).
+//  3. 0 — unbounded.
+//
+// Note the fallback differs deliberately from the read-cache TTL resolver
+// (internal/cli/cache.go), which defaults to 5s when unset. A read cache
+// with no window is nonsensical, so it needs a default; a fetch with no
+// timeout is exactly today's status quo, and this path is shared with the
+// push-retry write loop where a spuriously-killed slow-but-valid fetch is
+// worse than an occasionally-slow one. So "unset ⇒ unbounded". The 10s
+// value in DefaultEnableDefaults is what `act remote enable` WRITES into
+// config, so coordinated repos get the cap; un-enabled repos keep today's
+// unbounded behavior (act-76cd7a).
+func (g *GitOps) resolveFetchTimeout() time.Duration {
+	if g.FetchTimeout > 0 {
+		return g.FetchTimeout
+	}
+	cfgPath := config.ActGitConfigPath(g.RepoRoot)
+	if v, err := config.GetGitConfig(cfgPath, config.FetchTimeoutSecondsKey); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 0
+}
+
+// runCombinedTimeout runs git like runCombined but kills the process if it
+// exceeds timeout. A timeout <= 0 means "no bound" and delegates straight
+// to runCombined (the unbounded status-quo path). On expiry the process is
+// killed, reaped, and a non-nil error is returned so the caller's existing
+// fetch-failure classification (ErrFetchFailed / ErrShallowExhausted)
+// applies unchanged. Only FetchAndRebase's fetch steps route through here;
+// local git ops (rev-parse, merge-base, rebase) stay on runCombined.
+func (g *GitOps) runCombinedTimeout(timeout time.Duration, args ...string) (string, error) {
+	if timeout <= 0 {
+		return g.runCombined(args...)
+	}
+	r := g.runner
+	if r == nil {
+		r = exec.Command
+	}
+	finalArgs := args
+	if g.gitDir != "" {
+		finalArgs = append([]string{
+			"--git-dir=" + g.gitDir,
+			"--work-tree=" + g.RepoRoot,
+		}, args...)
+	}
+	cmd := r("git", finalArgs...)
+	cmd.Dir = g.RepoRoot
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Start(); err != nil {
+		return buf.String(), err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return buf.String(), err
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		<-done // reap the killed process so buf is no longer written concurrently
+		return buf.String(), fmt.Errorf("git %s: timed out after %s", args[0], timeout)
+	}
 }

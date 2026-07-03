@@ -112,6 +112,25 @@ type GitOps struct {
 	// runner is an internal indirection so tests can assert the exact argv
 	// passed to git. Defaults to exec.Command. Exposed via WithRunner.
 	runner func(name string, args ...string) *exec.Cmd
+
+	// FetchTimeout, when > 0, caps the wall-time of the `git fetch` steps
+	// in FetchAndRebase (the process is killed on expiry). Zero means
+	// "resolve from act.fetchTimeoutSeconds in config, else unbounded" —
+	// see resolveFetchTimeout. This field is the explicit-override /
+	// test-injection seam; production callers leave it zero and let the
+	// config key drive it (act-76cd7a).
+	FetchTimeout time.Duration
+}
+
+// WithRunner overrides the git command runner (default exec.Command) and
+// returns the receiver for chaining. Tests use it to assert argv or inject
+// a fault-injecting fake without reaching the unexported field across a
+// package boundary. The struct comment on runner has long promised this
+// accessor; act-76cd7a makes it real (a cross-package test needs to inject
+// a hanging `fetch` to exercise the FetchTimeout abort path).
+func (g *GitOps) WithRunner(fn func(name string, args ...string) *exec.Cmd) *GitOps {
+	g.runner = fn
+	return g
 }
 
 // NewGitOps constructs a GitOps rooted at repoRoot with default settings

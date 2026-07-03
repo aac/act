@@ -394,6 +394,19 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ReadCache_TTLFiveSeconds",
 	},
 	{
+		// act-76cd7a: act.fetchTimeoutSeconds now bounds the `git fetch`
+		// steps in gitops.FetchAndRebase (previously inert — defined,
+		// defaulted, written by `remote enable`, but never consumed). The
+		// spec config-table row carries the live-behavior claim; the
+		// asserting test writes the key and confirms a hung fetch is
+		// aborted well under the injected sleep, at the FetchAndRebase
+		// boundary both the read-cache and push-retry paths share.
+		name:         "fetch-timeout-config-bounds-fetch",
+		docFile:      "docs/spec.md",
+		claimPattern: "a fetch exceeding the budget is aborted",
+		testName:     "TestDocClaim_FetchTimeout_ConfigKeyBoundsFetch",
+	},
+	{
 		// act-97415e: the `act.readCacheTTLSeconds` key overrides the
 		// default 5s read-cache window per-repo (previously inert — the
 		// cache hardcoded the const). The spec Read-cache section carries

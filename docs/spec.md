@@ -1264,7 +1264,7 @@ and `act remote disable` MUST unset all of them:
 | `receive.denyCurrentBranch` | `updateInstead` | Accept worker pushes into the checked-out branch. |
 | `act.readCacheTTLSeconds` | `5` | Read-cache staleness budget for coordination-plane readers (ticket 2 series). |
 | `act.bootstrapTimeoutSeconds` | `30` | Wall-time cap for the bootstrap protocol (ticket 7). |
-| `act.fetchTimeoutSeconds` | `10` | Wall-time cap for an upstream `git fetch` (tickets 4 / 5). |
+| `act.fetchTimeoutSeconds` | `10` | Wall-time cap for an upstream `git fetch`: a fetch exceeding the budget is aborted (the process is killed) and surfaces as a fetch failure. Unset ⇒ unbounded; `act remote enable` writes the 10s default (tickets 4 / 5). |
 | `act.slowWriteThresholdMs` | `1000` | Per-write latency budget above which a coordination warning fires (ticket 8). |
 | `act.upstreamDriftThresholdCommits` | `50` | Commit-count threshold for the orchestrator drift advisory. |
 | `act.upstreamDriftThresholdSeconds` | `3600` | Wall-time-since-last-sync threshold for the drift advisory. |
