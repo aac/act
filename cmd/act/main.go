@@ -136,6 +136,10 @@ func main() {
 		os.Exit(runFinish(args))
 	case "reopen":
 		os.Exit(runReopen(args))
+	case "blocks":
+		os.Exit(runBlocks(args))
+	case "blocked-by":
+		os.Exit(runBlockedBy(args))
 	case "delete":
 		os.Exit(runDelete(args))
 	case "update":

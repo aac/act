@@ -91,6 +91,16 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "init, version, log, list, search, ready, mine, show,",
 		testName:     "TestDocClaim_ActHelpListsSubcommands",
 	},
+	{
+		// act blocks / blocked-by read-only block-graph queries (act-2e1070):
+		// `act help workflow` documents the bare-id-list affordance; the
+		// behavior is asserted at the subprocess boundary by
+		// TestDocClaim_BlockGraphQueries (in cmd/act).
+		name:         "act-help-block-graph-queries",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act blocked-by <id>",
+		testName:     "TestDocClaim_BlockGraphQueries",
+	},
 	// next/finish composed CLI verbs (act-431f99): the CLI gains `act next`
 	// (ready+claim+show) and `act finish` (close+push), matching the
 	// act_next / act_finish MCP tools so both interfaces offer the

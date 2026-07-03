@@ -146,8 +146,8 @@ DEEPER DIVES
   Subcommands (comma-separated; "dep add" is one multi-word
   subcommand, not three items):
     init, version, log, list, search, ready, mine, show,
-    create, close, reopen, delete, update, next, finish,
-    dep add, doctor, import, mcp,
+    blocks, blocked-by, create, close, reopen, delete,
+    update, next, finish, dep add, doctor, import, mcp,
     state import, state export, remote
 
   'act mine' lists issues currently assigned to your node that are
@@ -462,6 +462,19 @@ COMMIT MARKER INVARIANTS
   squash-merge intact, is invisible to conventional-commit linters,
   is ignored by semantic-release CHANGELOGs, and is safe for
   external contributors to ignore.
+
+QUERYING THE BLOCK GRAPH
+  Two read-only queries emit a bare, newline-separated list of issue ids
+  — built for shell pipes (| xargs, $(...), while read), not for humans.
+  For structured output use 'act show <id> --json'.
+
+    act blocked-by <id>   # ids that block <id> (its blocks-edge parents)
+    act blocks <id>       # ids that <id> blocks (issues blocked by <id>)
+
+  Direction matches 'act dep add': for an edge "A blocked-by B",
+  'act blocked-by A' lists B and 'act blocks B' lists A. Both accept a
+  full id or unique prefix, dedupe and sort their output, and an id with
+  no matching edges prints nothing and exits 0.
 
 EXTERNAL DEPS
   Sometimes an act issue is blocked on work tracked in a sibling system
