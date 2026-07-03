@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-02
+
+### Added
+- `act blocks <id>` and `act blocked-by <id>` — read-only block-graph queries that
+  print bare ids for shell pipes (`act show --json` remains the structured surface).
+- `act update --unclaim <id>` — honestly release a claim (in_progress → open, clears
+  the assignee) so a claimed-but-not-worked issue can be handed back and re-claimed.
+- `act dep add <id> --external <ref>` — attach an external blocker through the same
+  verb as internal deps (symmetric with `--blocked-by`).
+
+### Changed
+- External-blocker **adds** now go through `act dep add --external`. The old
+  `act update --ext-add` is removed; `act update --ext-rm` is retained (it is the
+  symmetric clear, matching internal `--dep-rm`). Breaking for anyone scripting
+  `--ext-add`.
+
+### Fixed
+- `act.readCacheTTLSeconds` is now honored. The read-path freshness window was
+  hardcoded to 5s and the config key was silently inert; it now tunes the window
+  per-repo (unset falls back to the 5s default).
+- `act.fetchTimeoutSeconds` is now honored. A hung `git fetch` had no wall-time
+  bound; `FetchAndRebase` now aborts a fetch that exceeds the configured budget.
+  Unset means unbounded (today's behavior); `act remote enable` writes the 10s
+  default, so coordinated repos get the cap without regressing un-enabled ones.
+- Close+reopen then re-claim no longer silently rejected: reopen (and unclaim) now
+  clear the claim high-water mark so a reopened issue is claimable again.
+- Concurrent pushes racing on git's object quarantine are now retried in
+  `PushWithRetry` instead of surfacing a spurious failure.
+
 ## [0.3.1] - 2026-07-02
 
 ### Fixed
