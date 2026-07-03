@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aac/act/internal/canonicaljson"
@@ -502,4 +503,110 @@ func depDirectionPhrase(edgeType string) string {
 		// the allow-list.
 		return edgeType
 	}
+}
+
+// DepAddExternalResult is the success envelope for the external-blocker form
+// `act dep add <id> --external <ref>`. It writes one add_external_dep op per
+// ref — the same op `act update --ext-add` wrote before act-ce1427 unified
+// external-blocker *additions* under `act dep add` (symmetric with the
+// internal `--blocked-by` form). Clearing a ref stays on `act update
+// --ext-rm`, symmetric with internal `--dep-rm`.
+type DepAddExternalResult struct {
+	OK        bool     `json:"ok"`
+	Issue     string   `json:"issue"`
+	External  []string `json:"external"`
+	Committed bool     `json:"committed"`
+}
+
+// FormatDepAddExternalHuman renders the external-blocker success line.
+func FormatDepAddExternalHuman(res DepAddExternalResult) string {
+	if !res.Committed {
+		return fmt.Sprintf("External dep written (not committed): %s blocked by external %s\n",
+			res.Issue, strings.Join(res.External, ", "))
+	}
+	return fmt.Sprintf("Added: %s blocked by external %s\n", res.Issue, strings.Join(res.External, ", "))
+}
+
+// RunDepAddExternal attaches one or more opaque external-tracker refs to
+// <subject> as blocking external deps, writing one add_external_dep op each.
+// This is the external-blocker addition surface (act-ce1427): symmetric with
+// `act dep add <id> --blocked-by <other>` for internal blockers. Refs are
+// validated up-front (all-or-nothing); clearing a ref stays on `act update
+// --ext-rm`. The write machinery mirrors RunDepAdd's add_dep path.
+func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptions) (output any, exitCode int) {
+	paths := config.Layout(repoRoot)
+	if _, err := os.Stat(paths.Root); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return DepAddErrorOutput{Error: "no_repo", Message: fmt.Sprintf("act dep add: %s/.act not found; run `act init` first", repoRoot)}, 3
+		}
+		return DepAddErrorOutput{Error: "no_repo", Message: fmt.Sprintf("act dep add: stat %s: %v", paths.Root, err)}, 3
+	}
+	if len(refs) == 0 {
+		return DepAddErrorOutput{Error: "bad_flag", Message: "act dep add: --external requires a ref"}, 2
+	}
+	// Validate every ref before writing: a bad ref fails the whole command
+	// before any op hits disk (matches `act update --ext-add`).
+	for _, ref := range refs {
+		if verr := (op.AddExternalDepPayload{Ref: ref}).Validate(); verr != nil {
+			return DepAddErrorOutput{Error: "bad_flag", Message: fmt.Sprintf("act dep add: --external: %v", verr)}, 2
+		}
+	}
+	knownIDs, err := listIssueIDs(paths.Ops)
+	if err != nil {
+		return DepAddErrorOutput{Error: "ops_scan_failed", Message: err.Error()}, 1
+	}
+	full, code, errOut := resolveDepID(subject, "issue", knownIDs)
+	if code != 0 {
+		return errOut, code
+	}
+	cfg, cerr := config.ReadConfig(paths)
+	if cerr != nil {
+		return DepAddErrorOutput{Error: "config_read_failed", Message: cerr.Error()}, 1
+	}
+	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	var gops *gitops.ActGitOps
+	if !opts.NoCommit {
+		gops = gitops.NewActGitOps(paths.Root)
+	}
+	for i, ref := range refs {
+		bodyPayload, perr := canonicaljson.Marshal(op.AddExternalDepPayload{Ref: ref})
+		if perr != nil {
+			return DepAddErrorOutput{Error: "marshal_failed", Message: perr.Error()}, 1
+		}
+		stamp := clock.Send()
+		stamp.NodeID = cfg.NodeID
+		env := op.Envelope{
+			OpVersion:     op.CurrentOpVersion,
+			SchemaVersion: op.CurrentSchemaVersion,
+			WriterVersion: op.WriterVersion,
+			OpType:        "add_external_dep",
+			IssueID:       full,
+			Payload:       bodyPayload,
+			HLC:           stamp,
+			NodeID:        cfg.NodeID,
+		}
+		if verr := env.Validate(); verr != nil {
+			return DepAddErrorOutput{Error: "envelope_invalid", Message: verr.Error()}, 1
+		}
+		body, merr := env.Marshal()
+		if merr != nil {
+			return DepAddErrorOutput{Error: "marshal_failed", Message: merr.Error()}, 1
+		}
+		// Defer the push until the final op so a multi-ref batch never
+		// pushes partial state mid-batch (mirrors RunUpdate's deferred push).
+		werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
+			NoCommit: opts.NoCommit,
+			Push:     opts.Push && i == len(refs)-1,
+			Isolated: opts.Isolated,
+			Offline:  opts.Offline,
+			Branch:   opts.Branch,
+		})
+		if werr != nil {
+			if errors.Is(werr, ErrInvalidFlags) {
+				return DepAddErrorOutput{Error: "bad_flag", Message: werr.Error()}, 2
+			}
+			return DepAddErrorOutput{Error: "write_failed", Message: werr.Error()}, 1
+		}
+	}
+	return DepAddExternalResult{OK: true, Issue: full, External: refs, Committed: !opts.NoCommit}, 0
 }

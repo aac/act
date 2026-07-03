@@ -39,12 +39,60 @@ func runDepAdd(args []string) int {
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
 	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
 	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Worktree subagents pass --branch <worktree-branch> so op commits don't fan onto origin/main.")
+	var external stringSliceFlag
+	fs.Var(&external, "external", "attach an opaque external-tracker ref as a blocking external dep (repeatable): `act dep add <id> --external \"linear:ENG-123\"`. Symmetric with --blocked-by for internal blockers; clear the ref with `act update --ext-rm`.")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
 	}
 	if err := fs.Parse(rearranged); err != nil {
 		return 2
+	}
+
+	// External-blocker form: `act dep add <id> --external <ref> [...]`.
+	// Mutually exclusive with the internal-edge forms (--blocked-by /
+	// --blocks / a second positional / a non-blocks --type). This is the
+	// unified external-blocker *add* surface (act-ce1427); removal stays on
+	// `act update --ext-rm`, symmetric with internal `--dep-rm`.
+	if len(external) > 0 {
+		if *blockedBy != "" || *blocks != "" || fs.NArg() != 1 || (*typ != "" && *typ != "blocks") {
+			emitBadFlag(*asJSON, "act dep add: --external takes exactly one subject id and no --blocked-by/--blocks/second positional/--type")
+			return 2
+		}
+		root, err := findRepoRoot()
+		if err != nil {
+			emitDepAdd(*asJSON, map[string]any{"error": "not_in_git", "message": err.Error()})
+			return 3
+		}
+		out, code := cli.RunDepAddExternal(root, fs.Arg(0), []string(external), cli.DepAddOptions{
+			AsJSON:   *asJSON,
+			NoCommit: *noCommit,
+			Push:     *push,
+			Isolated: *isolated,
+			Offline:  *offline,
+			Branch:   *branch,
+		})
+		if code != 0 {
+			m, _ := toMap(out)
+			emitDepAdd(*asJSON, m)
+			return code
+		}
+		if *asJSON {
+			data, jerr := json.Marshal(out)
+			if jerr != nil {
+				fmt.Fprintf(os.Stderr, "act dep add: json marshal: %v\n", jerr)
+				return 1
+			}
+			fmt.Println(string(data))
+			return 0
+		}
+		res, ok := out.(cli.DepAddExternalResult)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "act dep add: unexpected output type %T\n", out)
+			return 1
+		}
+		fmt.Print(cli.FormatDepAddExternalHuman(res))
+		return 0
 	}
 
 	// Resolve the three input forms into (child, parent, edgeType).

@@ -53,8 +53,6 @@ func runUpdate(args []string) int {
 	fs.Var(&acceptRmFlag, "accept-rm", "remove an acceptance criterion by zero-based index against the current list (repeatable); out-of-range is a no-op")
 	var depRmFlag stringSliceFlag
 	fs.Var(&depRmFlag, "dep-rm", "remove a dependency edge as <id> or <id>:<edge_type> (repeatable)")
-	var extAddFlag stringSliceFlag
-	fs.Var(&extAddFlag, "ext-add", "attach an opaque external-tracker ref as a blocking external dep (repeatable; idempotent)")
 	var extRmFlag stringSliceFlag
 	fs.Var(&extRmFlag, "ext-rm", "clear an opaque external-tracker ref (repeatable; idempotent on absence)")
 	claimFlag := fs.Bool("claim", false, "atomic claim protocol")
@@ -95,7 +93,6 @@ func runUpdate(args []string) int {
 		AcceptAdd:   []string(acceptAddFlag),
 		AcceptRm:    []int(acceptRmFlag),
 		DepRm:       []string(depRmFlag),
-		ExtAdd:      []string(extAddFlag),
 		ExtRm:       []string(extRmFlag),
 		Claim:       *claimFlag,
 		Force:       *forceFlag,

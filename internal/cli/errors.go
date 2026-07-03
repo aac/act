@@ -79,7 +79,7 @@ const (
 	// ErrBlockedByExternalDep is emitted by `act update --claim` and
 	// `act close` when the target issue has one or more open external
 	// deps (act-5e36). External deps are opaque refs set via
-	// `act update --ext-add`; presence means the cross-tracker gate is
+	// `act dep add --external`; presence means the cross-tracker gate is
 	// still open. Pass --force to override; a WARNING is emitted to
 	// stderr when the override fires. Exit 2 (usage: a prerequisite
 	// gate is unmet; fix the state or pass --force). Details key:

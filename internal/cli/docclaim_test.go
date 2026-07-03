@@ -1081,7 +1081,7 @@ func TestDocClaim_BlockedByExtDep_ClaimBlocked(t *testing.T) {
 	id := pickIDFromJSON(t, createOut)
 
 	// Attach an external dep so the gate fires.
-	mustRunAct(t, site, 0, "update", id, "--ext-add", "linear:ENG-99")
+	mustRunAct(t, site, 0, "dep", "add", id, "--external", "linear:ENG-99")
 
 	out, _, code := runAct(t, site, "update", "--claim", id, "--json")
 	if code != 2 {
@@ -1113,7 +1113,7 @@ func TestDocClaim_BlockedByExtDep_CloseBlocked(t *testing.T) {
 	createOut, _ := mustRunAct(t, site, 0, "create", "blocked close probe", "--json")
 	id := pickIDFromJSON(t, createOut)
 
-	mustRunAct(t, site, 0, "update", id, "--ext-add", "gh:org/repo#7")
+	mustRunAct(t, site, 0, "dep", "add", id, "--external", "gh:org/repo#7")
 
 	out, _, code := runAct(t, site, "close", id, "--json")
 	if code != 2 {
@@ -1147,7 +1147,7 @@ func TestDocClaim_BlockedByExtDep_ForceOverrides(t *testing.T) {
 	{
 		createOut, _ := mustRunAct(t, site, 0, "create", "force-claim probe", "--json")
 		id := pickIDFromJSON(t, createOut)
-		mustRunAct(t, site, 0, "update", id, "--ext-add", "jira:PROJ-55")
+		mustRunAct(t, site, 0, "dep", "add", id, "--external", "jira:PROJ-55")
 
 		_, stderr, code := runAct(t, site, "update", "--claim", "--force", "--no-commit", id)
 		if code != 0 {
@@ -1165,7 +1165,7 @@ func TestDocClaim_BlockedByExtDep_ForceOverrides(t *testing.T) {
 	{
 		createOut, _ := mustRunAct(t, site, 0, "create", "force-close probe", "--json")
 		id := pickIDFromJSON(t, createOut)
-		mustRunAct(t, site, 0, "update", id, "--ext-add", "jira:PROJ-66")
+		mustRunAct(t, site, 0, "dep", "add", id, "--external", "jira:PROJ-66")
 
 		_, stderr, code := runAct(t, site, "close", id, "--force", "--no-commit")
 		if code != 0 {

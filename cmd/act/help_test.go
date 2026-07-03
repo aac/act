@@ -60,7 +60,7 @@ func TestRunHelpWorkflow(t *testing.T) {
 		// claim pinned here so future agents implementing related work
 		// can rely on the section staying present.
 		"EXTERNAL DEPS",
-		"--ext-add",
+		"--external",
 		"--ext-rm",
 	})
 }

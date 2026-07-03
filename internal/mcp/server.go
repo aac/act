@@ -510,8 +510,7 @@ func (s *Server) tools() []toolDescriptor {
 				"accept_add":   schemaArrayOfString("Append these criteria to the existing acceptance list (additive — contrast accept which replaces)."),
 				"accept_rm":    schemaArrayOfInteger("Remove acceptance criteria by zero-based index against the current list; out-of-range is a no-op."),
 				"dep_rm":       schemaArrayOfString("Dep ids to remove."),
-				"ext_add":      schemaArrayOfString("Opaque external-tracker refs to attach as blocking external deps (idempotent)."),
-				"ext_rm":       schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence)."),
+				"ext_rm":       schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence). Attach refs via act_dep_add's `external` param."),
 				"claim":        schemaBool("Atomic claim mode."),
 				"wait":         schemaBool("Wait for claim to free."),
 				"wait_timeout": schemaString("Wait timeout (Go duration string)."),
@@ -537,12 +536,13 @@ func (s *Server) tools() []toolDescriptor {
 			Description: "Escape hatch: add a dependency edge. DIRECTION (edge_type=blocks): the CHILD is blocked BY the PARENT — the child stays out of `act ready` until the parent closes. So `child` is the dependent and `parent` is the blocker. Worked example: to make act-A block act-B (B must wait on A), call child=act-B, parent=act-A (B is blocked by A). The response includes a plain-English `summary` (e.g. \"act-B is blocked by act-A\") — trust it over the raw child/parent fields, which read backwards as SVO. Prefer act_block or act_create's blocked_by/blocks, which name the blocker directly.",
 			InputSchema: schemaObject(map[string]any{
 				"child":     schemaString("Dependent issue id or prefix (for blocks: the issue that becomes blocked / hidden from ready)."),
-				"parent":    schemaString("Blocker issue id or prefix (for blocks: the issue that must close first)."),
+				"parent":    schemaString("Blocker issue id or prefix (for blocks: the issue that must close first). Required for internal edges; omit when using `external`."),
 				"edge_type": schemaEnum([]string{"blocks", "relates", "supersedes"}, "Edge type (default 'blocks')."),
+				"external":  schemaArrayOfString("Opaque external-tracker refs to attach to `child` as blocking external deps (e.g. \"linear:ENG-123\"). When set, `parent`/`edge_type` are ignored and one add_external_dep op is written per ref. Clear a ref via act_update's ext_rm."),
 				"no_commit": schemaBool("Skip auto-commit."),
 				"push":      schemaBool("Push after commit."),
 				"isolated":  schemaBool("Run without touching git state."),
-			}, []string{"child", "parent"}),
+			}, []string{"child"}),
 		},
 		{
 			Name:        "act_ready",
@@ -793,7 +793,6 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		AcceptAdd   []string  `json:"accept_add"`
 		AcceptRm    []int     `json:"accept_rm"`
 		DepRm       []string  `json:"dep_rm"`
-		ExtAdd      []string  `json:"ext_add"`
 		ExtRm       []string  `json:"ext_rm"`
 		Claim       bool      `json:"claim"`
 		Wait        bool      `json:"wait"`
@@ -833,7 +832,6 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		AcceptAdd:   args.AcceptAdd,
 		AcceptRm:    args.AcceptRm,
 		DepRm:       args.DepRm,
-		ExtAdd:      args.ExtAdd,
 		ExtRm:       args.ExtRm,
 		Claim:       args.Claim,
 		Wait:        args.Wait,
@@ -871,15 +869,27 @@ func (s *Server) callClose(raw json.RawMessage) (any, bool) {
 
 func (s *Server) callDepAdd(raw json.RawMessage) (any, bool) {
 	var args struct {
-		Child    string `json:"child"`
-		Parent   string `json:"parent"`
-		EdgeType string `json:"edge_type"`
-		NoCommit bool   `json:"no_commit"`
-		Push     bool   `json:"push"`
-		Isolated bool   `json:"isolated"`
+		Child    string   `json:"child"`
+		Parent   string   `json:"parent"`
+		EdgeType string   `json:"edge_type"`
+		External []string `json:"external"`
+		NoCommit bool     `json:"no_commit"`
+		Push     bool     `json:"push"`
+		Isolated bool     `json:"isolated"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
+	}
+	// External-blocker form (act-ce1427): attach opaque refs to `child`;
+	// parent/edge_type are ignored. Mirrors `act dep add <id> --external`.
+	if len(args.External) > 0 {
+		out, code := cli.RunDepAddExternal(s.repoRoot, args.Child, args.External, cli.DepAddOptions{
+			AsJSON:   true,
+			NoCommit: args.NoCommit,
+			Push:     args.Push,
+			Isolated: args.Isolated,
+		})
+		return out, code != 0
 	}
 	out, code := cli.RunDepAdd(s.repoRoot, cli.DepAddOptions{
 		Child:    args.Child,

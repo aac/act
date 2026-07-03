@@ -44,7 +44,7 @@ CLI when MCP is unavailable.
 | Get the commit marker | `commit_marker` field on `act_next` (no separate call) | `act show <id> --commit-marker` |
 | Close | `act_finish` (closes; pushes the close op to the `.act/` tracker remote, not your host commit) | `act finish <id>` (same) or `act close <id> --reason "<one-liner>"` |
 | File a follow-up | `act_create` | `act create "<title>" --type <t> --description ... --accept ...` |
-| Attach/clear external blocker | `ext_add`/`ext_rm` on `act_update` | `act update <id> --ext-add/--ext-rm "<ref>"` |
+| Attach/clear external blocker | `external` on `act_dep_add` / `ext_rm` on `act_update` | `act dep add <id> --external "<ref>"` / `act update <id> --ext-rm "<ref>"` |
 
 The MCP tools and the CLI verbs are equivalent: both interfaces expose the same two
 composed verbs. `act next` (= ready + claim + show) and `act finish` (= close, pushing the
@@ -155,11 +155,12 @@ hard requirement; a project can make it mandatory in its own `CLAUDE.md` if it w
 ## External dependencies
 
 When an issue is blocked on work in another tracker that act doesn't import — a Linear
-ticket, a GitHub issue elsewhere, a Jira card — attach a reference to it:
+ticket, a GitHub issue elsewhere, a Jira card — attach a reference with the same verb you
+use for internal blockers, `act dep add`:
 
 ```
-act update <id> --ext-add "linear:ENG-123"
-act update <id> --ext-add "gh:org/other-repo#42"
+act dep add <id> --external "linear:ENG-123"
+act dep add <id> --external "gh:org/other-repo#42"
 ```
 
 act stores the reference string as-is and doesn't try to interpret or follow it. An
@@ -171,10 +172,12 @@ upstream work lands:
 act update <id> --ext-rm "linear:ENG-123"
 ```
 
-Both add and remove are idempotent. In MCP sessions, use the `ext_add` / `ext_rm`
-arrays on `act_update`. Use `--ext-add`/`--ext-rm` for blocks in another tracker; use
-`act dep add` for blocks between two act issues. The two work together: an issue may
-carry both, and either one keeps it out of `act ready` until cleared.
+Both add and remove are idempotent. The surfaces are symmetric with internal blockers:
+`act dep add` adds the edge (`--blocked-by` for an act id, `--external` for a
+cross-tracker ref) and `act update` removes it (`--dep-rm` internal, `--ext-rm`
+external). In MCP sessions, pass the `external` array on `act_dep_add` and the `ext_rm`
+array on `act_update`. An issue may carry both internal and external blockers; either one
+keeps it out of `act ready` until cleared.
 
 ## Commit discipline
 

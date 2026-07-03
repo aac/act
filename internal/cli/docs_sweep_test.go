@@ -860,6 +860,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_MCP_DepAddDirectionExample",
 	},
 	{
+		// act-ce1427: external blockers are added via `act dep add --external`
+		// (unified with internal --blocked-by), removed via `act update
+		// --ext-rm`. The EXTERNAL DEPS help section documents the add form;
+		// TestDocClaim_BlockedByExtDep_ClaimBlocked exercises it at the
+		// subprocess boundary (it attaches a ref via `dep add --external`,
+		// then asserts the claim gate fires on the blocking ref).
+		name:         "act-help-dep-add-external",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act dep add <id> --external",
+		testName:     "TestDocClaim_BlockedByExtDep_ClaimBlocked",
+	},
+	{
 		name:         "mcp-show-direction-labels",
 		docFile:      "internal/mcp/server.go",
 		claimPattern: "lists the issues that block THIS issue",
