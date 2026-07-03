@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-03
+
+### Fixed
+- `act mcp` now resolves the host repo **per tool call** from the client's
+  workspace when one is supplied, instead of always using the server's process
+  cwd. Under Codex — which launches the plugin MCP server with cwd = the plugin
+  install dir and advertises no MCP `roots` capability — repo-relative tools
+  (`act_init`, `act_create`, …) were operating in the plugin cache directory
+  instead of the user's project. Codex's per-call workspace hint
+  (`_meta."x-codex-turn-metadata".workspaces`) is now honored. Claude Code and
+  the direct CLI are unaffected (they already resolved to the project).
+
 ## [0.4.0] - 2026-07-02
 
 ### Added
