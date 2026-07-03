@@ -41,6 +41,7 @@ CLI when MCP is unavailable.
 |---|---|---|
 | See the ready set (without claiming) | `act_ready` | `act ready` |
 | Claim the next issue | `act_next` (picks highest-priority unblocked issue, claims it, returns `id` + `commit_marker`; adds bounded backoff retry if a claim is lost to a racing writer) | `act next` (same composed pick + claim + show, but walks the ready candidates once with no sleep/backoff) or `act update --claim <id>` |
+| Release a claim (can't finish it) | `unclaim` on `act_update` | `act update --unclaim <id>` |
 | Get the commit marker | `commit_marker` field on `act_next` (no separate call) | `act show <id> --commit-marker` |
 | Close | `act_finish` (closes; pushes the close op to the `.act/` tracker remote, not your host commit) | `act finish <id>` (same) or `act close <id> --reason "<one-liner>"` |
 | File a follow-up | `act_create` | `act create "<title>" --type <t> --description ... --accept ...` |

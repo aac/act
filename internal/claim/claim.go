@@ -369,14 +369,16 @@ func singleAttempt(
 // winnerOnDisk walks rootOps/<issueID>/**/*.json, parses every op envelope,
 // and returns the (op_hash, assignee) of the winning claim op — the one
 // with the smallest (HLC.Wall, HLC.Logical, op_hash) tuple — within the
-// active claim window. A close op resets the active window; a subsequent
-// (non-existent in this codebase yet) reopen reopens it. While no reopen
-// op type is implemented here, we still respect close: any claim ops
-// strictly after the latest close are ignored as "not in the window".
+// active claim window.
 //
-// In practice we follow the simpler-but-equivalent rule: we collect all
-// claim ops with HLC strictly greater than the latest close's HLC (or all
-// claim ops if no close is present), then pick the smallest.
+// A "release" op resets the active window: close ends the issue, and unclaim
+// (act-086781) / reopen (act-e05c3f) return it to the pool. Only claim ops
+// with HLC strictly greater than the latest release are in-window. Without
+// this, the idempotent-reclaim short-circuit (Step 0) would still see a
+// released claim's assignee and treat a re-claim as a no-op, so a released or
+// reopened issue could never be re-claimed even though its folded status is
+// open. This keeps winner determination consistent with fold.applyUnclaim /
+// fold.applyReopen, which clear the claim high-water mark for the same reason.
 func winnerOnDisk(rootOps, issueID string) (string, string, error) {
 	type claimRec struct {
 		hlc      hlc.HLC
@@ -386,8 +388,8 @@ func winnerOnDisk(rootOps, issueID string) (string, string, error) {
 	}
 
 	var claims []claimRec
-	var latestClose hlc.HLC
-	haveClose := false
+	var latestRelease hlc.HLC
+	haveRelease := false
 
 	envelopes, err := loadIssueEnvelopes(rootOps, issueID)
 	if err != nil {
@@ -414,10 +416,12 @@ func winnerOnDisk(rootOps, issueID string) (string, string, error) {
 				hash8:    short,
 				assignee: p.Assignee,
 			})
-		case "close":
-			if !haveClose || latestClose.Less(env.HLC) {
-				latestClose = env.HLC
-				haveClose = true
+		case "close", "unclaim", "reopen":
+			// Any of these releases the active claim window: the next claim
+			// after it starts fresh (act-086781 / act-e05c3f).
+			if !haveRelease || latestRelease.Less(env.HLC) {
+				latestRelease = env.HLC
+				haveRelease = true
 			}
 		}
 	}
@@ -425,7 +429,7 @@ func winnerOnDisk(rootOps, issueID string) (string, string, error) {
 	// Filter claims to those within the active window.
 	var active []claimRec
 	for _, c := range claims {
-		if haveClose && !latestClose.Less(c.hlc) {
+		if haveRelease && !latestRelease.Less(c.hlc) {
 			continue
 		}
 		active = append(active, c)

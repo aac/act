@@ -512,6 +512,7 @@ func (s *Server) tools() []toolDescriptor {
 				"dep_rm":       schemaArrayOfString("Dep ids to remove."),
 				"ext_rm":       schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence). Attach refs via act_dep_add's `external` param."),
 				"claim":        schemaBool("Atomic claim mode."),
+				"unclaim":      schemaBool("Release a claim: return an in_progress issue to open and clear the assignee (reverses claim). Idempotent on a not-in_progress issue."),
 				"wait":         schemaBool("Wait for claim to free."),
 				"wait_timeout": schemaString("Wait timeout (Go duration string)."),
 				"no_commit":    schemaBool("Skip auto-commit."),
@@ -795,6 +796,7 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		DepRm       []string  `json:"dep_rm"`
 		ExtRm       []string  `json:"ext_rm"`
 		Claim       bool      `json:"claim"`
+		Unclaim     bool      `json:"unclaim"`
 		Wait        bool      `json:"wait"`
 		WaitTimeout string    `json:"wait_timeout"`
 		NoCommit    bool      `json:"no_commit"`
@@ -834,6 +836,7 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		DepRm:       args.DepRm,
 		ExtRm:       args.ExtRm,
 		Claim:       args.Claim,
+		Unclaim:     args.Unclaim,
 		Wait:        args.Wait,
 		WaitTimeout: wait,
 		Push:        args.Push,

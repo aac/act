@@ -92,6 +92,16 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ActHelpListsSubcommands",
 	},
 	{
+		// act update --unclaim releases a claim (act-086781): the help
+		// "Releasing a claim" block documents it; TestDocClaim_Unclaim_
+		// ReleasesToOpen exercises claim -> unclaim -> re-claim at the
+		// subprocess boundary.
+		name:         "act-help-unclaim-releases-claim",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act update --unclaim <id>",
+		testName:     "TestDocClaim_Unclaim_ReleasesToOpen",
+	},
+	{
 		// act blocks / blocked-by read-only block-graph queries (act-2e1070):
 		// `act help workflow` documents the bare-id-list affordance; the
 		// behavior is asserted at the subprocess boundary by

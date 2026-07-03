@@ -59,6 +59,7 @@ var ValidOpTypes = map[string]bool{
 	"remove_accept":       true,
 	"set_accept":          true,
 	"claim":               true,
+	"unclaim":             true,
 	"close":               true,
 	"reopen":              true,
 	"redact":              true, // legacy, parse-only; no writer or apply path

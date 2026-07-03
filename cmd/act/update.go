@@ -56,6 +56,7 @@ func runUpdate(args []string) int {
 	var extRmFlag stringSliceFlag
 	fs.Var(&extRmFlag, "ext-rm", "clear an opaque external-tracker ref (repeatable; idempotent on absence)")
 	claimFlag := fs.Bool("claim", false, "atomic claim protocol")
+	unclaimFlag := fs.Bool("unclaim", false, "release a claim: return an in_progress issue to open and clear the assignee (reverses --claim). Idempotent on a not-in_progress issue.")
 	forceFlag := fs.Bool("force", false, "with --claim: override open external dep gate (blocked_by_external_dep); emits a WARNING to stderr listing each bypassed dep — use only when the dep is resolved but --ext-rm hasn't fired yet")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
@@ -95,6 +96,7 @@ func runUpdate(args []string) int {
 		DepRm:       []string(depRmFlag),
 		ExtRm:       []string(extRmFlag),
 		Claim:       *claimFlag,
+		Unclaim:     *unclaimFlag,
 		Force:       *forceFlag,
 		Wait:        *wait,
 		WaitTimeout: *waitTimeout,

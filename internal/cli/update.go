@@ -59,6 +59,11 @@ type UpdateOptions struct {
 	// is the non-destructive remove/replace affordance.
 	AcceptRm []int
 	DepRm    []string
+	// Unclaim, when true, releases a claim: it writes one unclaim op,
+	// returning an in_progress issue to open and clearing the assignee
+	// (act-086781). Mutually exclusive with Claim. On a not-in_progress
+	// issue the op folds to a no-op (idempotent), same as ExtRm on absence.
+	Unclaim bool
 	// ExtRm is the list of opaque refs to clear. Each entry generates one
 	// remove_external_dep op. Clearing a not-present ref is a no-op — the
 	// orchestrator owns the lifecycle and may double-fire safely.
@@ -223,6 +228,14 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}, 2
 	}
 
+	// Step 2c.2: --claim and --unclaim are direct opposites (act-086781).
+	if opts.Claim && opts.Unclaim {
+		return UpdateErrorOutput{
+			Error:   "bad_flag",
+			Message: "act update: --claim and --unclaim are mutually exclusive",
+		}, 2
+	}
+
 	// Step 2d: --claim mutually-exclusive guard. Most field flags conflict
 	// with --claim because the claim protocol writes its own op type.
 	// --json, --push, --wait, --wait-timeout, --isolated, --no-commit, and
@@ -324,10 +337,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: non-claim mutation. We must have at least one mutating flag.
-	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 {
+	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
-			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, or --claim must be supplied",
+			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
 		}, 2
 	}
 
@@ -570,6 +583,15 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}, 2
 		}
 		if errOut, code := addOp("remove_external_dep", pl); code != 0 {
+			return errOut, code
+		}
+	}
+	// Unclaim: release a claim (in_progress → open). Like --ext-rm we do NOT
+	// pre-check the issue's status; the op is always written for the audit
+	// trail and the apply layer makes it idempotent (a no-op on a
+	// not-in_progress or closed issue). See fold.applyUnclaim (act-086781).
+	if opts.Unclaim {
+		if errOut, code := addOp("unclaim", op.UnclaimPayload{}); code != 0 {
 			return errOut, code
 		}
 	}

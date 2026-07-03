@@ -423,6 +423,7 @@ func TestValidatePayload_AllOpTypes(t *testing.T) {
 		{"remove_accept", `{"index":0}`},
 		{"set_accept", `{"criteria":["a","b"]}`},
 		{"claim", `{"assignee":"alice"}`},
+		{"unclaim", `{"reason":"cannot finish"}`},
 		{"close", `{"reason":"done"}`},
 		{"reopen", `{"reason":"regressed"}`},
 		{"import", `{"source_ref":"github:owner/repo#1"}`},

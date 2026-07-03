@@ -333,6 +333,15 @@ THE LOOP IN DETAIL
     assignee. 'act show <id>' is cheap; check it after claim if the
     work is expensive to redo.
 
+  Releasing a claim
+    $ act update --unclaim <id>
+    Reverses a claim: returns an in_progress issue to open and clears
+    the assignee, handing the ticket back to the ready pool. Use it when
+    you claimed work you can't finish — releasing is honest where closing
+    would falsely mark it done. Idempotent: unclaiming an issue that
+    isn't in_progress is a no-op. (Closed issues stay closed — reopen,
+    not unclaim, is the exit from closed.)
+
   Doing the work
     Implement, write tests, run them. The work commit's message must
     embed the issue's commit_marker as a trailer in the body so

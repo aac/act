@@ -284,6 +284,23 @@ func (p ClaimPayload) Validate() error {
 	return nil
 }
 
+// UnclaimPayload is the payload for op_type=unclaim — the release that
+// reverses a claim (in_progress → open), returning a ticket to the pool
+// when the claimant can't finish it (act-086781). It carries no fields:
+// unclaim targets the issue named by the envelope's IssueID and needs no
+// arguments. Reason is optional audit text, mirroring reopen.
+type UnclaimPayload struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// Validate implements the unclaim write-time rules.
+func (p UnclaimPayload) Validate() error {
+	if len(p.Reason) > 500 {
+		return fmt.Errorf("op: unclaim.reason length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Reason))
+	}
+	return nil
+}
+
 // ClosePayload is the payload for op_type=close.
 //
 // NoCode signals that this close legitimately produced no code change (a
@@ -462,6 +479,12 @@ func ValidatePayload(opType string, payload []byte) error {
 		var p ClosePayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("op: unmarshal close payload: %w", err)
+		}
+		return p.Validate()
+	case "unclaim":
+		var p UnclaimPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("op: unmarshal unclaim payload: %w", err)
 		}
 		return p.Validate()
 	case "reopen":

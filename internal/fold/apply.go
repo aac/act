@@ -83,6 +83,8 @@ func ApplyDispatch(opType string) ApplyFunc {
 		return applySetAccept
 	case "claim":
 		return applyClaim
+	case "unclaim":
+		return applyUnclaim
 	case "close":
 		return applyClose
 	case "reopen":
@@ -475,6 +477,58 @@ func applyClaim(state *IssueState, env op.Envelope, payload []byte, fullHash str
 	return nil
 }
 
+// applyUnclaim reverses a claim: it returns an in_progress issue to open and
+// clears the claim (assignee, claimed_at, and the keyClaimHLC high-water
+// mark). It is the release path for act-086781 — a claimant who can't finish
+// hands the ticket back to the pool without the dishonesty of closing it.
+//
+// Three invariants, mirroring applyClaim's discipline:
+//
+//  1. Closed is terminal: if the issue is closed, unclaim is a no-op no matter
+//     how the HLC compares. Close/reopen own the status field; unclaim must
+//     never resurrect a closed issue to open.
+//  2. Idempotent: unclaim only acts on an in_progress issue. On an open or
+//     never-claimed issue it is a no-op (the op file still exists as an audit
+//     record, but folds to no state change).
+//  3. It NEVER writes LastHLC["status"] — same reasoning as applyClaim
+//     (act-b7ad): status LWW is governed solely by close/reopen, so an
+//     out-of-order close with a smaller HLC than this unclaim must still win.
+//
+// The load-bearing subtlety is deleting keyClaimHLC. applyClaim is
+// earliest-HLC-wins, gated on keyClaimHLC; if unclaim left that stamp in
+// place, a later re-claim would be rejected as "not earlier than the prior
+// claim" and the released issue could never be re-claimed. Deleting the stamp
+// lets the next claim win fresh — the release is only useful if someone can
+// pick the ticket back up. Fold replays globally HLC-sorted (fold.sortOps), so
+// a [claim, unclaim, claim] sequence deterministically ends in_progress under
+// the second claimant, and [claim, unclaim] ends open.
+func applyUnclaim(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
+	var p op.UnclaimPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("unclaim: unmarshal: %w", err)
+	}
+	_ = p // reason is recorded in the op log; not persisted to state today.
+	// Invariant 1: closed is terminal.
+	if isClosed(state) {
+		return nil
+	}
+	// Invariant 2: only an in_progress issue can be released. Anything else
+	// (open, never-claimed) is a no-op.
+	if s, _ := state.Fields["status"].(string); s != "in_progress" {
+		return nil
+	}
+	state.Fields["status"] = "open"
+	// Invariant 3: intentionally NOT writing state.LastHLC["status"].
+	delete(state.Fields, "assignee")
+	delete(state.Fields, "claimed_at")
+	stamp := hlc.Stamp{HLC: env.HLC, Hash: fullHash}
+	state.LastHLC["assignee"] = stamp
+	state.LastHLC["claimed_at"] = stamp
+	// Release the claim high-water mark so a later claim can re-acquire.
+	delete(state.LastHLC, keyClaimHLC)
+	return nil
+}
+
 // applyClose sets status=closed plus closed_at, closed_reason, and the
 // closer's node_id (closed_by_node) for audit. Closed is terminal: the
 // only op that can move status away from "closed" is reopen. Close vs
@@ -569,9 +623,16 @@ func applyReopen(state *IssueState, env op.Envelope, payload []byte, fullHash st
 	state.LastHLC["closed_by_node"] = stamp
 	state.LastHLC["closed_no_code"] = stamp
 	// Reopen also drops claim state — the assignee is from a stale claim and
-	// the next claim op will write a fresh assignee/claimed_at pair.
+	// the next claim op will write a fresh assignee/claimed_at pair. Deleting
+	// keyClaimHLC is load-bearing for that promise: applyClaim is
+	// earliest-wins gated on it, so without this a post-reopen re-claim would
+	// be rejected as "not earlier than the prior claim" and the issue could
+	// never be re-claimed (act-e05c3f; same lifecycle fix as applyUnclaim).
 	delete(state.Fields, "claimed_at")
+	delete(state.Fields, "assignee")
 	state.LastHLC["claimed_at"] = stamp
+	state.LastHLC["assignee"] = stamp
+	delete(state.LastHLC, keyClaimHLC)
 	return nil
 }
 

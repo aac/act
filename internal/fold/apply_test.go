@@ -605,3 +605,128 @@ func TestApply_PropertyCloseClaimAnyOrderClosesOnce(t *testing.T) {
 	}
 	permute(nil, indices)
 }
+
+// --- unclaim (act-086781) ---------------------------------------------------
+
+// TestApply_UnclaimReleasesClaimToOpen: unclaim reverses a claim — status
+// returns to open, assignee is cleared, and the claim high-water mark is
+// deleted so the issue can be re-claimed.
+func TestApply_UnclaimReleasesClaimToOpen(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	claim := mkEnv(id, "claim", 50, 0, "11111111")
+	if err := applyClaim(st, claim, mustJSON(t, op.ClaimPayload{Assignee: "alice"}), testHash(claim)); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "in_progress" {
+		t.Fatalf("precondition: status=%v want in_progress", st.Fields["status"])
+	}
+	unc := mkEnv(id, "unclaim", 60, 0, "11111111")
+	if err := applyUnclaim(st, unc, mustJSON(t, op.UnclaimPayload{}), testHash(unc)); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "open" {
+		t.Fatalf("status after unclaim: %v want open", st.Fields["status"])
+	}
+	if v, ok := st.Fields["assignee"]; ok {
+		t.Fatalf("assignee should be cleared after unclaim, got %v", v)
+	}
+	if _, ok := st.LastHLC[keyClaimHLC]; ok {
+		t.Fatalf("keyClaimHLC must be deleted so a re-claim can win")
+	}
+}
+
+// TestApply_ReclaimAfterUnclaimSucceeds is the load-bearing regression guard:
+// after a release, a later-HLC claim must re-acquire the issue. This is
+// exactly the case that fails if applyUnclaim does not delete keyClaimHLC —
+// applyClaim is earliest-wins, so a later claim would be rejected as "not
+// earlier than the prior claim" and the released ticket could never be picked
+// back up (making unclaim useless).
+func TestApply_ReclaimAfterUnclaimSucceeds(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	c1 := mkEnv(id, "claim", 50, 0, "11111111")
+	if err := applyClaim(st, c1, mustJSON(t, op.ClaimPayload{Assignee: "alice"}), testHash(c1)); err != nil {
+		t.Fatal(err)
+	}
+	u := mkEnv(id, "unclaim", 60, 0, "11111111")
+	if err := applyUnclaim(st, u, mustJSON(t, op.UnclaimPayload{}), testHash(u)); err != nil {
+		t.Fatal(err)
+	}
+	c2 := mkEnv(id, "claim", 70, 0, "22222222")
+	if err := applyClaim(st, c2, mustJSON(t, op.ClaimPayload{Assignee: "bob"}), testHash(c2)); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "in_progress" {
+		t.Fatalf("status after re-claim: %v want in_progress", st.Fields["status"])
+	}
+	if st.Fields["assignee"] != "bob" {
+		t.Fatalf("assignee after re-claim: %v want bob", st.Fields["assignee"])
+	}
+}
+
+// TestApply_UnclaimDoesNotResurrectClosed: closed is terminal — an unclaim
+// with a later HLC than the close must not flip status back to open.
+func TestApply_UnclaimDoesNotResurrectClosed(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	cl := mkEnv(id, "close", 10, 0, "11111111")
+	if err := applyClose(st, cl, mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(cl)); err != nil {
+		t.Fatal(err)
+	}
+	u := mkEnv(id, "unclaim", 100, 0, "11111111")
+	if err := applyUnclaim(st, u, mustJSON(t, op.UnclaimPayload{}), testHash(u)); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "closed" {
+		t.Fatalf("closed must stay closed after unclaim: %v", st.Fields["status"])
+	}
+}
+
+// TestApply_UnclaimOnOpenIsNoop: unclaiming a never-claimed (open) issue is a
+// no-op, not an error, and leaves status open.
+func TestApply_UnclaimOnOpenIsNoop(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	u := mkEnv(id, "unclaim", 50, 0, "11111111")
+	if err := applyUnclaim(st, u, mustJSON(t, op.UnclaimPayload{}), testHash(u)); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "open" {
+		t.Fatalf("status after no-op unclaim: %v want open", st.Fields["status"])
+	}
+}
+
+// TestApply_ReclaimAfterReopen is a diagnostic for the sibling case: after a
+// close+reopen, a later-HLC claim must also re-acquire. reopen's docstring
+// promises it "drops claim state ... the next claim op will write a fresh
+// assignee", which only holds if reopen also clears keyClaimHLC.
+func TestApply_ReclaimAfterReopen(t *testing.T) {
+	id := "act-aaaa"
+	st := freshState(id)
+	runCreate(t, st, mkEnv(id, "create", 1, 0, "11111111"),
+		op.CreatePayload{Title: "x", Type: "task", Nonce: "00000000000000000000000000000000"})
+	c1 := mkEnv(id, "claim", 10, 0, "11111111")
+	if err := applyClaim(st, c1, mustJSON(t, op.ClaimPayload{Assignee: "alice"}), testHash(c1)); err != nil {
+		t.Fatal(err)
+	}
+	cl := mkEnv(id, "close", 20, 0, "11111111")
+	if err := applyClose(st, cl, mustJSON(t, op.ClosePayload{Reason: "done"}), testHash(cl)); err != nil {
+		t.Fatal(err)
+	}
+	ro := mkEnv(id, "reopen", 30, 0, "11111111")
+	if err := applyReopen(st, ro, mustJSON(t, op.ReopenPayload{Reason: "back"}), testHash(ro)); err != nil {
+		t.Fatal(err)
+	}
+	c2 := mkEnv(id, "claim", 40, 0, "22222222")
+	if err := applyClaim(st, c2, mustJSON(t, op.ClaimPayload{Assignee: "bob"}), testHash(c2)); err != nil {
+		t.Fatal(err)
+	}
+	if st.Fields["status"] != "in_progress" || st.Fields["assignee"] != "bob" {
+		t.Fatalf("re-claim after reopen failed: status=%v assignee=%v want in_progress/bob (reopen must clear keyClaimHLC)", st.Fields["status"], st.Fields["assignee"])
+	}
+}
