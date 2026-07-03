@@ -227,7 +227,5 @@ provides `state import` / `export` as the mechanism.
 
 ## Per-project overrides
 
-Project-specific rules live in the repo's `CLAUDE.md` (or `AGENTS.md`). That file is
-for deviations and rationale, not duplication of this skill. If a rule belongs in
-every project that uses act, it lives here; if it belongs in just one project, it
-lives in that project's `CLAUDE.md`.
+Project-specific rules live in the repo's `CLAUDE.md` (or `AGENTS.md`) — for per-project
+deviations and rationale, not duplication of this skill.
