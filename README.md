@@ -27,7 +27,7 @@ op-log to flag work that was committed but never closed.
 ## Quick start
 
 You don't run act as a daily driver yourself; you install the plugin and your agent drives
-it. In **Claude Code** (CLI or Desktop):
+it. In **Claude Code**:
 
 ```text
 /plugin marketplace add aac/act
@@ -73,17 +73,19 @@ across sessions and machines.
 
 ## Installing
 
-The plugin (Quick start above) is the canonical path and bundles everything. The full
-picture:
+Installing the plugin is the canonical path — it bundles the binary, the skill, and the
+MCP server. act is built for **Claude Code** and **Codex**, the two harnesses where the
+plugin and its MCP server work today:
 
-- **Claude Code (CLI or Desktop):** `/plugin marketplace add aac/act`, then
-  `/plugin install act@act`.
-- **Cowork / Claude Desktop:** Customize → plugins → Add marketplace, pointed at `aac/act`.
-  The bundled binary runs inside the sandbox — nothing else to set up.
+- **Claude Code:** `/plugin marketplace add aac/act`, then `/plugin install act@act`.
 - **Codex:** `codex plugin marketplace add aac/act`, then `codex plugin add act@act`. The
   Codex manifest points at the bundled skill and MCP server.
-- **Or point your agent at this repo** (`github.com/aac/act`) and let it install whatever
-  way fits its environment.
+- **No plugin manager?** Point your agent at this repo (`github.com/aac/act`) and let it
+  install whatever way fits its environment.
+
+Cowork, the Claude Desktop app, and claude.ai aren't supported hosts yet: they can't launch
+the plugin's MCP server the way the CLI harnesses do. Support for them is a planned
+addition, not a requirement for anything above.
 
 ## How agents use it
 
