@@ -189,22 +189,31 @@ var docClaimRegistry = []docClaim{
 	// the actual CLI verbs. Drift shape: someone reverts the skill to the
 	// MCP-only framing while the verbs still exist, re-misleading a CLI
 	// agent into a `git push` step that close already does itself.
+	//
+	// The skillmin -19% reduction (act-c4029d, 2026-07) reworded these
+	// three claims without changing what they assert; the substrings below
+	// are re-derived from the reduced wording. The composed-verb semantics
+	// now live in the MCP-vs-CLI loop table ("same composed pick + claim +
+	// show" for next; "`act finish <id>` (same) or `act close`" for finish),
+	// and the CLI/MCP-equivalence claim — which the reduction dropped as a
+	// redundant restatement in setup.md — is now pinned to its surviving
+	// copy in SKILL.md ("they behave identically").
 	{
 		name:         "skill-cli-next-verb",
 		docFile:      "skills/act/SKILL.md",
-		claimPattern: "`act next` (= ready + claim + show",
+		claimPattern: "`act next` (same composed pick + claim + show",
 		testName:     "TestDocClaim_Next_ClaimsAndShowsTopReady",
 	},
 	{
 		name:         "skill-cli-finish-verb",
 		docFile:      "skills/act/SKILL.md",
-		claimPattern: "`act finish` (= close, pushing the",
+		claimPattern: "`act finish <id>` (same) or `act close ",
 		testName:     "TestDocClaim_Finish_ClosesAndReportsClosed",
 	},
 	{
-		name:         "setup-cli-verbs-equivalent",
-		docFile:      "skills/act/references/setup.md",
-		claimPattern: "the MCP tools and the CLI verbs are equivalent",
+		name:         "skill-cli-verbs-equivalent",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "and they behave identically",
 		testName:     "TestDocClaim_Next_ClaimsAndShowsTopReady",
 	},
 	// close-pushes-itself / no-origin-skip (act-46b704, act-e9ce41): close
@@ -216,16 +225,22 @@ var docClaimRegistry = []docClaim{
 	// + close-op publication / status). Drift shape: a refactor that drops
 	// the in-close push (re-introducing a manual `git push`) or that errors
 	// a no-origin close would break the matching test.
+	//
+	// The skillmin -19% reduction (act-c4029d, 2026-07) reworded both skill
+	// claims without changing what they assert; substrings re-derived from
+	// the reduced step-4 wording ("there is no separate `git push` for the
+	// close op"; the no-origin branch now reads "it commits locally and
+	// skips the push").
 	{
 		name:         "skill-close-pushes-itself",
 		docFile:      "skills/act/SKILL.md",
-		claimPattern: "there is no separate `git push` step for the close op",
+		claimPattern: "there is no separate `git push` for the close op",
 		testName:     "TestDocClaim_Close_PushesOnRemoteNoSeparateGitPush",
 	},
 	{
 		name:         "skill-no-origin-skip-push",
 		docFile:      "skills/act/SKILL.md",
-		claimPattern: "close commits locally and skips the push",
+		claimPattern: "commits locally and skips the push",
 		testName:     "TestDocClaim_Close_NoOriginSkipsPushNoNetwork",
 	},
 	{

@@ -2,7 +2,7 @@
 
 Read this when bringing act into a new project, or when act isn't yet installed in your
 environment. Once a project is configured, none of this content needs to be in context —
-the main SKILL.md handles the per-iteration loop.
+SKILL.md handles the per-iteration loop.
 
 ## Finding (or installing) the binary
 
@@ -19,20 +19,15 @@ The skill always calls plain `act`. Find it in this order:
 
 If the project's `.mcp.json` wires the MCP tools (`act_next` / `act_finish` / …), prefer
 them over the CLI — they bundle loop steps into single calls and return `commit_marker`
-without a subprocess. But `act next` and `act finish` are real CLI verbs that compose the
-same loop; the MCP tools and the CLI verbs are equivalent. The MCP form additionally
-returns `commit_marker` without a subprocess.
-
-Run `act help` once at the start of a session to absorb the mechanics — it's the full
-command reference. This skill is the rules-and-conventions layer on top, and assumes
-you've read `act help` for the mechanics.
+without a subprocess. Run `act help` once at the start of a session for the full command
+reference; this file is the setup layer, SKILL.md the loop layer.
 
 ## A note on push permission prompts
 
 act pushes on every close, so concurrent agents see finished work immediately. If your
-agent harness asks for permission before running commands, that per-close `git push`
-may prompt for confirmation. Allowing it is a harness/permission-config concern, not an
-act setting — grant it wherever you configure your agent's permissions.
+agent harness asks for permission before running commands, that per-close `git push` may
+prompt for confirmation. Allowing it is a harness/permission-config concern, not an act
+setting — grant it wherever you configure your agent's permissions.
 
 ## Codex sandbox — `.act/` writability
 
