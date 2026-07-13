@@ -192,3 +192,7 @@ worktree is the caller's (e.g. an orchestrator's) decision — act just provides
 
 Project-specific rules live in the repo's `CLAUDE.md` (or `AGENTS.md`) — for per-project
 deviations and rationale, not duplication of this skill.
+
+### Interface with act only through its CLI/MCP ops
+
+Never create or edit `.act/` files directly — index and op-log consistency depend on going through the tool.
