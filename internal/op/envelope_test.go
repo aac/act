@@ -3,6 +3,7 @@ package op
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/aac/act/internal/hlc"
@@ -71,6 +72,78 @@ func TestValidate_Errors(t *testing.T) {
 			}
 			if !bytes.Contains([]byte(err.Error()), []byte(tc.wantSub)) {
 				t.Fatalf("Validate: %v, want substring %q", err, tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestValidate_UnknownOpTypeWrapsSentinel proves the strict Validate rejects an
+// unknown op_type with an error that matches ErrUnknownOpType via errors.Is —
+// the signal the fold reader uses to distinguish version skew from corruption.
+func TestValidate_UnknownOpTypeWrapsSentinel(t *testing.T) {
+	e := goodEnvelope()
+	e.OpType = "future_op"
+	err := e.Validate()
+	if err == nil {
+		t.Fatal("Validate: nil, want error for unknown op_type")
+	}
+	if !errors.Is(err, ErrUnknownOpType) {
+		t.Fatalf("Validate: %v, want errors.Is(ErrUnknownOpType)", err)
+	}
+}
+
+// TestUnmarshalTolerant_AcceptsUnknownOpType is the op-layer half of the
+// act-20e87c fix: the tolerant reader parses an op whose type this binary does
+// not know (forward-compat) while strict Unmarshal still rejects it.
+func TestUnmarshalTolerant_AcceptsUnknownOpType(t *testing.T) {
+	e := goodEnvelope()
+	e.OpType = "future_op"
+	b, err := e.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	if _, err := Unmarshal(b); !errors.Is(err, ErrUnknownOpType) {
+		t.Fatalf("strict Unmarshal: %v, want ErrUnknownOpType", err)
+	}
+
+	got, err := UnmarshalTolerant(b)
+	if err != nil {
+		t.Fatalf("UnmarshalTolerant: unexpected error on unknown op_type: %v", err)
+	}
+	if got.OpType != "future_op" {
+		t.Fatalf("UnmarshalTolerant OpType: got %q, want future_op", got.OpType)
+	}
+}
+
+// TestUnmarshalTolerant_StillRejectsRealCorruption proves tolerance is scoped to
+// op-type membership only: every other structural invariant still aborts, and a
+// wholly-empty op_type is rejected even in tolerant mode. Exercised against the
+// unexported validate(false) directly (same package) so the payload/id defects
+// are not laundered by a Marshal round-trip (nil payload -> "null" bytes).
+func TestUnmarshalTolerant_StillRejectsRealCorruption(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*Envelope)
+		wantSub string
+	}{
+		{"bad op_version", func(e *Envelope) { e.OpVersion = 2 }, "op_version"},
+		{"empty op_type", func(e *Envelope) { e.OpType = "" }, "op_type"},
+		{"bad issue_id", func(e *Envelope) { e.IssueID = "not-an-id" }, "issue_id"},
+		{"empty payload", func(e *Envelope) { e.Payload = nil }, "payload"},
+		{"bad node_id", func(e *Envelope) { e.NodeID = "ZZZZZZZZ" }, "node_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := goodEnvelope()
+			e.OpType = "future_op" // unknown type AND another defect
+			tc.mutate(&e)
+			err := e.validate(false)
+			if err == nil {
+				t.Fatalf("validate(false): nil, want error containing %q", tc.wantSub)
+			}
+			if !bytes.Contains([]byte(err.Error()), []byte(tc.wantSub)) {
+				t.Fatalf("validate(false): %v, want substring %q", err, tc.wantSub)
 			}
 		})
 	}

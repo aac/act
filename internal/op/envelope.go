@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -73,9 +74,29 @@ var (
 	nodeIDRe = regexp.MustCompile(`^[0-9a-f]{8}$`)
 )
 
-// Validate checks the structural invariants of the envelope. It does not
-// validate the payload contents (that is per-op-type, handled elsewhere).
+// ErrUnknownOpType is the sentinel returned (wrapped) by Validate when the
+// envelope is structurally sound in every respect except that its op_type is
+// not in ValidOpTypes. The fold reader distinguishes this case from genuine
+// corruption so a forward-compat op — one written by a newer act that defines
+// an op_type this binary hasn't learned — is skipped rather than aborting the
+// whole rebuild. Match it with errors.Is, not string comparison.
+var ErrUnknownOpType = errors.New("not a known op type")
+
+// Validate checks the structural invariants of the envelope, including that
+// op_type is a known type. It does not validate the payload contents (that is
+// per-op-type, handled elsewhere). This is the strict path used by every
+// writer; the fold reader uses the op-type-tolerant UnmarshalTolerant instead.
 func (e Envelope) Validate() error {
+	return e.validate(true)
+}
+
+// validate runs every structural invariant. When strictOpType is true an
+// unrecognised op_type is rejected (wrapping ErrUnknownOpType); when false the
+// op_type membership check is skipped (only a wholly-empty op_type is rejected)
+// so a newer-act op still parses. Every other invariant is enforced identically
+// in both modes, so tolerance is scoped precisely to op-type skew and never
+// masks real corruption (bad version, missing payload, malformed ids/node_id).
+func (e Envelope) validate(strictOpType bool) error {
 	if e.OpVersion != CurrentOpVersion {
 		return fmt.Errorf("op: op_version %d: want %d", e.OpVersion, CurrentOpVersion)
 	}
@@ -88,8 +109,12 @@ func (e Envelope) Validate() error {
 	if !semverRe.MatchString(e.WriterVersion) {
 		return fmt.Errorf("op: writer_version %q: not semver", e.WriterVersion)
 	}
-	if !ValidOpTypes[e.OpType] {
-		return fmt.Errorf("op: op_type %q: not a known op type", e.OpType)
+	if strictOpType {
+		if !ValidOpTypes[e.OpType] {
+			return fmt.Errorf("op: op_type %q: %w", e.OpType, ErrUnknownOpType)
+		}
+	} else if e.OpType == "" {
+		return fmt.Errorf("op: op_type is empty")
 	}
 	if !ids.IsValidID(e.IssueID) {
 		return fmt.Errorf("op: issue_id %q: not a valid id", e.IssueID)
@@ -121,14 +146,35 @@ func (e Envelope) Marshal() ([]byte, error) {
 	return canonicaljson.Marshal(generic)
 }
 
-// Unmarshal parses b as an envelope and validates it. It is the inverse of
-// Marshal for any envelope that round-trips through canonical JSON.
+// Unmarshal parses b as an envelope and validates it strictly (unknown op
+// types are rejected). It is the inverse of Marshal for any envelope that
+// round-trips through canonical JSON, and is the entry point every writer and
+// strict caller uses.
 func Unmarshal(b []byte) (Envelope, error) {
 	var e Envelope
 	if err := json.Unmarshal(b, &e); err != nil {
 		return Envelope{}, fmt.Errorf("op: unmarshal: %w", err)
 	}
 	if err := e.Validate(); err != nil {
+		return Envelope{}, err
+	}
+	return e, nil
+}
+
+// UnmarshalTolerant parses b as an envelope and validates every structural
+// invariant EXCEPT op-type membership. It is the fold reader's forward-compat
+// entry point: an op whose op_type this binary does not recognise (one written
+// by a newer act) still parses cleanly, so the fold can skip it — applyAll
+// already returns a nil dispatch for unknown types — instead of aborting the
+// whole rebuild. Every other corruption (bad version, empty payload, malformed
+// id/node_id, empty op_type) is still rejected. Writers must never use this;
+// they emit only known types and want the strict Unmarshal.
+func UnmarshalTolerant(b []byte) (Envelope, error) {
+	var e Envelope
+	if err := json.Unmarshal(b, &e); err != nil {
+		return Envelope{}, fmt.Errorf("op: unmarshal: %w", err)
+	}
+	if err := e.validate(false); err != nil {
 		return Envelope{}, err
 	}
 	return e, nil

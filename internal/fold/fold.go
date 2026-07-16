@@ -141,7 +141,16 @@ func discoverAndParse(rootOps, issueID string) ([]sortedOp, error) {
 		if rerr != nil {
 			return fmt.Errorf("fold: read %s: %w", path, rerr)
 		}
-		env, uerr := op.Unmarshal(body)
+		// Forward-compat: use the op-type-tolerant unmarshal here, NOT the
+		// strict op.Unmarshal. An op whose op_type this binary does not know
+		// (written by a newer act) must not abort the whole rebuild — it
+		// parses, flows through to applyAll, and is skipped there (nil
+		// dispatch), exactly like the "redact" legacy entry. Genuine
+		// corruption (bad version, empty payload, malformed ids) is still
+		// rejected. This mirrors applyAll's existing unknown-type tolerance,
+		// closing the asymmetry where apply skipped unknown types but parse
+		// aborted on them.
+		env, uerr := op.UnmarshalTolerant(body)
 		if uerr != nil {
 			return fmt.Errorf("fold: parse %s: %w", path, uerr)
 		}

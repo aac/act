@@ -183,6 +183,84 @@ func TestFold_TwoIssuesInterleaved(t *testing.T) {
 	}
 }
 
+// TestFold_UnknownOpTypeSkippedNotAborted is the regression guard for
+// act-20e87c: an op whose op_type this binary does not recognise (as if written
+// by a newer act) must be skipped, not abort the whole fold-for-rebuild. The
+// known op in the same issue still applies. Before the fix the fold parse layer
+// rejected the unknown type at op.Unmarshal and failed the entire rebuild.
+func TestFold_UnknownOpTypeSkippedNotAborted(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ops")
+	id := "act-eeee"
+
+	writeOp(t, root, env(id, "create", 1700000000000, 0, "11111111", `{"k":"v"}`))
+	writeOp(t, root, env(id, "future_op", 1700000001000, 0, "11111111", `{"anything":"x"}`))
+
+	res, err := Fold(root, StubDispatch)
+	if err != nil {
+		t.Fatalf("Fold: unexpected error on unknown op_type: %v", err)
+	}
+	if res.OpsConsumed != 1 {
+		t.Fatalf("OpsConsumed: got %d, want 1 (unknown op must be skipped)", res.OpsConsumed)
+	}
+	state, ok := res.Issues[id]
+	if !ok {
+		t.Fatalf("issue %q missing after fold", id)
+	}
+	if got := state.Fields["__last_op"]; got != "create" {
+		t.Fatalf("__last_op: got %v, want create (unknown op must not apply)", got)
+	}
+}
+
+// TestFold_IssueWithOnlyUnknownOpStillAppears guards the invariant that an
+// issue composed entirely of skipped (unknown/legacy) ops still materialises
+// with an empty state rather than vanishing — matching applyAll's documented
+// behavior for the legacy "redact" entry.
+func TestFold_IssueWithOnlyUnknownOpStillAppears(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ops")
+	id := "act-ffff"
+
+	writeOp(t, root, env(id, "future_op", 1700000000000, 0, "11111111", `{"z":1}`))
+
+	res, err := Fold(root, StubDispatch)
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if res.OpsConsumed != 0 {
+		t.Fatalf("OpsConsumed: got %d, want 0", res.OpsConsumed)
+	}
+	if _, ok := res.Issues[id]; !ok {
+		t.Fatalf("issue %q composed entirely of unknown ops should still appear", id)
+	}
+}
+
+// TestFold_CorruptEnvelopeStillAbortsDespiteUnknownType proves the tolerance is
+// scoped to op-type skew only: an op that is BOTH an unknown type and otherwise
+// corrupt (bad node_id) still aborts the fold — forward-compat must not become a
+// blanket pass on malformed files.
+func TestFold_CorruptEnvelopeStillAbortsDespiteUnknownType(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ops")
+
+	good := env("act-cccc", "create", 1700000000000, 0, "11111111", `{"k":"v"}`)
+	writeOp(t, root, good)
+
+	// Unknown op_type AND a malformed node_id. writeOpAtName is used because
+	// op.Filename would hash the (still-Marshalable) envelope fine; the point
+	// is the reader must reject it.
+	bad := env("act-cccc", "future_op", 1700000001000, 0, "ZZZZZZZZ", `{"x":1}`)
+	writeOpAtName(t, root, bad, "2026-01-01T00:00:00.000Z-deadbeef-future_op.json")
+
+	_, err := Fold(root, StubDispatch)
+	if err == nil {
+		t.Fatalf("Fold: nil error, want abort on corrupt (bad node_id) op despite unknown type")
+	}
+	if !strings.Contains(err.Error(), "node_id") {
+		t.Fatalf("error %q should reference the real corruption (node_id)", err.Error())
+	}
+}
+
 func TestFold_MalformedFileReturnsErrorWithPath(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "ops")
