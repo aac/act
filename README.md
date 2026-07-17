@@ -96,6 +96,33 @@ out. Most MCP tools mirror a CLI command (`act_ready`, `act_create`, `act_close`
 (ready + claim + show) and `act_finish` (close + push) have matching `act next` /
 `act finish` verbs like the rest.
 
+## If a write is interrupted
+
+Every act write auto-commits to the nested `.act/` git repo. If that commit is
+interrupted partway — the session dies, Ctrl-C lands mid-write, the disk fills,
+or a sandbox denies git a file operation — git can leave a stale lock file
+(`index.lock` or `HEAD.lock`) in `.act/.git/`. While a stale lock is present,
+every act write fails until the lock is removed. `act doctor` does not yet
+detect the lock itself, though it does catch the index divergence that tends
+to follow.
+
+Nothing is lost in this state: the failed write's op file is already on disk,
+and the op files — not the nested git history — are the source of truth.
+
+To recover:
+
+```console
+$ rm -f .act/.git/index.lock .act/.git/HEAD.lock
+$ git -C .act add ops && git -C .act commit -m "recover ops stranded by a stale lock"
+$ act doctor --fix
+```
+
+A note for sandboxed environments that gate file deletion (Claude's Cowork,
+for example): a denied delete can make git's own temp-file cleanup fail
+mid-commit and leave exactly this state — and the same denial then blocks
+removing the lock. Grant the sandbox's file-deletion permission for the
+project folder before pointing act at it.
+
 ## Status
 
 `act` is pre-v1 but battle-tested — the tracker behind a dozen-plus active projects, and it

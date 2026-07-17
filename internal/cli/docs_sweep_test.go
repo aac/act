@@ -1286,6 +1286,34 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "worker_state_not_found",
 		testName:     "TestDocClaim_StateExport_JSONNoActError",
 	},
+	// stale-lock-* (act-aef518; incident + defect in act-8fe6eb): an
+	// interrupted auto-commit leaves a stale index.lock/HEAD.lock in
+	// .act/.git/ and every act write then fails until the lock is removed —
+	// with no doctor detection. The README "If a write is interrupted"
+	// section documents the failure mode, the no-data-lost guarantee (the
+	// op file lands before the commit), and the recovery sequence. The
+	// asserting tests plant each lock and drive the binary as a subprocess,
+	// then execute the documented recovery verbatim. Drift shape: a write-
+	// path refactor stops failing loudly on a stale lock (or starts losing
+	// the op file), and the README's recovery advice silently rots.
+	{
+		name:         "stale-lock-wedges-writes",
+		docFile:      "README.md",
+		claimPattern: "every act write fails until the lock is removed",
+		testName:     "TestDocClaim_StaleLock_WedgesWrites",
+	},
+	{
+		name:         "stale-lock-op-survives",
+		docFile:      "README.md",
+		claimPattern: "op file is already on disk",
+		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
+	},
+	{
+		name:         "stale-lock-recovery-doctor-fix",
+		docFile:      "README.md",
+		claimPattern: "$ act doctor --fix",
+		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
