@@ -691,6 +691,13 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 					Details: details,
 				}, 1
 			}
+			if msg, details, isLock := StaleLockDetails(werr); isLock {
+				return UpdateErrorOutput{
+					Error:   ErrStaleGitLock,
+					Message: msg,
+					Details: details,
+				}, 1
+			}
 			return UpdateErrorOutput{
 				Error:   "write_failed",
 				Message: werr.Error(),

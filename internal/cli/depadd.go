@@ -369,6 +369,13 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 				Message: werr.Error(),
 			}, 2
 		}
+		if msg, details, isLock := StaleLockDetails(werr); isLock {
+			return DepAddErrorOutput{
+				Error:   ErrStaleGitLock,
+				Message: msg,
+				Details: details,
+			}, 1
+		}
 		return DepAddErrorOutput{
 			Error:   "write_failed",
 			Message: werr.Error(),
@@ -604,6 +611,9 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 		if werr != nil {
 			if errors.Is(werr, ErrInvalidFlags) {
 				return DepAddErrorOutput{Error: "bad_flag", Message: werr.Error()}, 2
+			}
+			if msg, details, isLock := StaleLockDetails(werr); isLock {
+				return DepAddErrorOutput{Error: ErrStaleGitLock, Message: msg, Details: details}, 1
 			}
 			return DepAddErrorOutput{Error: "write_failed", Message: werr.Error()}, 1
 		}

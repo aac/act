@@ -546,6 +546,13 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 				Details: details,
 			}, 1
 		}
+		if msg, details, isLock := StaleLockDetails(werr); isLock {
+			return CreateErrorOutput{
+				Error:   ErrStaleGitLock,
+				Message: msg,
+				Details: details,
+			}, 1
+		}
 		return CreateErrorOutput{
 			Error:   "write_failed",
 			Message: werr.Error(),
