@@ -1314,6 +1314,21 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "$ act doctor --fix",
 		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
 	},
+	{
+		// act update --status open releases a claim (act-bf9e9d): the flag
+		// help documents that --status open returns an in_progress issue to
+		// open and clears the assignee (routing to the unclaim op so the
+		// claim high-water mark is cleared and the issue re-enters `act
+		// ready`). Previously it wrote a no-op update_field{status:open} op
+		// that reported success while the projection stayed in_progress.
+		// TestDocClaim_StatusOpen_ReleasesClaim exercises claim -> --status
+		// open -> re-claim at the subprocess boundary. Drift shape: someone
+		// reverts --status open to the silent-no-op update_field path.
+		name:         "update-status-open-releases-claim",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "`--status open` releases a claim",
+		testName:     "TestDocClaim_StatusOpen_ReleasesClaim",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
