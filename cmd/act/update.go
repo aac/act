@@ -40,7 +40,7 @@ func (s *intSliceFlag) Set(v string) error {
 // distinguish "unset" from "explicitly cleared".
 func runUpdate(args []string) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
-	statusFlag := fs.String("status", "", "new status (open); 'blocked' is derived from blocked-by dep edges, not directly settable — use `act dep add --blocked-by <blocker-id>` to create the dep (issue status follows automatically); use --claim for in_progress; `act close` for closed")
+	statusFlag := fs.String("status", "", "new status: `--status open` releases a claim (returns an in_progress issue to open and clears the assignee, same as --unclaim; a closed issue needs `act reopen`, not this); 'blocked' is derived from blocked-by dep edges, not directly settable — use `act dep add --blocked-by <blocker-id>` to create the dep (issue status follows automatically); use --claim for in_progress; `act close` for closed")
 	priorityFlag := fs.Int("priority", -1, "new priority [0..3]")
 	assigneeFlag := fs.String("assignee", "", "new assignee (empty string clears)")
 	descriptionFlag := fs.String("description", "", "new description (empty string explicitly clears the existing description. Contrast 'act create --description \"\"' which is silently accepted as a no-op — see act-f2c7).")

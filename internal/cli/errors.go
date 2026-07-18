@@ -23,7 +23,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
+	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hooks"
 )
 
@@ -107,10 +109,17 @@ const (
 	ErrOpsReadFailed     = "ops_read_failed"
 	ErrPushFailed        = "push_failed"
 	ErrWriteFailed       = "write_failed"
-	ErrStatFailed        = "stat_failed"
-	ErrWalkFailed        = "walk_failed"
-	ErrNoRepo            = "no_repo"
-	ErrImportFailed      = "import_failed"
+	// ErrStaleGitLock is emitted by a write path when git failed because a
+	// stale lock file (index.lock/HEAD.lock) is wedging the nested .act/ repo
+	// (act-8fe6eb). It replaces the generic write_failed envelope for this
+	// failure class so the message carries the offending lock file and the
+	// recovery sequence rather than burying git's stderr. Details keys:
+	// `lock_file` (path relative to the host repo root) and `remedy`.
+	ErrStaleGitLock = "stale_git_lock"
+	ErrStatFailed   = "stat_failed"
+	ErrWalkFailed   = "walk_failed"
+	ErrNoRepo       = "no_repo"
+	ErrImportFailed = "import_failed"
 )
 
 // Envelope is the canonical JSON shape emitted on every non-zero exit
@@ -335,6 +344,34 @@ func HookFailureDetails(err error) (message string, details map[string]any, isHo
 		return fmt.Sprintf("hook exited %d", herr.Code), details, true
 	}
 	return fmt.Sprintf("hook exited %d:\n%s", herr.Code, excerpt), details, true
+}
+
+// StaleLockDetails extracts a structured, actionable envelope from an error
+// returned by a write path when git failed on a stale lock file (act-8fe6eb).
+// When err wraps *gitops.StaleGitLockError, it returns a message naming the
+// lock file and the recovery sequence, plus a details map (lock_file, remedy)
+// for JSON consumers. isStaleLock==false means err was not a stale-lock
+// failure; callers fall back to err.Error() under the write_failed code.
+//
+// The lock lives in the nested .act/ repo's git dir, whose canonical location
+// relative to the host repo root is `.act/.git/<lockfile>` — the same path the
+// README "If a write is interrupted" recovery documents.
+func StaleLockDetails(err error) (message string, details map[string]any, isStaleLock bool) {
+	var se *gitops.StaleGitLockError
+	if !errors.As(err, &se) {
+		return "", nil, false
+	}
+	lockRel := filepath.ToSlash(filepath.Join(".act", ".git", se.LockFile))
+	remedy := fmt.Sprintf(
+		"if no git process is running, remove it and recover the stranded ops: "+
+			"rm -f %s && git -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
+		lockRel)
+	message = fmt.Sprintf("stale git lock blocks the tracker: %s exists; %s", lockRel, remedy)
+	details = map[string]any{
+		"lock_file": lockRel,
+		"remedy":    remedy,
+	}
+	return message, details, true
 }
 
 // lastLines returns the last n lines of s, joined by '\n'. Trailing newlines

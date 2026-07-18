@@ -83,6 +83,7 @@ type DoctorErrorOutput struct {
 
 // allChecks is the fixed run order. Determinism matters for stable JSON output.
 var allChecks = []string{
+	"stale-git-lock",
 	"orphan-close",
 	"orphan-ops",
 	"dangling-deps",
@@ -170,6 +171,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 	var phase2Exit int
 	for _, name := range run {
 		switch name {
+		case "stale-git-lock":
+			findings = append(findings, checkStaleGitLock(paths)...)
 		case "orphan-close":
 			findings = append(findings, checkOrphanClose(repoRoot, foldRes)...)
 		case "orphan-ops":
@@ -471,6 +474,49 @@ func resolveMarkerToKnown(markerID string, known map[string]*fold.IssueState) (s
 // .act/ is a hard policy violation. The remedy recipe
 // `git rm -r --cached .act/` matches docs/coordination-plane-design.md
 // "Public-repo concerns" delta item 7. (act-37f7).
+// checkStaleGitLock detects a stale git lock file (index.lock / HEAD.lock) in
+// the nested .act/ repo's git dir — the wedge from act-8fe6eb. An interrupted
+// auto-commit (session death, Ctrl-C, a reaped worktree agent, a full disk, or
+// a sandbox that denied git's temp-file unlink) can leave one of these behind,
+// after which every act write fails until it's removed. doctor itself is
+// read-only (fold + index), so it still runs while the tracker is wedged —
+// which is exactly when an agent reaches for it. Before this check, doctor
+// caught the index divergence a stale lock tends to cause but never named the
+// lock that caused it (grep confirmed no HEAD.lock/index.lock reference in the
+// codebase); this closes that asymmetry.
+//
+// Conservative by design (no auto-remove, even under --fix): reliably proving
+// that no live git process holds the lock is not portable — a lock legitimately
+// held by a concurrent git operation is indistinguishable, from a stat, from a
+// stale one, and removing a live lock corrupts the in-flight operation. So the
+// finding names the file and the remedy and lets the agent remove it after
+// confirming no git process is running (the README recovery sequence). This is
+// the "explicit decision records why not" branch of the ticket's acceptance.
+func checkStaleGitLock(paths config.LayoutPaths) []Finding {
+	gitDir := filepath.Join(paths.Root, ".git")
+	var findings []Finding
+	// index.lock (git add / stage) and HEAD.lock (ref update at commit) are
+	// the two locks act's auto-commit path can strand. Checked in a fixed
+	// order for deterministic output.
+	for _, lock := range []string{"index.lock", "HEAD.lock"} {
+		lockPath := filepath.Join(gitDir, lock)
+		if _, err := os.Stat(lockPath); err != nil {
+			continue // absent (or unreadable) → not a finding
+		}
+		lockRel := filepath.ToSlash(filepath.Join(".act", ".git", lock))
+		findings = append(findings, Finding{
+			Check:    "stale-git-lock",
+			Severity: "error",
+			Message: fmt.Sprintf(
+				"stale git lock blocks the tracker: %s exists — every act write fails until it is removed. "+
+					"If no git process is running, remove it and recover the stranded ops: "+
+					"rm -f %s && git -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
+				lockRel, lockRel),
+		})
+	}
+	return findings
+}
+
 func checkGitignoreEffective(repoRoot string) []Finding {
 	// Only meaningful when the host repo has a .act/ dir at all. A
 	// repo without .act (CI bootstrap, doc-only fork) trivially

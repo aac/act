@@ -398,6 +398,49 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
+	// Step 6c: --status open releases a claim (act-bf9e9d). It routes to the
+	// unclaim op below (see op assembly) so an in_progress issue returns to
+	// open AND the claim high-water mark is cleared — without which the issue
+	// never reappears in `act ready` and can't be re-claimed. Historically
+	// --status open wrote an update_field{status:open} op that applyUpdateField
+	// silently ignores (status LWW is governed only by close/reopen), so the
+	// command reported success while the projection stayed in_progress: a stale
+	// claim that was unreleasable through the surface an agent naturally reaches
+	// for. Before routing to unclaim, reject the one transition unclaim can't
+	// make: `open` on a closed issue is a reopen (its own verb resets the
+	// close/claim HLCs); silently no-oping it — the old bug's sibling — would
+	// report success while nothing changed. Point the caller at `act reopen`.
+	if opts.Status != nil && *opts.Status == "open" {
+		idx, ierr := index.Open(paths.IndexDB)
+		if ierr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_open_failed",
+				Message: ierr.Error(),
+			}, 1
+		}
+		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+			_ = idx.Close()
+			return UpdateErrorOutput{
+				Error:   "index_rebuild_failed",
+				Message: rerr.Error(),
+			}, 1
+		}
+		row, gerr := idx.Get(full)
+		_ = idx.Close()
+		if gerr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_query_failed",
+				Message: gerr.Error(),
+			}, 1
+		}
+		if row.Status == "closed" {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --status open on the closed issue %s is not supported; use `act reopen %s`", full, full),
+			}, 2
+		}
+	}
+
 	var rows []index.Row
 	if len(opts.DepRm) > 0 {
 		idx, ierr := index.Open(paths.IndexDB)
@@ -476,9 +519,27 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// produces an update_field op (or add_accept / remove_dep for the
 	// list-mutating cases).
 	if opts.Status != nil {
-		val, _ := json.Marshal(*opts.Status)
-		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "status", Value: val}); code != 0 {
-			return errOut, code
+		if *opts.Status == "open" {
+			// `--status open` releases a claim: emit an unclaim op (the
+			// release primitive) rather than an update_field{status:open},
+			// which applyUpdateField ignores — the act-bf9e9d no-op bug. On an
+			// already-open issue the unclaim folds to a no-op, matching
+			// --unclaim's idempotent semantics; a closed issue was rejected in
+			// Step 6c above. Skip if --unclaim was also supplied so we don't
+			// write a redundant second unclaim op.
+			if !opts.Unclaim {
+				if errOut, code := addOp("unclaim", op.UnclaimPayload{}); code != 0 {
+					return errOut, code
+				}
+			}
+		} else {
+			// --status blocked: 'blocked' is derived from open blocks dep
+			// edges (gated in Step 6b). The update_field op is a projection
+			// no-op but kept for the audit record.
+			val, _ := json.Marshal(*opts.Status)
+			if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "status", Value: val}); code != 0 {
+				return errOut, code
+			}
 		}
 	}
 	if opts.Priority != nil {
@@ -626,6 +687,13 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			if msg, details, isHook := HookFailureDetails(werr); isHook {
 				return UpdateErrorOutput{
 					Error:   "hook_failed",
+					Message: msg,
+					Details: details,
+				}, 1
+			}
+			if msg, details, isLock := StaleLockDetails(werr); isLock {
+				return UpdateErrorOutput{
+					Error:   ErrStaleGitLock,
 					Message: msg,
 					Details: details,
 				}, 1

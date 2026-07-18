@@ -363,6 +363,13 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	// BuildOpCommitMessage form, identical to every other write op.
 	opPath, _, werr := op.ProbeAndWrite(paths.Ops, env, body, func() (func(), error) { return func() {}, nil })
 	if werr != nil {
+		if msg, details, isLock := StaleLockDetails(werr); isLock {
+			return CloseErrorOutput{
+				Error:   ErrStaleGitLock,
+				Message: msg,
+				Details: details,
+			}, 1
+		}
 		return CloseErrorOutput{
 			Error:   "write_failed",
 			Message: werr.Error(),

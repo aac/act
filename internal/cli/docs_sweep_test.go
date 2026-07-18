@@ -1314,6 +1314,46 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "$ act doctor --fix",
 		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
 	},
+	{
+		// stale-lock structured write error (act-8fe6eb): a write that fails
+		// on a stale git lock reports a first-class `stale_git_lock` error
+		// naming the lock file and the recovery sequence, not git's stderr
+		// buried in write_failed. README documents it; the subprocess test
+		// plants each lock and asserts the JSON envelope's error code +
+		// remedy. Drift shape: a write-path refactor drops the classification
+		// and the failure falls back to the opaque write_failed message.
+		name:         "stale-lock-structured-write-error",
+		docFile:      "README.md",
+		claimPattern: "structured `stale_git_lock` error",
+		testName:     "TestDocClaim_StaleLock_StructuredWriteError",
+	},
+	{
+		// stale-lock doctor detection (act-8fe6eb): `act doctor` detects a
+		// lingering index.lock/HEAD.lock as an error finding, closing the
+		// asymmetry where it caught the index divergence but not the lock
+		// that caused it. README documents it; the subprocess test plants
+		// each lock and asserts the finding. Drift shape: the check is
+		// dropped from allChecks and a wedged tracker goes undiagnosed.
+		name:         "stale-lock-doctor-detects",
+		docFile:      "README.md",
+		claimPattern: "detects the lingering lock",
+		testName:     "TestDocClaim_StaleLock_DoctorDetects",
+	},
+	{
+		// act update --status open releases a claim (act-bf9e9d): the flag
+		// help documents that --status open returns an in_progress issue to
+		// open and clears the assignee (routing to the unclaim op so the
+		// claim high-water mark is cleared and the issue re-enters `act
+		// ready`). Previously it wrote a no-op update_field{status:open} op
+		// that reported success while the projection stayed in_progress.
+		// TestDocClaim_StatusOpen_ReleasesClaim exercises claim -> --status
+		// open -> re-claim at the subprocess boundary. Drift shape: someone
+		// reverts --status open to the silent-no-op update_field path.
+		name:         "update-status-open-releases-claim",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "`--status open` releases a claim",
+		testName:     "TestDocClaim_StatusOpen_ReleasesClaim",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

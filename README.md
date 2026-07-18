@@ -102,9 +102,10 @@ Every act write auto-commits to the nested `.act/` git repo. If that commit is
 interrupted partway — the session dies, Ctrl-C lands mid-write, the disk fills,
 or a sandbox denies git a file operation — git can leave a stale lock file
 (`index.lock` or `HEAD.lock`) in `.act/.git/`. While a stale lock is present,
-every act write fails until the lock is removed. `act doctor` does not yet
-detect the lock itself, though it does catch the index divergence that tends
-to follow.
+every act write fails until the lock is removed. The failed write reports a
+structured `stale_git_lock` error naming the lock file and the recovery
+sequence, and `act doctor` detects the lingering lock as an error finding (it
+also catches the index divergence that tends to follow).
 
 Nothing is lost in this state: the failed write's op file is already on disk,
 and the op files — not the nested git history — are the source of truth.

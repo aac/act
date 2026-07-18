@@ -86,6 +86,11 @@ func runDoctor(args []string) int {
 			// remediation literal `'act doctor --fix-index'` without
 			// parsing the bracketed human-text output.
 			fmt.Fprintln(os.Stderr, f.Message)
+		case "stale-git-lock":
+			// act-8fe6eb: emit the bare message to stderr so a wedged agent
+			// tailing stderr sees the lock path and the recovery sequence
+			// without parsing the bracketed human-text output.
+			fmt.Fprintln(os.Stderr, f.Message)
 		}
 	}
 	return code

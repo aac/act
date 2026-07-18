@@ -273,8 +273,13 @@ func (g *GitOps) run(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("git %s: %w (stderr: %s)",
+		wrapped := fmt.Errorf("git %s: %w (stderr: %s)",
 			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		// A stale index.lock/HEAD.lock collision is recognised and re-wrapped
+		// as *StaleGitLockError so the write helpers can surface a first-class,
+		// structured remedy instead of burying git's stderr in write_failed
+		// (act-8fe6eb).
+		return stdout.String(), wrapIfStaleLock(wrapped)
 	}
 	return stdout.String(), nil
 }
