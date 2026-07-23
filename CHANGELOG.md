@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-22
+
+### Fixed
+- `act update --status open` now honestly releases a claim instead of silently
+  no-opping. A stale `in_progress` claim is released **and** the claim
+  high-water mark is cleared, so the issue re-enters `ready` and can be
+  re-claimed. `closed → open` via `--status` is now rejected with a pointer to
+  `act reopen` rather than silently doing nothing.
+- Git stale-lock wedges are detected and reported clearly. A lingering
+  `index.lock` / `HEAD.lock` left by a crashed process made write commands fail
+  opaquely; gitops now recognizes git's stale-lock stderr and returns a typed
+  `stale_git_lock` envelope (lock path + recovery steps) from every write
+  command, and a new read-only `act doctor` check flags a lingering lock with
+  the remedy. The lock is never auto-removed — even under `--fix` — because lock
+  liveness isn't portably provable.
+- Fold tolerates unknown `op_type`s on the read path. An `.act/ops` tree
+  containing an op written by a newer `act` failed the entire fold-for-rebuild
+  at the parse layer, bricking `act list`, state export, and
+  `doctor --fix-index`. Unknown types now flow through and are skipped (matching
+  the apply path's existing tolerance) while every other corruption still
+  aborts — forward-compatibility for a tracker touched by a newer binary.
+
 ## [0.4.1] - 2026-07-03
 
 ### Fixed
@@ -218,6 +240,7 @@ Initial release.
 - Priority 0 silently coerced to default in `act create`
 - Canonical JSON `json.RawMessage` pass-through corrected
 
-[Unreleased]: https://github.com/aac/act/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/aac/act/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/aac/act/compare/v0.4.1...v0.4.2
 [0.2.0]: https://github.com/aac/act/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aac/act/releases/tag/v0.1.0
