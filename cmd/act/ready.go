@@ -37,6 +37,12 @@ func runReady(args []string) int {
 		emitBadFlag(*asJSON, "act ready: --as requires --mine")
 		return 2
 	}
+	// `act ready` is a read-only query taking no positionals; a stray one
+	// is most often an id the caller meant to scope with --under
+	// (act-a79d66).
+	if rejectExtraPositionals("act ready", fs, 0, *asJSON, "act ready takes no positional arguments; to scope to a subtree use `act ready --under <id>`") {
+		return 2
+	}
 
 	root, err := findRepoRoot()
 	if err != nil {

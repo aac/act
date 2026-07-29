@@ -646,15 +646,18 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act list`
 
-**Synopsis:** `act list [--status X] [--assignee Y] [--type T] [--json] [--limit N] [--sort field]`
+**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--json] [--limit N] [--sort field]`
 
 **Flags:**
-- `--status X` (csv string, e.g. `open,in_progress`). Default: all non-closed.
+- `--status X` (csv string, e.g. `open,in_progress`). Default: all non-closed — the working set. `--status closed` reaches finished work.
+- `--all` (bool). Lists every status, closed included. Mutually exclusive with `--status` (the pair is exit 2).
 - `--assignee Y` (string, exact match). Default: any.
 - `--type T` (enum). Default: any.
 - `--json` (bool).
 - `--limit N` (int, default 200).
 - `--sort field` (enum priority|created_at|closed_at|id, optionally suffixed `:asc`/`:desc`). Default sort order: priority asc, then created_at desc. Tie-breaker: id asc.
+
+**Ordering:** closed issues sort after every non-closed issue. This grouping is applied ahead of `--sort` and is not overridable — a listing that mixes statuses must not bury live work under finished work. `--sort` orders the rows within each group.
 
 **Behavior:** Reads from `.act/index.db` after a fold-checkpoint validation. Index is rebuilt automatically if the tree-hash mismatches.
 
@@ -669,7 +672,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 **Exit codes:** 0; 2 on bad flag; 3 if `.act/` missing; 4 on version skew during rebuild.
 
-**Edge cases:** empty result returns `count: 0` and exit 0; `--limit 0` or unknown sort field → exit 2.
+**Edge cases:** empty result returns `count: 0` and exit 0; unknown sort field or `--all` combined with `--status` → exit 2. `--limit 0` means "no limit" (every match).
 
 ---
 

@@ -36,6 +36,26 @@ type UpdateOptions struct {
 	Assignee    *string
 	Description *string
 
+	// DescriptionAppend, when non-nil, appends its text to the issue's
+	// CURRENT description rather than replacing it (act-a79d66). act
+	// resolves the existing description server-side and writes a single
+	// update_field{description} op carrying the concatenation, so the
+	// caller does not have to read-modify-write the whole body — the
+	// round-trip that made `act update --description-file` an unnatural
+	// home for a one-line annotation, and that pushed two agents into
+	// `act log <id> "message"` instead.
+	//
+	// Additive sibling to Description, mirroring how AcceptAdd sits
+	// beside Accept. Mutually exclusive with Description: "replace with
+	// X" and "append X" are contradictory instructions, so the pair is
+	// rejected rather than silently ordered.
+	//
+	// Separator: exactly one blank line between the existing body and
+	// the appended text, so successive appends read as paragraphs. An
+	// empty existing description yields the appended text alone (no
+	// leading blank lines).
+	DescriptionAppend *string
+
 	// Repeatables.
 	//
 	// Accept, when non-nil, REPLACES the acceptance list with exactly these
@@ -196,6 +216,15 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}, 2
 	}
 
+	// Step 2a.2: --description and --description-append are contradictory
+	// (replace vs. extend). Reject rather than pick an order (act-a79d66).
+	if opts.Description != nil && opts.DescriptionAppend != nil {
+		return UpdateErrorOutput{
+			Error:   "bad_flag",
+			Message: "act update: --description and --description-append are mutually exclusive",
+		}, 2
+	}
+
 	// Step 2b: --status closed is exit 2 unconditionally per §5.C.2; check
 	// before id-resolution so the failure is independent of repo state.
 	if opts.Status != nil {
@@ -253,6 +282,9 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 		if opts.Description != nil {
 			conflicts = append(conflicts, "--description")
+		}
+		if opts.DescriptionAppend != nil {
+			conflicts = append(conflicts, "--description-append")
 		}
 		if opts.AcceptSet {
 			conflicts = append(conflicts, "--accept")
@@ -337,10 +369,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: non-claim mutation. We must have at least one mutating flag.
-	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
+	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && opts.DescriptionAppend == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
-			Message: "act update: at least one of --status, --priority, --assignee, --description, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
+			Message: "act update: at least one of --status, --priority, --assignee, --description, --description-append, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
 		}, 2
 	}
 
@@ -466,6 +498,45 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}, 1
 		}
 		rows = all
+	}
+
+	// Step 6d: resolve --description-append against the CURRENT description
+	// (act-a79d66). This is the read half of the read-modify-write that the
+	// caller would otherwise have to perform with --description-file; doing
+	// it here means the append is one command instead of a round-trip, and
+	// the caller never has to hold the whole body.
+	//
+	// Note this is a read-then-write against the folded snapshot, not an
+	// atomic append: two concurrent appends to the same issue resolve
+	// last-write-wins on the description field, same as two concurrent
+	// --description writes. That matches the existing update_field
+	// semantics rather than inventing a new concurrency contract; a true
+	// append-only annotation stream would need its own op type.
+	if opts.DescriptionAppend != nil {
+		idx, ierr := index.Open(paths.IndexDB)
+		if ierr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_open_failed",
+				Message: ierr.Error(),
+			}, 1
+		}
+		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+			_ = idx.Close()
+			return UpdateErrorOutput{
+				Error:   "index_rebuild_failed",
+				Message: rerr.Error(),
+			}, 1
+		}
+		row, gerr := idx.Get(full)
+		_ = idx.Close()
+		if gerr != nil {
+			return UpdateErrorOutput{
+				Error:   "index_query_failed",
+				Message: gerr.Error(),
+			}, 1
+		}
+		merged := appendDescription(row.Description, *opts.DescriptionAppend)
+		opts.Description = &merged
 	}
 
 	// Step 7: assemble per-flag op envelopes. Each non-empty mutating flag
@@ -998,4 +1069,20 @@ func FormatUpdateClaimHuman(res UpdateClaimResult) string {
 		return fmt.Sprintf("Claimed %s (winner=%s)\n", res.ID, res.Winner)
 	}
 	return fmt.Sprintf("Lost claim race for %s (winner=%s)\n", res.ID, res.Winner)
+}
+
+// appendDescription joins an existing description and an appended
+// fragment with exactly one blank line between them (act-a79d66).
+//
+// Trailing whitespace on the existing body is trimmed first so repeated
+// appends produce a uniform one-blank-line separator rather than an
+// accumulating gap that depends on whether the previous author ended
+// their text with a newline. An empty (or whitespace-only) existing
+// description yields the fragment alone, with no leading blank lines.
+func appendDescription(existing, addition string) string {
+	existing = strings.TrimRight(existing, "\n\r\t ")
+	if existing == "" {
+		return addition
+	}
+	return existing + "\n\n" + addition
 }

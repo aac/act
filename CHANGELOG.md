@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING: `act list` now lists the working set — closed issues are
+  excluded from the default listing.** A tracker accumulates closed work
+  indefinitely; in the repo that surfaced this, 264 of 268 issues were
+  closed, so a default listing was almost entirely finished work and the
+  200-row cap spent its whole budget on it — open work, the only thing
+  anyone lists a tracker to find, fell off the end. `act list` (and the
+  `act_list` MCP tool) now default to `open,in_progress,blocked`, matching
+  what `docs/spec.md` has always specified ("Default: all non-closed") and
+  what `gh issue list` does.
+  - Closed issues stay one flag away: `act list --status closed` for
+    finished work, `act list --all` for every status. `--all` and
+    `--status` together are rejected with exit 2 rather than one silently
+    winning.
+  - When closed rows appear alongside live work (`--all`, or an explicit
+    `--status open,closed`), they sort **after** every non-closed row.
+    The grouping is applied ahead of `--sort` and is not overridable —
+    the default priority-asc sort put a closed p0 above an open p3, which
+    is exactly the burial this change exists to prevent. `--sort` still
+    orders rows within each group.
+  - Migration: anything that relied on `act list` returning closed rows
+    needs `--all` or `--status closed`. Scripts that were filtering the
+    default listing down to open work (`act list | grep open`) keep
+    working and get more accurate — that filter was the incident.
+
+### Added
+- `act list --all` and the matching `all` parameter on the `act_list` MCP
+  tool.
+- `act update <id> --description-append "<note>"` appends to an issue's
+  existing description instead of replacing it, resolving the current body
+  server-side. `act_update` advertises the matching `description_append`,
+  and its `description` parameter now says it REPLACES so the pair is
+  distinguishable. Before this, the only append path was a read-modify-write
+  through `--description-file` — which is why agents reached for `act log`
+  to leave notes.
+
+### Fixed
+- A capped `act list` says so. The 200-row cap silently truncated, so a
+  caller piping the listing into a filter got a confident under-count; one
+  such count closed a p1 ticket on a wrong number. A capped listing now
+  prints a WARNING to **stderr** (not stdout — the incident was a pipe,
+  which swallows a stdout trailer) naming how many issues were hidden, and
+  `--limit 0` means "no limit" instead of exiting 2. JSON output gains
+  `total` (pre-limit match count) and `truncated`, both always present, so
+  a consumer tests one boolean instead of inferring truncation from
+  `count == limit` — which is wrong exactly when the match count equals the
+  limit.
+- Read-only verbs (`log`, `show`, `list`, `ready`, `mine`, `search`) reject
+  an unexpected positional with exit 2 and a hint naming the command the
+  caller wanted, instead of exiting 0 having dropped it. `act log <id>
+  "message"` silently swallowed the message: four annotations across three
+  trackers were lost that way with no error anywhere. Write verbs are
+  deliberately unchanged.
+
 ## [0.4.2] - 2026-07-22
 
 ### Fixed

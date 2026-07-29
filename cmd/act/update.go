@@ -45,6 +45,7 @@ func runUpdate(args []string) int {
 	assigneeFlag := fs.String("assignee", "", "new assignee (empty string clears)")
 	descriptionFlag := fs.String("description", "", "new description (empty string explicitly clears the existing description. Contrast 'act create --description \"\"' which is silently accepted as a no-op — see act-f2c7).")
 	descriptionFileFlag := fs.String("description-file", "", "read new description from file (UTF-8); use - for stdin")
+	descriptionAppendFlag := fs.String("description-append", "", "append this text to the existing description instead of replacing it, separated by a blank line. This is the note-append path: `act update <id> --description-append \"...\"` annotates an issue in one command, with no read-modify-write of the whole body. Mutually exclusive with --description and --description-file.")
 	var acceptFlag stringSliceFlag
 	fs.Var(&acceptFlag, "accept", "replace the acceptance criteria with exactly these (repeatable; the set REPLACES any prior criteria, it does not append). Supplying --accept with no value clears all criteria. Use --accept-add to append, --accept-rm to remove one.")
 	var acceptAddFlag stringSliceFlag
@@ -129,6 +130,14 @@ func runUpdate(args []string) int {
 		emitBadFlag(*asJSON, "act update: --description and --description-file are mutually exclusive")
 		return 2
 	}
+	// --description-append extends; the other two replace. Any pairing is
+	// a contradiction, so reject at the CLI layer before any I/O
+	// (act-a79d66). The --description/--description-append pair is also
+	// guarded in RunUpdate for non-CLI callers (MCP, tests).
+	if visited["description-append"] && (visited["description"] || visited["description-file"]) {
+		emitBadFlag(*asJSON, "act update: --description-append is mutually exclusive with --description and --description-file")
+		return 2
+	}
 	if visited["description"] {
 		d := *descriptionFlag
 		opts.Description = &d
@@ -141,6 +150,10 @@ func runUpdate(args []string) int {
 			return code
 		}
 		opts.Description = &body
+	}
+	if visited["description-append"] {
+		a := *descriptionAppendFlag
+		opts.DescriptionAppend = &a
 	}
 
 	root, err := findRepoRoot()

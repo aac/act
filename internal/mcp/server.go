@@ -558,9 +558,10 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_list",
-			Description: "List issues filtered/sorted by the given options.",
+			Description: "List issues filtered/sorted by the given options. By DEFAULT this is the working set — open, in_progress and blocked — and closed issues are excluded; pass status=\"closed\" or all=true to reach them.",
 			InputSchema: schemaObject(map[string]any{
-				"status":   schemaString("Comma-separated status filter."),
+				"status":   schemaString("Comma-separated status filter. Omit for the default working set (everything except closed)."),
+				"all":      schemaBool("Include closed issues too; closed rows sort after everything still open. Mutually exclusive with status."),
 				"assignee": schemaString("Exact-match assignee filter."),
 				"type":     schemaString("Issue type filter (task|bug|epic|chore)."),
 				"limit":    schemaInteger("Maximum issues to return (default 200)."),
@@ -579,24 +580,25 @@ func (s *Server) tools() []toolDescriptor {
 			Name:        "act_update",
 			Description: "Escape hatch: update an issue's fields, accept criteria, or claim. Prefer act_next for the claim flow.",
 			InputSchema: schemaObject(map[string]any{
-				"id":           schemaString("Issue id or prefix."),
-				"status":       schemaString("New status (open|in_progress|blocked|closed)."),
-				"priority":     schemaInteger("New priority (0-3)."),
-				"assignee":     schemaString("New assignee (empty string clears)."),
-				"description":  schemaString("New description."),
-				"accept":       schemaArrayOfString("Replace the acceptance criteria with exactly this list (the set REPLACES any prior criteria, it does not append). An empty array clears all criteria. Use accept_add to append, accept_rm to remove by index."),
-				"accept_add":   schemaArrayOfString("Append these criteria to the existing acceptance list (additive — contrast accept which replaces)."),
-				"accept_rm":    schemaArrayOfInteger("Remove acceptance criteria by zero-based index against the current list; out-of-range is a no-op."),
-				"dep_rm":       schemaArrayOfString("Dep ids to remove."),
-				"ext_rm":       schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence). Attach refs via act_dep_add's `external` param."),
-				"claim":        schemaBool("Atomic claim mode."),
-				"unclaim":      schemaBool("Release a claim: return an in_progress issue to open and clear the assignee (reverses claim). Idempotent on a not-in_progress issue."),
-				"wait":         schemaBool("Wait for claim to free."),
-				"wait_timeout": schemaString("Wait timeout (Go duration string)."),
-				"no_commit":    schemaBool("Skip auto-commit."),
-				"push":         schemaBool("Push after commit."),
-				"isolated":     schemaBool("Run without touching git state."),
-				"verify":       schemaBool("Run integrity check after write."),
+				"id":                 schemaString("Issue id or prefix."),
+				"status":             schemaString("New status (open|in_progress|blocked|closed)."),
+				"priority":           schemaInteger("New priority (0-3)."),
+				"assignee":           schemaString("New assignee (empty string clears)."),
+				"description":        schemaString("New description (REPLACES the existing body). Use description_append to add to it."),
+				"description_append": schemaString("Append this text to the existing description, separated by a blank line, instead of replacing it. The note-append path: annotates an issue without a read-modify-write of the whole body. Mutually exclusive with description."),
+				"accept":             schemaArrayOfString("Replace the acceptance criteria with exactly this list (the set REPLACES any prior criteria, it does not append). An empty array clears all criteria. Use accept_add to append, accept_rm to remove by index."),
+				"accept_add":         schemaArrayOfString("Append these criteria to the existing acceptance list (additive — contrast accept which replaces)."),
+				"accept_rm":          schemaArrayOfInteger("Remove acceptance criteria by zero-based index against the current list; out-of-range is a no-op."),
+				"dep_rm":             schemaArrayOfString("Dep ids to remove."),
+				"ext_rm":             schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence). Attach refs via act_dep_add's `external` param."),
+				"claim":              schemaBool("Atomic claim mode."),
+				"unclaim":            schemaBool("Release a claim: return an in_progress issue to open and clear the assignee (reverses claim). Idempotent on a not-in_progress issue."),
+				"wait":               schemaBool("Wait for claim to free."),
+				"wait_timeout":       schemaString("Wait timeout (Go duration string)."),
+				"no_commit":          schemaBool("Skip auto-commit."),
+				"push":               schemaBool("Push after commit."),
+				"isolated":           schemaBool("Run without touching git state."),
+				"verify":             schemaBool("Run integrity check after write."),
 			}, []string{"id"}),
 		},
 		{
@@ -817,6 +819,7 @@ func (s *Server) callCreate(raw json.RawMessage) (any, bool) {
 func (s *Server) callList(raw json.RawMessage) (any, bool) {
 	var args struct {
 		Status   string `json:"status"`
+		All      bool   `json:"all"`
 		Assignee string `json:"assignee"`
 		Type     string `json:"type"`
 		Limit    int    `json:"limit"`
@@ -830,6 +833,7 @@ func (s *Server) callList(raw json.RawMessage) (any, bool) {
 	}
 	out, code := cli.RunList(s.repoRoot, cli.ListOptions{
 		Status:   args.Status,
+		All:      args.All,
 		Assignee: args.Assignee,
 		Type:     args.Type,
 		Limit:    args.Limit,
@@ -863,24 +867,25 @@ func (s *Server) callShow(raw json.RawMessage) (any, bool) {
 
 func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 	var args struct {
-		ID          string    `json:"id"`
-		Status      *string   `json:"status"`
-		Priority    *int      `json:"priority"`
-		Assignee    *string   `json:"assignee"`
-		Description *string   `json:"description"`
-		Accept      *[]string `json:"accept"`
-		AcceptAdd   []string  `json:"accept_add"`
-		AcceptRm    []int     `json:"accept_rm"`
-		DepRm       []string  `json:"dep_rm"`
-		ExtRm       []string  `json:"ext_rm"`
-		Claim       bool      `json:"claim"`
-		Unclaim     bool      `json:"unclaim"`
-		Wait        bool      `json:"wait"`
-		WaitTimeout string    `json:"wait_timeout"`
-		NoCommit    bool      `json:"no_commit"`
-		Push        bool      `json:"push"`
-		Isolated    bool      `json:"isolated"`
-		Verify      bool      `json:"verify"`
+		ID                string    `json:"id"`
+		Status            *string   `json:"status"`
+		Priority          *int      `json:"priority"`
+		Assignee          *string   `json:"assignee"`
+		Description       *string   `json:"description"`
+		DescriptionAppend *string   `json:"description_append"`
+		Accept            *[]string `json:"accept"`
+		AcceptAdd         []string  `json:"accept_add"`
+		AcceptRm          []int     `json:"accept_rm"`
+		DepRm             []string  `json:"dep_rm"`
+		ExtRm             []string  `json:"ext_rm"`
+		Claim             bool      `json:"claim"`
+		Unclaim           bool      `json:"unclaim"`
+		Wait              bool      `json:"wait"`
+		WaitTimeout       string    `json:"wait_timeout"`
+		NoCommit          bool      `json:"no_commit"`
+		Push              bool      `json:"push"`
+		Isolated          bool      `json:"isolated"`
+		Verify            bool      `json:"verify"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
@@ -907,21 +912,24 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		Priority:    args.Priority,
 		Assignee:    args.Assignee,
 		Description: args.Description,
-		Accept:      accept,
-		AcceptSet:   acceptSet,
-		AcceptAdd:   args.AcceptAdd,
-		AcceptRm:    args.AcceptRm,
-		DepRm:       args.DepRm,
-		ExtRm:       args.ExtRm,
-		Claim:       args.Claim,
-		Unclaim:     args.Unclaim,
-		Wait:        args.Wait,
-		WaitTimeout: wait,
-		Push:        args.Push,
-		NoCommit:    args.NoCommit,
-		Isolated:    args.Isolated,
-		AsJSON:      true,
-		Verify:      args.Verify,
+		// RunUpdate rejects description + description_append together, so
+		// the conflict guard is shared with the CLI rather than duplicated.
+		DescriptionAppend: args.DescriptionAppend,
+		Accept:            accept,
+		AcceptSet:         acceptSet,
+		AcceptAdd:         args.AcceptAdd,
+		AcceptRm:          args.AcceptRm,
+		DepRm:             args.DepRm,
+		ExtRm:             args.ExtRm,
+		Claim:             args.Claim,
+		Unclaim:           args.Unclaim,
+		Wait:              args.Wait,
+		WaitTimeout:       wait,
+		Push:              args.Push,
+		NoCommit:          args.NoCommit,
+		Isolated:          args.Isolated,
+		AsJSON:            true,
+		Verify:            args.Verify,
 	})
 	return out, code != 0
 }

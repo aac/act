@@ -122,6 +122,10 @@ discovery, an external list (TODO file, audit doc), or a delegated subagent, it'
 quick `act search '<keywords>'` (or `act ready`) first. This is a recommendation, not a hard
 requirement; a project can make it mandatory in its own `CLAUDE.md`.
 
+**To leave a note on a ticket, use `act update <id> --description-append "<note>"`.** It
+appends to the existing description, separated by a blank line — no read-modify-write of the
+whole body. `act log` is a read-only op viewer and takes no message.
+
 ## External dependencies
 
 When an issue is blocked on work in another tracker that act doesn't import — a Linear
