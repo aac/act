@@ -380,6 +380,20 @@ THE LOOP IN DETAIL
     stray positional on any read-only verb (log, show, list, ready,
     mine, search).
 
+  WHAT 'act list' SHOWS
+    'act list' lists the WORKING SET: open, in_progress and blocked.
+    Closed issues are excluded from the default listing — a tracker
+    accumulates closed work indefinitely, and a default that carried
+    it buried the rows anyone can act on.
+
+      $ act list                    # the working set
+      $ act list --status closed    # finished work only
+      $ act list --all              # every status
+
+    Under --all, closed rows sort AFTER everything still open,
+    whatever --sort says: the grouping is fixed so live work is
+    never pushed below finished work.
+
   COUNTING FROM A LISTING
     'act list' caps its output at 200 rows by default. A capped
     listing prints a WARNING to stderr naming how many issues were

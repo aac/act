@@ -558,9 +558,10 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_list",
-			Description: "List issues filtered/sorted by the given options.",
+			Description: "List issues filtered/sorted by the given options. By DEFAULT this is the working set — open, in_progress and blocked — and closed issues are excluded; pass status=\"closed\" or all=true to reach them.",
 			InputSchema: schemaObject(map[string]any{
-				"status":   schemaString("Comma-separated status filter."),
+				"status":   schemaString("Comma-separated status filter. Omit for the default working set (everything except closed)."),
+				"all":      schemaBool("Include closed issues too; closed rows sort after everything still open. Mutually exclusive with status."),
 				"assignee": schemaString("Exact-match assignee filter."),
 				"type":     schemaString("Issue type filter (task|bug|epic|chore)."),
 				"limit":    schemaInteger("Maximum issues to return (default 200)."),
@@ -818,6 +819,7 @@ func (s *Server) callCreate(raw json.RawMessage) (any, bool) {
 func (s *Server) callList(raw json.RawMessage) (any, bool) {
 	var args struct {
 		Status   string `json:"status"`
+		All      bool   `json:"all"`
 		Assignee string `json:"assignee"`
 		Type     string `json:"type"`
 		Limit    int    `json:"limit"`
@@ -831,6 +833,7 @@ func (s *Server) callList(raw json.RawMessage) (any, bool) {
 	}
 	out, code := cli.RunList(s.repoRoot, cli.ListOptions{
 		Status:   args.Status,
+		All:      args.All,
 		Assignee: args.Assignee,
 		Type:     args.Type,
 		Limit:    args.Limit,

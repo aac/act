@@ -704,7 +704,8 @@ func emitSearchError(asJSON bool, payload map[string]any) {
 // path uses cli.FormatListHuman.
 func runList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	status := fs.String("status", "", "comma-separated status filter (open,in_progress,blocked,closed)")
+	status := fs.String("status", "", "comma-separated status filter (open,in_progress,blocked,closed); default lists the working set and excludes closed issues")
+	all := fs.Bool("all", false, "include closed issues too; closed rows sort after everything still open. Mutually exclusive with --status")
 	assignee := fs.String("assignee", "", "exact-match assignee filter")
 	typ := fs.String("type", "", "issue type filter (task|bug|epic|chore)")
 	limit := fs.Int("limit", 200, "maximum number of issues to return; --limit 0 means no limit (return every match). A capped listing prints a WARNING to stderr naming how many issues were hidden.")
@@ -731,6 +732,7 @@ func runList(args []string) int {
 
 	out, code := cli.RunList(root, cli.ListOptions{
 		Status:   *status,
+		All:      *all,
 		Assignee: *assignee,
 		Type:     *typ,
 		Limit:    *limit,

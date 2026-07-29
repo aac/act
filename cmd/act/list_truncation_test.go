@@ -105,12 +105,16 @@ func TestDocClaim_List_LimitZeroReturnsEverything(t *testing.T) {
 	}
 }
 
-// TestList_UncappedListingUnchanged is the regression guard for the other
-// half of the act-b50d81 acceptance: fixing the capped case must not change
-// what a NON-capped listing prints. The row format and row count for a
-// listing that fits under the limit are exactly what they were, and stderr
-// stays clean.
-func TestList_UncappedListingUnchanged(t *testing.T) {
+// TestList_UncappedListingRowShapeUnchanged pins the row rendering of a
+// listing that fits under the limit: `<short> <status> <prio> <title>`, no
+// trailer, no count line, clean stderr.
+//
+// It used to also pin the row SET — "a non-capped default listing prints
+// exactly what it printed before" — which was pinning the defect. The
+// default listing is now the working set (act-9dfdc1), so the row set is
+// asserted by TestDocClaim_List_DefaultExcludesClosed below and this guard covers
+// only the rendering, which the default change deliberately does not touch.
+func TestList_UncappedListingRowShapeUnchanged(t *testing.T) {
 	dir := blocksSite(t)
 	seedIssues(t, dir, 3)
 

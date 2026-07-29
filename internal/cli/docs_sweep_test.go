@@ -1384,6 +1384,51 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Never derive a count by piping a default 'act list' into a",
 		testName:     "TestDocClaim_List_CappedListingWarnsOnStderr",
 	},
+	// list-working-set-* (act-9dfdc1): `act list` listed every status,
+	// closed included, so the default listing of a mature tracker was
+	// almost entirely finished work — and the 200-row cap then spent its
+	// budget on closed rows while open work fell off the end. The default
+	// is now the working set. Three surfaces carry it: the --status and
+	// --all flag help, the `act help workflow` block an agent reads before
+	// counting anything, and the act_list MCP schema.
+	//
+	// Drift shape: someone "restores" the old everything-by-default in the
+	// name of compatibility, or keeps the default but lets closed rows
+	// float back above open work under --all (the priority-asc sort does
+	// exactly that on its own, which is why the grouping is not a sort
+	// key).
+	{
+		name:         "list-default-excludes-closed",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "default lists the working set and excludes closed issues",
+		testName:     "TestDocClaim_List_DefaultExcludesClosed",
+	},
+	{
+		name:         "list-all-flag-includes-closed-last",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "include closed issues too; closed rows sort after everything still open",
+		testName:     "TestDocClaim_List_ClosedSortAfterOpenWork",
+	},
+	{
+		name:         "list-working-set-in-help",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act list' lists the WORKING SET",
+		testName:     "TestDocClaim_List_DefaultExcludesClosed",
+	},
+	{
+		name:         "list-closed-reachable-in-help",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act list --status closed",
+		testName:     "TestDocClaim_List_ClosedReachableViaStatusAndAll",
+	},
+	{
+		// MCP parity: act_list is the surface most agents actually call,
+		// so the default and its escape hatch must hold there too.
+		name:         "mcp-list-default-excludes-closed",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "closed issues are excluded",
+		testName:     "TestDocClaim_MCP_ListDefaultExcludesClosed",
+	},
 	// readonly-stray-args + description-append (act-a79d66): `act log <id>
 	// "message"` silently swallowed the message — two agents lost four
 	// annotations across three trackers that way. The rejection is half the

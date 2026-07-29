@@ -14,13 +14,20 @@ import (
 )
 
 // ListOptions captures the flags accepted by `act list`. Zero values map
-// to the spec defaults: no filter, default sort, JSON off, and the limit is
-// applied by callers when 0.
+// to the spec defaults: the working set (non-closed), default sort, JSON
+// off, and the limit is applied by callers when 0.
 type ListOptions struct {
 	// Status is a comma-separated list of statuses to include. An empty
-	// string means "no status filter" (callers may still apply the
-	// non-closed default at the rendering layer).
+	// string means "the default working set" — every status except
+	// closed (act-9dfdc1). Ask for closed rows explicitly with
+	// `--status closed`, or for everything with All.
 	Status string
+	// All, when true, drops the non-closed default and lists issues of
+	// every status. It is mutually exclusive with Status: asking for
+	// "everything" and "exactly these statuses" in one invocation has no
+	// single honest answer, so RunList rejects the pair with exit 2
+	// rather than silently letting one win.
+	All bool
 	// Assignee is exact-match. Empty means "any".
 	Assignee string
 	// Type is exact-match against the issue type enum. Empty means "any".
@@ -106,10 +113,15 @@ type sortKey struct {
 // ListResult. The output is shape-agnostic: main.go renders JSON or the
 // human-friendly form.
 //
+// With no status filter and All unset, the listing is the working set:
+// open, in_progress and blocked. Closed issues are reachable via
+// `--status closed` (or All) and, when they appear alongside live work,
+// sort after it (act-9dfdc1).
+//
 // Returns:
 //   - output: ListResult on success, ListErrorOutput on failure.
 //   - exitCode: 0 success; 2 bad flag (unknown sort, malformed status,
-//     limit==0); 3 missing .act/.
+//     --all with --status); 3 missing .act/.
 func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 	paths := config.Layout(repoRoot)
 
@@ -129,12 +141,27 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 
 	// Step 2: validate flags up front so we surface exit 2 before touching
 	// the index.
+	if opts.All && strings.TrimSpace(opts.Status) != "" {
+		return ListErrorOutput{
+			Error:   "bad_flag",
+			Message: "act list: --all and --status are mutually exclusive; --all means every status, --status names the ones you want",
+		}, 2
+	}
 	statuses, err := parseStatusCSV(opts.Status)
 	if err != nil {
 		return ListErrorOutput{
 			Error:   "bad_flag",
 			Message: err.Error(),
 		}, 2
+	}
+	// The default listing is the WORKING SET: everything except closed
+	// (act-9dfdc1). A tracker's closed rows outnumber its open ones by an
+	// order of magnitude within weeks, so a default that included them
+	// spent the row budget on finished work and pushed open work off the
+	// end of the listing — the caller asking "what is there to do?" got
+	// the answer least able to tell them.
+	if !opts.All && len(statuses) == 0 {
+		statuses = defaultStatuses()
 	}
 	keys, err := parseSortKeys(opts.Sort)
 	if err != nil {
@@ -333,6 +360,13 @@ func parseSortKeys(raw string) ([]sortKey, error) {
 	return out, nil
 }
 
+// defaultStatuses is the working set: every status except closed. It is
+// what a listing shows when the caller named no --status and did not ask
+// for --all (act-9dfdc1).
+func defaultStatuses() []string {
+	return []string{"open", "in_progress", "blocked"}
+}
+
 // defaultSortKeys returns the spec default sort: priority asc, created_at
 // desc, id asc tie-breaker.
 func defaultSortKeys() []sortKey {
@@ -362,10 +396,22 @@ func filterByStatuses(rows []index.Row, statuses []string) []index.Row {
 	return out
 }
 
-// sortRows applies a multi-key stable sort to rows. The first key is the
-// primary; subsequent keys break ties.
+// sortRows applies a multi-key stable sort to rows, with one grouping key
+// ahead of them all: closed issues sort AFTER everything still live
+// (act-9dfdc1).
+//
+// The grouping is deliberately not expressible as a sort field and not
+// overridable by --sort. A listing that mixes statuses is answering "what
+// is the state of this tracker?", and a closed row placed above open work
+// — which the default priority-asc sort did, since p0 closed beats p1 open
+// — buries the only rows the reader can act on. Within each group the
+// caller's sort keys apply unchanged, so --sort still controls the order
+// of the rows it is asked about.
 func sortRows(rows []index.Row, keys []sortKey) {
 	sort.SliceStable(rows, func(i, j int) bool {
+		if c := cmpInt(closedRank(rows[i]), closedRank(rows[j])); c != 0 {
+			return c < 0
+		}
 		for _, k := range keys {
 			cmp := compareRowField(rows[i], rows[j], k.Field)
 			if cmp == 0 {
@@ -378,6 +424,15 @@ func sortRows(rows []index.Row, keys []sortKey) {
 		}
 		return false
 	})
+}
+
+// closedRank ranks a row for the closed-last grouping: 0 for live work,
+// 1 for closed.
+func closedRank(r index.Row) int {
+	if r.Status == "closed" {
+		return 1
+	}
+	return 0
 }
 
 // compareRowField returns -1/0/1 comparing a and b on the named field.
