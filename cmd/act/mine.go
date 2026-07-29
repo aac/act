@@ -27,6 +27,12 @@ func runMine(args []string) int {
 	if err := fs.Parse(rearranged); err != nil {
 		return 2
 	}
+	// `act mine` is a read-only query taking no positionals; a stray one
+	// is most often an identity the caller meant to pass as --as
+	// (act-a79d66).
+	if rejectExtraPositionals("act mine", fs, 0, *asJSON, "act mine takes no positional arguments; to query another identity use `act mine --as <node-id>`") {
+		return 2
+	}
 
 	root, err := findRepoRoot()
 	if err != nil {
@@ -68,6 +74,11 @@ func runListWithOptions(root string, asJSON bool, opts cli.ListOptions) int {
 		emitEnvelope(asJSON, out)
 		return code
 	}
+	res, ok := out.(cli.ListResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act mine: unexpected output type %T\n", out)
+		return 1
+	}
 	if asJSON {
 		data, jerr := json.Marshal(out)
 		if jerr != nil {
@@ -75,13 +86,14 @@ func runListWithOptions(root string, asJSON bool, opts cli.ListOptions) int {
 			return 1
 		}
 		fmt.Println(string(data))
-		return 0
+	} else {
+		fmt.Print(cli.FormatListHuman(res))
 	}
-	res, ok := out.(cli.ListResult)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "act mine: unexpected output type %T\n", out)
-		return 1
+	// runMine passes no Limit, so this never fires today; it is wired so
+	// that adding a cap here later cannot silently reintroduce the
+	// act-b50d81 under-count.
+	if notice := cli.FormatListTruncationNotice(res); notice != "" {
+		fmt.Fprint(os.Stderr, notice)
 	}
-	fmt.Print(cli.FormatListHuman(res))
 	return 0
 }

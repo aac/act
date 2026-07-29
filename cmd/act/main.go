@@ -496,6 +496,13 @@ func runLog(args []string) int {
 		return 2
 	}
 
+	// A second positional is the `act log <id> "message"` shape: a
+	// write-looking call on a read-only viewer (act-a79d66). Reject it
+	// before any work, and name the append path.
+	if rejectExtraPositionals("act log", fs, 1, *asJSON, noteHint) {
+		return 2
+	}
+
 	idArg := ""
 	if fs.NArg() >= 1 {
 		idArg = fs.Arg(0)
@@ -639,6 +646,12 @@ func runSearch(args []string) int {
 		emitBadFlag(*asJSON, "act search: usage: act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]")
 		return 2
 	}
+	// A multi-word query must be quoted into one positional; a bare
+	// second word means the caller's shell split it and act would have
+	// searched for only the first (act-a79d66).
+	if rejectExtraPositionals("act search", fs, 1, *asJSON, `act search takes ONE query argument — quote a multi-word query: act search "two words"`) {
+		return 2
+	}
 	query := fs.Arg(0)
 
 	root, err := findRepoRoot()
@@ -694,14 +707,16 @@ func runList(args []string) int {
 	status := fs.String("status", "", "comma-separated status filter (open,in_progress,blocked,closed)")
 	assignee := fs.String("assignee", "", "exact-match assignee filter")
 	typ := fs.String("type", "", "issue type filter (task|bug|epic|chore)")
-	limit := fs.Int("limit", 200, "maximum number of issues to return")
+	limit := fs.Int("limit", 200, "maximum number of issues to return; --limit 0 means no limit (return every match). A capped listing prints a WARNING to stderr naming how many issues were hidden.")
 	sortFlag := fs.String("sort", "", "comma-separated sort keys; prefix with - for desc; default priority,-created_at")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *limit == 0 {
-		emitBadFlag(*asJSON, "act list: --limit 0 is not allowed")
+	// `act list` takes no positional arguments. Silently ignoring one
+	// hides a typo'd flag or a caller who meant `act show <id>`
+	// (act-a79d66).
+	if rejectExtraPositionals("act list", fs, 0, *asJSON, "act list takes no positional arguments; did you mean `act show <id>` or `act search <query>`?") {
 		return 2
 	}
 
@@ -728,6 +743,12 @@ func runList(args []string) int {
 		return code
 	}
 
+	res, ok := out.(cli.ListResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act list: unexpected output type %T\n", out)
+		return 1
+	}
+
 	if *asJSON {
 		data, jerr := json.Marshal(out)
 		if jerr != nil {
@@ -735,15 +756,17 @@ func runList(args []string) int {
 			return 1
 		}
 		fmt.Println(string(data))
-		return 0
+	} else {
+		fmt.Print(cli.FormatListHuman(res))
 	}
 
-	res, ok := out.(cli.ListResult)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "act list: unexpected output type %T\n", out)
-		return 1
+	// The truncation warning goes to stderr in BOTH modes (act-b50d81).
+	// JSON callers have the `truncated` field, but the human watching a
+	// `--json | jq` pipeline has nothing else to look at, and stderr
+	// cannot corrupt either the row stream or the JSON document.
+	if notice := cli.FormatListTruncationNotice(res); notice != "" {
+		fmt.Fprint(os.Stderr, notice)
 	}
-	fmt.Print(cli.FormatListHuman(res))
 	return 0
 }
 
@@ -853,6 +876,11 @@ func runShow(args []string) int {
 	}
 	if fs.NArg() < 1 {
 		emitBadFlag(*asJSON, "act show: usage: act show <id> [--json] [--include-ops] [--commit-marker] [--full]")
+		return 2
+	}
+	// `act show <id> "message"` is the same write-looking shape as
+	// `act log` (act-a79d66).
+	if rejectExtraPositionals("act show", fs, 1, *asJSON, noteHint) {
 		return 2
 	}
 	idArg := fs.Arg(0)

@@ -55,10 +55,28 @@ type ListedIssue struct {
 }
 
 // ListResult is the JSON-serialisable wrapper returned on success. The shape
-// is `{"issues": [...], "count": N}`.
+// is `{"issues": [...], "count": N, "total": N, "truncated": bool}`.
+//
+// Count is how many rows were RETURNED; Total is how many matched the
+// filters before Limit was applied. They differ exactly when the limit
+// capped the result, which Truncated states outright.
+//
+// Why both, and why Truncated has no `omitempty` (act-b50d81): a capped
+// listing that looks complete is the defect this shape exists to close. A
+// JSON consumer must be able to test one unambiguous boolean rather than
+// infer truncation from `count == limit` — which is wrong whenever the
+// match count happens to equal the limit exactly. An always-present
+// `false` is the cheap half of that contract; an omitted key would leave
+// `.truncated` reading as null and put the consumer back to guessing.
 type ListResult struct {
 	Issues []ListedIssue `json:"issues"`
 	Count  int           `json:"count"`
+	// Total is the pre-limit match count. Equal to Count when the
+	// listing was not capped.
+	Total int `json:"total"`
+	// Truncated reports whether Limit dropped rows that matched the
+	// filters.
+	Truncated bool `json:"truncated"`
 }
 
 // ListErrorOutput is the structured shape returned on failure.
@@ -162,10 +180,14 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 	}
 	rows = filterByStatuses(rows, statuses)
 
-	// Step 5: sort + limit.
+	// Step 5: sort + limit. `total` is captured BEFORE the cap so the
+	// result can report what the caller did not see (act-b50d81).
 	sortRows(rows, keys)
+	total := len(rows)
+	truncated := false
 	if opts.Limit > 0 && len(rows) > opts.Limit {
 		rows = rows[:opts.Limit]
+		truncated = true
 	}
 
 	// Step 6: compute shortest-unique-prefix per id, then materialise the
@@ -194,7 +216,30 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 		})
 	}
 	out.Count = len(out.Issues)
+	out.Total = total
+	out.Truncated = truncated
 	return out, 0
+}
+
+// FormatListTruncationNotice returns the one-line warning that must
+// accompany a capped listing, or "" when nothing was dropped (act-b50d81).
+//
+// Callers print this to STDERR, not stdout. That placement is the whole
+// point: the incident this fixes was `act list | <filter>`, where a
+// stdout trailer is swallowed by the pipe and the human at the terminal
+// sees a confidently wrong count. On stderr the warning reaches the human
+// in both the piped and unpiped cases, and it never contaminates the row
+// stream that downstream parsers read.
+func FormatListTruncationNotice(res ListResult) string {
+	if !res.Truncated {
+		return ""
+	}
+	return fmt.Sprintf(
+		"act list: WARNING: showing %d of %d matching issues — %d hidden by --limit. "+
+			"Counts taken from this output will be WRONG. "+
+			"Use `act list --limit 0` for everything, or narrow with --status/--assignee/--type.\n",
+		res.Count, res.Total, res.Total-res.Count,
+	)
 }
 
 // FormatListHuman renders a ListResult as one line per issue with
