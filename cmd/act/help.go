@@ -367,6 +367,35 @@ THE LOOP IN DETAIL
       $ act create "<follow-up title>" --type bug \
           --description "<repro>" --accept "<resolution criterion>"
 
+  Annotating an issue
+    $ act update <id> --description-append "<note>"
+    Appends a note to the issue's description, separated from the
+    existing body by a blank line. Use this to leave provenance on a
+    ticket mid-flight — what you found, what you verified, what the
+    next session needs to know.
+
+    'act log' is a read-only op-log viewer, NOT a place to write a
+    note: 'act log <id> "message"' is rejected (exit 2) rather than
+    silently dropping the message. The same rejection applies to a
+    stray positional on any read-only verb (log, show, list, ready,
+    mine, search).
+
+  COUNTING FROM A LISTING
+    'act list' caps its output at 200 rows by default. A capped
+    listing prints a WARNING to stderr naming how many issues were
+    hidden — but the rows on stdout are still short, so any count
+    taken from a capped listing is wrong.
+
+      $ act list --limit 0          # no limit: every match
+      $ act list --status open      # narrow, then count
+
+    Never derive a count by piping a default 'act list' into a
+    filter: the filter runs on rows the cap already dropped, and the
+    dropped rows are systematically the low-priority ones. Filter
+    with act's own flags (--status/--assignee/--type), which apply
+    BEFORE the cap, or pass --limit 0. Under --json the result
+    carries "total" (pre-limit match count) and "truncated".
+
   DEP DIRECTION PRIMER
     The canonical (child, parent) reading for dep add is:
 

@@ -1354,6 +1354,83 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`--status open` releases a claim",
 		testName:     "TestDocClaim_StatusOpen_ReleasesClaim",
 	},
+	// list-truncation-* (act-b50d81): `act list` capped at 200 rows and said
+	// nothing, so a caller piping it into a filter got a confident
+	// under-count of open work — it closed a p1 ticket on a wrong number the
+	// night it was found. Three surfaces now carry the contract: the --limit
+	// flag help (both the escape hatch and the warning), and the `act help
+	// workflow` COUNTING FROM A LISTING block that tells an agent not to
+	// count from a piped default listing at all.
+	//
+	// Drift shape: someone "tidies up" by moving the notice from stderr into
+	// the row stream (breaking every pipe consumer's line count), or
+	// re-introduces the `--limit 0 is not allowed` rejection and removes the
+	// only way to ask for a complete listing.
+	{
+		name:         "list-limit-zero-means-no-limit",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "--limit 0 means no limit",
+		testName:     "TestDocClaim_List_LimitZeroReturnsEverything",
+	},
+	{
+		name:         "list-capped-warns-on-stderr",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "prints a WARNING to stderr naming how many issues were hidden",
+		testName:     "TestDocClaim_List_CappedListingWarnsOnStderr",
+	},
+	{
+		name:         "list-counting-guidance-in-help",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "Never derive a count by piping a default 'act list' into a",
+		testName:     "TestDocClaim_List_CappedListingWarnsOnStderr",
+	},
+	// readonly-stray-args + description-append (act-a79d66): `act log <id>
+	// "message"` silently swallowed the message — two agents lost four
+	// annotations across three trackers that way. The rejection is half the
+	// fix; the other half is that act now HAS a note-append path, so the
+	// rejection can name a real command instead of being a dead end.
+	//
+	// Drift shape: a refactor drops the arity check and the silent swallow
+	// returns, or --description-append is removed and the error message
+	// starts pointing at a flag that doesn't exist.
+	{
+		name:         "readonly-verbs-reject-stray-args",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "is rejected (exit 2) rather than",
+		testName:     "TestDocClaim_ReadOnlyVerbs_RejectStrayPositionals",
+	},
+	{
+		name:         "update-description-append-flag-help",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "append this text to the existing description instead of replacing it",
+		testName:     "TestDocClaim_Update_DescriptionAppendAppends",
+	},
+	{
+		name:         "help-workflow-description-append",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act update <id> --description-append",
+		testName:     "TestDocClaim_Update_DescriptionAppendAppends",
+	},
+	{
+		// The skill is the surface an agent has loaded when it reaches for
+		// "how do I leave a note on this ticket" — the question that
+		// produced `act log <id> "message"` in the first place.
+		name:         "skill-description-append-note",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "act update <id> --description-append",
+		testName:     "TestDocClaim_Update_DescriptionAppendAppends",
+	},
+	{
+		// MCP parity: act_update advertises description_append, and
+		// `description` says it REPLACES so an agent can tell the pair
+		// apart. The asserting test drives tools/list AND a real
+		// tools/call, so a schema that advertises the param while the
+		// handler drops it — this ticket's own defect shape — fails.
+		name:         "mcp-update-description-append",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "Append this text to the existing description",
+		testName:     "TestDocClaim_MCP_UpdateDescriptionAppend",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
