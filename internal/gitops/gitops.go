@@ -139,6 +139,70 @@ func NewGitOps(repoRoot string) *GitOps {
 	return &GitOps{RepoRoot: repoRoot, runner: exec.Command}
 }
 
+// noDetachedMaintenance are one-shot config overrides prepended to every
+// git invocation this handle makes against the nested `.act/.git`.
+//
+// Why: since git 2.29 `git commit` (and several other write commands) ends
+// by firing `git maintenance run --auto --quiet --detach`. The `--detach`
+// makes git daemonize that child — a grandchild process act's `git commit`
+// deliberately does NOT wait for, and which keeps creating and removing
+// lock files (`maintenance.lock`, `packed-refs.lock`) and object/pack
+// entries directly inside `.git` for as long as its tasks take. So `git
+// commit` returning does not mean git is finished touching `.act/.git`.
+//
+// That outliving process is a real hazard twice over:
+//
+//   - It races act's own concurrent writers for `.git`-level locks, the
+//     same contention family as the push-retry work in act-23568a.
+//   - It races anything that removes the tree right after a commit —
+//     which is how it surfaced (act-5ed9f5): `t.TempDir()` cleanup in the
+//     harvest tests intermittently failed with
+//     `unlinkat .../.act/.git: directory not empty`, because the daemon
+//     re-created an entry under `.git` mid-RemoveAll.
+//
+// `maintenance.autoDetach=false` makes git pass `--no-detach` instead, so
+// auto-maintenance runs in the foreground and `git commit` WAITS for it —
+// the fix is waiting for the process, not suppressing the symptom. It is
+// not disabled: the same maintenance work still happens, synchronously, on
+// a repo (the op-log) whose size makes that cost negligible.
+// `gc.autoDetach=false` covers older gits, where `git gc --auto`
+// daemonized itself rather than being driven by `git maintenance`.
+//
+// Scope is deliberately the nested `.act/.git` only (see gitArgs): that
+// repo is act's own, so act gets to decide how git maintains it. Commits
+// act makes into a caller's host repo keep the host's git configuration,
+// including its background-maintenance preference.
+var noDetachedMaintenance = []string{
+	"-c", "maintenance.autoDetach=false",
+	"-c", "gc.autoDetach=false",
+}
+
+// gitArgs assembles the full argv for a git invocation from this handle.
+//
+// When gitDir is set (NewActGitOps), the invocation is pinned to the
+// nested `.act/.git` with `--git-dir=`/`--work-tree=` so git's repo
+// discovery cannot walk up into an enclosing host repo whose .gitignore
+// would refuse the act-state path (act-784b), and auto-maintenance is
+// forced to run in the foreground (act-5ed9f5, see noDetachedMaintenance).
+// Both groups must precede the subcommand name, and the discovery pair
+// must use the `=` form so the prefix is positionally robust against any
+// subcommand-specific arg parsing.
+//
+// When gitDir is empty the args pass through untouched, preserving the
+// original cwd-discovery behavior for host-repo handles.
+func (g *GitOps) gitArgs(args []string) []string {
+	if g.gitDir == "" {
+		return args
+	}
+	full := make([]string, 0, len(noDetachedMaintenance)+2+len(args))
+	full = append(full, noDetachedMaintenance...)
+	full = append(full,
+		"--git-dir="+g.gitDir,
+		"--work-tree="+g.RepoRoot,
+	)
+	return append(full, args...)
+}
+
 // ActGitOps is the handle authorized to write act ops and query the act
 // state's git history. Under Phase 1 of the coordination-plane design
 // (docs/coordination-plane-design.md delta item 2) this will target the
@@ -247,27 +311,15 @@ func (h *HostGitOps) CheckIgnored(path string) (bool, error) {
 // run executes `git <args...>` with cwd=RepoRoot and returns stdout. stderr
 // is included in the error message on failure.
 //
-// When g.gitDir is non-empty (NewActGitOps), every invocation is prefixed
-// with `--git-dir=<gitDir> --work-tree=<RepoRoot>` so git's repo discovery
-// is pinned to the nested .act/.git and cannot walk up into an enclosing
-// host repo whose .gitignore would refuse the act-state path (act-784b).
+// When g.gitDir is non-empty (NewActGitOps), the invocation is prefixed by
+// gitArgs — see that function for the discovery pinning (act-784b) and the
+// foreground-maintenance overrides (act-5ed9f5).
 func (g *GitOps) run(args ...string) (string, error) {
 	r := g.runner
 	if r == nil {
 		r = exec.Command
 	}
-	finalArgs := args
-	if g.gitDir != "" {
-		// Prepend the discovery overrides. Order matters only insofar as
-		// these must precede the subcommand name; both forms must use `=`
-		// rather than two-arg form so the prefix is positionally robust
-		// against any subcommand-specific arg parsing.
-		finalArgs = append([]string{
-			"--git-dir=" + g.gitDir,
-			"--work-tree=" + g.RepoRoot,
-		}, args...)
-	}
-	cmd := r("git", finalArgs...)
+	cmd := r("git", g.gitArgs(args)...)
 	cmd.Dir = g.RepoRoot
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
