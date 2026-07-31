@@ -60,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "message"` silently swallowed the message: four annotations across three
   trackers were lost that way with no error anywhere. Write verbs are
   deliberately unchanged.
+- Concurrent pushes no longer fail hard on a receive-pack object-migration
+  race. `PushWithRetry` already treated three signatures of git's
+  object-quarantine race as retryable contention; a fourth —
+  `unable to migrate objects to permanent storage`, which receive-pack
+  reports when migrating a pusher's *own* quarantined objects into the
+  permanent store loses the race — fell through to the "other push failure"
+  path and surfaced a transient race as a hard error. Retrying is safe
+  because the rejection precedes the ref update, so the remote keeps its
+  prior tip. Measured on a 10-core mac mini: 12 failures in 240
+  concurrent-push runs under load before, 0 in 240 after, and 0 in 20 runs
+  on an idle box either way (which is why it only ever appeared as a
+  once-in-a-while CI flake).
 
 ## [0.4.2] - 2026-07-22
 

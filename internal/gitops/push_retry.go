@@ -304,6 +304,25 @@ func isNonFastForward(out string, err error) bool {
 	if strings.Contains(combined, "bad object refs/heads/") {
 		return true
 	}
+	// Same quarantine race, fourth signature (act-23568a). The three above
+	// are what a LOSING pusher sees when it reads a tip whose objects are
+	// still quarantined. This one is the mirror image: the migration of a
+	// pusher's OWN quarantined objects into the permanent store loses a race
+	// and receive-pack rejects the push outright —
+	//
+	//	error: unable to write file ./objects/8e/be7c3b...: No such file or directory
+	//	 ! [remote rejected] main -> main (unable to migrate objects to permanent storage)
+	//
+	// Retrying is safe: receive-pack reports this rejection BEFORE updating
+	// the ref ("! [remote rejected]"), so the remote is left on its prior
+	// tip with no partial state — at worst a few unreferenced loose objects,
+	// which git prunes. Measured at ~3% of concurrent-push runs under load
+	// and 0% on an idle box, which is why it read as a flake; without this
+	// arm PushWithRetry fell through to the "other push failure" path and
+	// surfaced a transient race as a hard failure.
+	if strings.Contains(combined, "unable to migrate objects to permanent storage") {
+		return true
+	}
 	return false
 }
 
