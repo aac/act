@@ -60,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "message"` silently swallowed the message: four annotations across three
   trackers were lost that way with no error anywhere. Write verbs are
   deliberately unchanged.
+- `act`'s internal git operations on the nested `.act/` repo no longer spawn
+  detached background maintenance processes. Auto-maintenance now runs in the
+  foreground (`--no-detach`), so no unwaited `git maintenance` child outlives
+  the `act` command that triggered it — previously a source of test flakes and
+  of stray processes contending with the store. The cost, measured: below the
+  gc threshold, foreground maintenance adds ~0.01s per triggering operation;
+  when gc actually fires (roughly once per several thousand operations), the
+  triggering command blocks ~2s instead of that work happening detached.
 - Concurrent pushes no longer fail hard on a receive-pack object-migration
   race. `PushWithRetry` already treated three signatures of git's
   object-quarantine race as retryable contention; a fourth —

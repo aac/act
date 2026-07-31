@@ -299,14 +299,7 @@ func (g *GitOps) runCombined(args ...string) (string, error) {
 	if r == nil {
 		r = exec.Command
 	}
-	finalArgs := args
-	if g.gitDir != "" {
-		finalArgs = append([]string{
-			"--git-dir=" + g.gitDir,
-			"--work-tree=" + g.RepoRoot,
-		}, args...)
-	}
-	cmd := r("git", finalArgs...)
+	cmd := r("git", g.gitArgs(args)...)
 	cmd.Dir = g.RepoRoot
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -357,14 +350,7 @@ func (g *GitOps) runCombinedTimeout(timeout time.Duration, args ...string) (stri
 	if r == nil {
 		r = exec.Command
 	}
-	finalArgs := args
-	if g.gitDir != "" {
-		finalArgs = append([]string{
-			"--git-dir=" + g.gitDir,
-			"--work-tree=" + g.RepoRoot,
-		}, args...)
-	}
-	cmd := r("git", finalArgs...)
+	cmd := r("git", g.gitArgs(args)...)
 	cmd.Dir = g.RepoRoot
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
