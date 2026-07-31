@@ -311,6 +311,12 @@ func TestIsNonFastForward_ClassifiesContentionRaces(t *testing.T) {
 		{"missing necessary objects", " ! [remote rejected] main -> main (missing necessary objects)", true},
 		{"does not point to a valid object", "remote: error: refs/heads/main does not point to a valid object!", true},
 		{"bad object refs/heads", "remote: fatal: bad object refs/heads/main", true},
+		// act-23568a: the migration-side signature of the same race, verbatim
+		// from a reproduced failure (measured ~3% of concurrent-push runs
+		// under load). The ref is not advanced, so a retry is safe.
+		{"unable to migrate objects", "error: unable to write file ./objects/8e/be7c3bd806306642a15c9e48d8c62f26ed8ed8: No such file or directory\n" +
+			" ! [remote rejected] main -> main (unable to migrate objects to permanent storage)\n" +
+			"error: failed to push some refs to '/tmp/remote.git'", true},
 		// Negatives: genuine non-contention failures must NOT be retried.
 		{"auth failure", "fatal: Authentication failed for 'https://example/repo.git'", false},
 		{"no such remote", "fatal: 'origin' does not appear to be a git repository", false},
