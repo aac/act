@@ -5,9 +5,9 @@ package cli
 // These tests assert that the write helpers (WriteOpAndAutoCommit /
 // WriteOpsAndAutoCommit) and the close.go non-helper commit path BOTH
 // invoke gitops.PushWithRetry exactly once per successful commit when
-// the nested .act/ repo has `origin` configured, AND that exhaustion
-// surfaces the canonical `push_exhausted` envelope with the right
-// details / exit code.
+// the nested .act/ repo has `origin` configured, AND (act-89a595) that
+// exhaustion DEFERS rather than fails: exit 0, push_deferred on the
+// result, the commit queued to .act/.pending-pushes.
 //
 // Cross-test contract: gitops.TestPushInvocationCount is process-global.
 // Tests snapshot the counter at start and compare against the post-call
@@ -16,6 +16,7 @@ package cli
 // gitops.ResetPushAttemptCounter().
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,14 +123,17 @@ func TestActClose_PushesOnRemoteConfigured(t *testing.T) {
 	}
 }
 
-// TestActClose_PushExhausted_ReturnsEnvelope — fault-injects 5 simulated
-// silent rejections; act close returns envelope push_exhausted with
-// retry_count=5 and exit=4.
+// TestActClose_PushDeferred_ExitsZeroAndQueues — fault-injects 5
+// simulated silent rejections and asserts the act-89a595 contract: the
+// close op is committed, so `act close` exits 0 with push_deferred set
+// and the commit queued to .act/.pending-pushes, rather than the retired
+// exit-4 `push_exhausted` envelope.
 //
-// Asserts AC3: "After 5 retries exhausted (fault-injected via the
-// test-only ACT_TEST_FAIL_PUSH_AFTER=N env hook), act close returns
-// envelope {code: push_exhausted, exit: 4} with details.retry_count=5."
-func TestActClose_PushExhausted_ReturnsEnvelope(t *testing.T) {
+// This replaces the AC3 assertion from act-65a7d5 ("After 5 retries
+// exhausted ... act close returns envelope {code: push_exhausted, exit:
+// 4}"), which act-89a595 deliberately reverses: reporting failure on a
+// durable write made agents retry and duplicate the op.
+func TestActClose_PushDeferred_ExitsZeroAndQueues(t *testing.T) {
 	gitops.ResetPushAttemptCounter()
 	root, _ := makeRepoWithRemoteOrigin(t)
 
@@ -146,26 +150,41 @@ func TestActClose_PushExhausted_ReturnsEnvelope(t *testing.T) {
 	gitops.ResetPushAttemptCounter()
 	t.Setenv("ACT_TEST_FAIL_PUSH_AFTER", "1")
 
-	out, code := RunClose(root, CloseOptions{ID: id})
-	if code != 4 {
-		t.Fatalf("exit code = %d, want 4; out=%+v", code, out)
+	var stderr bytes.Buffer
+	out, code := RunClose(root, CloseOptions{ID: id, Stderr: &stderr})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
 	}
-	errOut, ok := out.(CloseErrorOutput)
+	res, ok := out.(CloseResult)
 	if !ok {
-		t.Fatalf("output type = %T, want CloseErrorOutput", out)
+		t.Fatalf("output type = %T, want CloseResult", out)
 	}
-	if errOut.Error != ErrPushExhausted {
-		t.Errorf("Error = %q, want %q", errOut.Error, ErrPushExhausted)
+	if !res.Committed || !res.PushDeferred {
+		t.Errorf("Committed=%v PushDeferred=%v, want true/true", res.Committed, res.PushDeferred)
 	}
-	rc, ok := errOut.Details["retry_count"].(int)
-	if !ok {
-		t.Fatalf("details.retry_count missing or wrong type: %+v", errOut.Details)
+	// The push really was attempted to exhaustion — the deferral reason
+	// carries the retry-exhaustion error, so the retry loop is still
+	// wired even though it no longer fails the command.
+	if !strings.Contains(res.PushDeferredReason, "retries exhausted") {
+		t.Errorf("PushDeferredReason = %q, want it to name push retry exhaustion", res.PushDeferredReason)
 	}
-	if rc != 5 {
-		t.Errorf("details.retry_count = %d, want 5", rc)
+	if !strings.Contains(stderr.String(), "WARNING") {
+		t.Errorf("no stderr warning emitted for the deferred push:\n%s", stderr.String())
 	}
-	if _, ok := errOut.Details["shallow_unshallow_attempted"]; !ok {
-		t.Errorf("details.shallow_unshallow_attempted missing: %+v", errOut.Details)
+
+	// The close is durable and readable back immediately.
+	showOut, showCode := RunShow(root, ShowOptions{ID: id})
+	if showCode != 0 {
+		t.Fatalf("RunShow after deferred-push close: code=%d out=%+v", showCode, showOut)
+	}
+
+	// And the deferral is queued for a later publish.
+	pending, err := ReadPendingPushes(filepath.Join(root, ".act"))
+	if err != nil {
+		t.Fatalf("ReadPendingPushes: %v", err)
+	}
+	if len(pending) == 0 {
+		t.Fatalf("no .pending-pushes entry recorded for the deferred close")
 	}
 }
 

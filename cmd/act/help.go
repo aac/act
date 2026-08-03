@@ -89,9 +89,14 @@ THE CANONICAL WORK LOOP (use this in every session)
   4. act close <id> [--reason "..."]
                                   # writes the close op + commits it
                                   # standalone in the nested .act/ repo.
-  5. git commit -a -m "<summary>" -m "Act-Id: act-<short-id>"
+  5. git commit -m "<summary>" -m "Act-Id: act-<short-id>" -- <paths you changed>
                                   # your separate work commit in the host
-                                  # repo. The 'Act-Id: act-XXXX' trailer
+                                  # repo. Name the paths you wrote. Do NOT
+                                  # commit with -a: when several sessions
+                                  # share one checkout, "all modified
+                                  # files" is another session's in-flight
+                                  # work, and -a sweeps it into your
+                                  # commit. The 'Act-Id: act-XXXX' trailer
                                   # in the commit body lets 'act doctor'
                                   # correlate work commits with closed
                                   # issues. Use two -m flags so the
@@ -347,7 +352,13 @@ THE LOOP IN DETAIL
     embed the issue's commit_marker as a trailer in the body so
     'act doctor' can correlate:
 
-      git commit -a -m "implement <thing>" -m "Act-Id: act-XXXX"
+      git commit -m "implement <thing>" -m "Act-Id: act-XXXX" \
+        -- path/one path/two
+
+    Name the paths you changed after '--'. Committing with -a is
+    unsafe wherever several sessions share one checkout: "all
+    modified files" includes whatever a sibling session has dirty
+    at that instant, and those edits land in your commit.
 
     Two -m flags produce a body paragraph for the trailer (separated
     from the subject by a blank line). The Act-Id trailer form
@@ -356,8 +367,8 @@ THE LOOP IN DETAIL
     commits should always use the trailer.
 
     Under Phase 1, 'act close' commits the close op standalone in
-    the nested .act/ git repo, and the agent's separate 'git commit
-    -a' in the host repo is independent. The two commits live in
+    the nested .act/ git repo, and the agent's separate work commit
+    in the host repo is independent. The two commits live in
     different repos and don't interleave; order between them is
     free.
 
@@ -492,7 +503,8 @@ EXAMPLE SESSION (CLI)
   $ # ... edit code, write tests, run them ...
   $ act close act-c26a01 --reason "all 5 acceptance criteria green"
   Closed act-c26a01: all 5 acceptance criteria green
-  $ git commit -a -m "implement --blocked-by flag" -m "Act-Id: act-c26a01"
+  $ git commit -m "implement --blocked-by flag" -m "Act-Id: act-c26a01" \
+      -- internal/cli/dep.go internal/cli/dep_test.go
   $ git push
 
 COMMIT MARKER INVARIANTS
@@ -748,7 +760,17 @@ EXIT CODES
            blocked_by_external_dep — issue has ≥1 open external dep; clear
              with --ext-rm or override with --force on update --claim / close
   exit 3   issue_not_found — id resolved to nothing (zero prefix matches)
-  exit 4   push_exhausted — push retries exhausted after N attempts
+  exit 4   bootstrap_timeout — 'act state import' clone exceeded its budget
   exit 5   claim_lost — concurrent claimer won; this claim lost the race
   The envelope is emitted before exit; success paths emit no envelope at all.
+
+  A FAILED PUSH IS NOT A FAILED WRITE. Once a write's op is committed in
+  the nested .act/ repo it is durable, so a push that can't reach origin
+  exits 0: the commit is queued in .act/.pending-pushes, an
+  'act: WARNING:' block on stderr says so, and 'act close --json' sets
+  push_deferred: true. Do NOT re-run the command — re-running duplicates
+  the op. The next write (or 'act remote sync') publishes the backlog.
+  Failures BEFORE the commit — op write, staging, hook, commit — still
+  exit non-zero, because nothing landed. (The old push_exhausted exit-4
+  envelope was retired for exactly this reason; see act help errors.)
 `

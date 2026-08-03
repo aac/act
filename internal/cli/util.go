@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -137,6 +138,10 @@ type WriteOpts struct {
 	// multiple concurrent agents don't fan their op commits onto a
 	// shared `main`.
 	Branch string
+	// Stderr is where the write path emits operator warnings — today
+	// the act-89a595 "committed but not pushed" notice. Nil means
+	// os.Stderr. Tests inject a buffer to assert the warning fired.
+	Stderr io.Writer
 }
 
 // ErrInvalidFlags is returned when WriteOpts contains an illegal flag
@@ -258,31 +263,20 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		return nil
 	}
 
-	// Phase 2 ticket 3b: flush any pending pushes from prior --offline
-	// writes BEFORE the current write's own push. The flush is a single
-	// `git push` (covers all backlog commits reachable from HEAD), so
-	// the cost is one round trip regardless of queue size. Flush
-	// failures surface unchanged — we do NOT swallow them, because a
-	// stale pending-pushes file would silently mask an ongoing remote
-	// outage. The current commit stays local-only on flush failure;
-	// the next attempt re-flushes from the persisted state.
-	if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
-		return fmt.Errorf("cli: flush pending-pushes: %w", err)
-	}
-
-	// Phase 2 ticket 3a: synchronous publish. If origin is configured we
-	// invoke PushWithRetry; ErrPushExhausted and ErrFetchFailed bubble up
-	// for the caller to translate into envelopes `push_exhausted` /
-	// `remote_unreachable` (exit 4 per spec §error-envelope). The local
-	// op file is intentionally left on disk on push failure — the commit
-	// succeeded, so the op is recoverable via the harvest path even if
-	// the publish step didn't. The legacy `--push` flag is now redundant
-	// when origin is set (auto-publish covers it); we keep the field on
-	// WriteOpts for callers that haven't migrated, but the publish
-	// happens regardless of opts.Push.
-	if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
-		return fmt.Errorf("cli: push: %w", err)
-	}
+	// Phase 2 ticket 3a: synchronous publish (flush any prior --offline
+	// backlog, then push this commit). act-89a595: the commit above has
+	// already landed, so a publish failure is DEGRADED, not returned —
+	// PublishCommittedOp queues the commit to .act/.pending-pushes and
+	// warns on stderr, and this helper still returns nil so the command
+	// exits 0. An agent reading `rc != 0` as "the write didn't happen"
+	// would otherwise retry and duplicate a durable op. Everything
+	// *before* the commit still fails loudly and non-zero.
+	//
+	// The legacy `--push` flag is redundant when origin is set
+	// (auto-publish covers it); we keep the field on WriteOpts for
+	// callers that haven't migrated, but the publish happens regardless
+	// of opts.Push.
+	PublishCommittedOp(gops, env.OpType, opts.Branch, opts.Stderr)
 	return nil
 }
 
@@ -404,19 +398,12 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 		return nil
 	}
 
-	// Step 5b: flush any prior --offline backlog before this batch's
-	// own push. See the single-op rationale in WriteOpAndAutoCommit.
-	if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
-		return fmt.Errorf("cli: flush pending-pushes: %w", err)
-	}
-
-	// Step 5: Phase 2 ticket 3a synchronous publish. See WriteOpAndAutoCommit
-	// above for the rationale; the rollback path is intentionally NOT
-	// triggered on push failure because the commit landed locally and the
-	// op is recoverable via harvest.
-	if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
-		return fmt.Errorf("cli: push: %w", err)
-	}
+	// Step 5b: Phase 2 ticket 3a synchronous publish. See
+	// WriteOpAndAutoCommit above for the rationale; act-89a595's
+	// fail-soft boundary applies identically here — the batch commit
+	// landed, so the rollback path is NOT triggered and the publish
+	// failure degrades to a queued push plus a stderr warning.
+	PublishCommittedOp(gops, envs[0].OpType, opts.Branch, opts.Stderr)
 	return nil
 }
 
