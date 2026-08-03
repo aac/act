@@ -34,7 +34,7 @@ unavailable.
 
 | Loop step | MCP | CLI |
 |---|---|---|
-| See the ready set (without claiming) | `act_ready` | `act ready` |
+| See the ready set (without claiming) | CLI-only | `act ready` |
 | Claim the next issue | `act_next` (picks highest-priority unblocked issue, claims it, returns `id` + `commit_marker`; adds bounded backoff retry if a claim is lost to a racing writer) | `act next` (same composed pick + claim + show, but walks the ready candidates once with no sleep/backoff) or `act update --claim <id>` |
 | Release a claim (can't finish it) | `unclaim` on `act_update` | `act update --unclaim <id>` |
 | Get the commit marker | `commit_marker` field on `act_next` (no separate call) | `act show <id> --commit-marker` |
@@ -54,7 +54,7 @@ Ids are already the shortest unique prefix in the normal case, so **an absent `s
 means it equals `id`** — read it as "short_id, else id", not as a missing field.
 
 Drive the loop with `act next`/`act finish` (`act_next`/`act_finish` are their MCP names);
-use `act ready`/`act_ready` to *survey* the ready set without claiming (e.g. an orchestrator
+use `act ready` (CLI) to *survey* the ready set without claiming (e.g. an orchestrator
 deciding what to dispatch). The two forms differ only in claim-loss handling: MCP `act_next`
 retries with bounded backoff, CLI `act next` walks the ready candidates once and returns.
 
@@ -190,8 +190,9 @@ act update <id> --ext-rm "linear:ENG-123"
 
 Both add and remove are idempotent. The surfaces are symmetric with internal blockers:
 `act dep add` adds the edge (`--blocked-by` for an act id, `--external` for a cross-tracker
-ref), `act update` removes it (`--dep-rm` internal, `--ext-rm` external). In MCP sessions,
-pass the `external` array on `act_dep_add` and the `ext_rm` array on `act_update`. An issue
+ref), `act update` removes it (`--dep-rm` internal, `--ext-rm` external). In MCP sessions, adding
+one is a CLI call (`act dep add` is not an MCP tool); clearing one is the `ext_rm` array on
+`act_update`. An issue
 may carry both internal and external blockers; either one keeps it out of `act ready` until
 cleared.
 
