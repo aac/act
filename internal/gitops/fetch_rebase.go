@@ -193,6 +193,36 @@ func (g *GitOps) FetchAndRebase(branch string) error {
 		return nil
 	}
 
+	// act-650378: git refused to detach HEAD because checking out
+	// origin/<branch> would clobber untracked op files sitting in the
+	// state root ("could not detach HEAD"). That is act's own directory
+	// and act's own file format, so act resolves it rather than telling
+	// an operator to `rm` files inside the tracker's state — see
+	// collision.go for the (conservative) policy. Checked BEFORE the
+	// shallow classification because a collision refusal is not a
+	// history problem and one retry clears it.
+	//
+	// No `rebase --abort` first: git aborts before detaching, so no
+	// rebase is in progress. Calling abort here would risk clobbering a
+	// concurrent process's in-flight rebase in the shared state repo.
+	if cps := untrackedCheckoutCollisionPaths(rebaseOut); len(cps) > 0 {
+		deleted, quarantined, stamp, cerr := g.resolveOpFileCollisions(branch, cps)
+		if cerr == nil {
+			warnCollisionResolved(stamp, deleted, quarantined)
+			out2, err2 := g.runCombined("rebase", "origin/"+branch)
+			if err2 == nil {
+				return nil
+			}
+			// Still failing: fall through to normal classification with
+			// the SECOND attempt's output, so the reported error
+			// describes the state the caller is actually in.
+			rebaseOut, rebaseErr = out2, err2
+		}
+		// cerr != nil: the collision was outside act's lane (a tracked
+		// path, or a path outside ops/). Leave the tree untouched and
+		// report the original rebase failure unchanged.
+	}
+
 	// Classify the failure.
 	combined := strings.ToLower(rebaseOut + " " + rebaseErr.Error())
 	if isShallowFailure(combined) {

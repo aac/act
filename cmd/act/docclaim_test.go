@@ -99,19 +99,20 @@ func TestDocClaim_IncludeOps_SubprocessShowsOpStream(t *testing.T) {
 
 // TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive pins the claim that
 // `act help errors` documents exit 3 (issue_not_found), exit 4
-// (push_exhausted), and exit 5 (claim_lost). Before the exit-3/4 fix the
+// (bootstrap_timeout), and exit 5 (claim_lost). Before the exit-3/4 fix the
 // EXIT CODES block listed only exits 1 and 2; act-a373bb added exit 5 for
-// the reconciled claim_lost code.
+// the reconciled claim_lost code. act-89a595 retired `push_exhausted`
+// (a committed op no longer fails on push), leaving bootstrap_timeout as
+// exit 4's label; the block now also states that a failed push is not a
+// failed write, which this test asserts.
 //
 // remote_unreachable is intentionally NOT asserted here: it is not a
-// close/push-path (exit-4) outcome. PushWithRetry collapses fetch failures
-// into push_exhausted, so the only emitter is `act state import`
-// (clone failure, exit 3). See act-6d9546; the EXIT CODES block no longer
-// lists it under exit 4.
+// close/push-path (exit-4) outcome — the only emitter is `act state
+// import` (clone failure, exit 3). See act-6d9546.
 //
 // Semantics verified against docs/spec.md error table:
 //   - exit 3: issue_not_found
-//   - exit 4: push_exhausted
+//   - exit 4: bootstrap_timeout
 //   - exit 5: claim_lost
 func TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive(t *testing.T) {
 	dir := t.TempDir()
@@ -124,9 +125,13 @@ func TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive(t *testing.T) {
 		"exit 3",
 		"issue_not_found",
 		"exit 4",
-		"push_exhausted",
+		"bootstrap_timeout",
 		"exit 5",
 		"claim_lost",
+		// act-89a595: the block must tell an agent that exit 0 can mean
+		// "committed but not published", so it doesn't re-run the write.
+		"A FAILED PUSH IS NOT A FAILED WRITE",
+		"push_deferred",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("act help errors: missing %q in EXIT CODES section\n%s", want, out)

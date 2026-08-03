@@ -31,22 +31,26 @@ package cli
 // Deleting either test trips the sweep registry and breaks the build.
 
 import (
+	"bytes"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aac/act/internal/gitops"
 )
 
-// TestDocClaim_Errors_PushExhausted pins the behavioral contract for
-// `push_exhausted` exit 4 documented in docs/spec.md. After 5 push
-// retries are exhausted (fault-injected via ACT_TEST_FAIL_PUSH_AFTER=1),
-// RunClose must return exit code 4 with a CloseErrorOutput whose Error
-// field equals the canonical slug "push_exhausted".
+// TestDocClaim_Errors_PushExhaustedRetired pins the act-89a595 contract
+// that replaced the `push_exhausted` envelope: when every push attempt
+// fails (fault-injected via ACT_TEST_FAIL_PUSH_AFTER=1) on an op that
+// HAS been committed, `act close` exits 0, reports push_deferred on its
+// result, queues the commit to .act/.pending-pushes, and warns loudly on
+// stderr — instead of the old exit-4 `push_exhausted` envelope, which
+// reported failure on a write that had already landed.
 //
-// Asserted at the RunClose Go API boundary — the same surface the CLI wires
-// to exit code + JSON output. Deleting this test removes the only behavioral
-// guard anchored to the sweep registry; the sweep reports an orphaned
-// registry entry and breaks the build.
-func TestDocClaim_Errors_PushExhausted(t *testing.T) {
+// Asserted at the RunClose Go API boundary — the same surface the CLI
+// wires to exit code + JSON output. The paired not-committed side of the
+// boundary is TestPublish_CommitFailureStillExitsNonZero.
+func TestDocClaim_Errors_PushExhaustedRetired(t *testing.T) {
 	gitops.ResetPushAttemptCounter()
 
 	// Build a repo + remote-configured nested .act/ using the same
@@ -65,26 +69,50 @@ func TestDocClaim_Errors_PushExhausted(t *testing.T) {
 	// exhaustion counter starts fresh at the close call.
 	gitops.ResetPushAttemptCounter()
 	// ACT_TEST_FAIL_PUSH_AFTER=1 causes every push attempt to silently
-	// fail, exhausting all 5 retries → PushExhaustedError.
+	// fail, exhausting all 5 retries -> PushExhaustedError.
 	t.Setenv("ACT_TEST_FAIL_PUSH_AFTER", "1")
 
-	out, exitCode := RunClose(root, CloseOptions{ID: id})
+	var stderr bytes.Buffer
+	out, exitCode := RunClose(root, CloseOptions{ID: id, Stderr: &stderr})
 
-	// Spec §error-envelope: push_exhausted exits 4.
-	if exitCode != 4 {
-		t.Errorf("exit code = %d, want 4 (push_exhausted); out=%+v", exitCode, out)
+	// The op committed, so the close succeeds despite the dead remote.
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (committed op must not fail on push); out=%+v", exitCode, out)
 	}
-	errOut, ok := out.(CloseErrorOutput)
+	res, ok := out.(CloseResult)
 	if !ok {
-		t.Fatalf("output type = %T, want CloseErrorOutput", out)
+		t.Fatalf("output type = %T, want CloseResult", out)
 	}
-	// The envelope Error field must be the canonical slug.
-	if errOut.Error != ErrPushExhausted {
-		t.Errorf("envelope Error = %q, want %q", errOut.Error, ErrPushExhausted)
+	if !res.Committed {
+		t.Fatalf("Committed = false, want true")
 	}
-	// Belt-and-braces: confirm ErrPushExhausted has the value the spec claims.
-	if ErrPushExhausted != "push_exhausted" {
-		t.Fatalf("ErrPushExhausted constant: want %q, got %q", "push_exhausted", ErrPushExhausted)
+	if !res.PushDeferred {
+		t.Errorf("PushDeferred = false, want true (the push failed and was deferred)")
+	}
+	if res.PushDeferredReason == "" {
+		t.Errorf("PushDeferredReason is empty; want the underlying push failure")
+	}
+
+	// The warning must be unmissable and must say the op is queued, not pushed.
+	warn := stderr.String()
+	for _, want := range []string{"WARNING", "COMMITTED LOCALLY", "NOT PUSHED", ".act/.pending-pushes", "exit status is 0"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("stderr warning missing %q:\n%s", want, warn)
+		}
+	}
+
+	// And the deferral must be durably queued so a later write publishes it.
+	pending, err := ReadPendingPushes(filepath.Join(root, ".act"))
+	if err != nil {
+		t.Fatalf("ReadPendingPushes: %v", err)
+	}
+	if len(pending) == 0 {
+		t.Errorf("no .pending-pushes entry recorded for the deferred close")
+	}
+
+	// The retired envelope must not come back: no CLI path may emit it.
+	if strings.Contains(warn, "push_exhausted\"") {
+		t.Errorf("stderr surfaced the retired push_exhausted envelope code")
 	}
 }
 

@@ -518,7 +518,17 @@ Precedence rules:
 3. `--verify` + `--no-commit` is silently a no-op (no commit happens, hooks irrelevant).
 4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set.
 
-Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony. On retry exhaustion the command exits 4 with envelope `push_exhausted`; a fetch failure encountered mid-loop is carried inside that envelope's `details.last_error` rather than surfaced separately, because the retry helper retries fetch failures to exhaustion (it never bubbles a bare fetch error out of the loop — see §"push retry"). The `remote_unreachable` envelope is a `bootstrap-worker` clone-failure outcome, not a write-path one. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path.
+Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony.
+
+**Publish failure is a deferral, not an error (act-89a595).** Once the auto-commit lands, the op is durable, so the publish leg can no longer fail the command. When the push does not reach origin — retry exhaustion, an unreachable remote, a rejecting receive — the command **exits 0**, appends the commit to `.act/.pending-pushes`, and writes an unmissable `act: WARNING:` block to stderr saying the op was committed but not pushed. `act close --json` additionally sets `push_deferred: true` (and `push_deferred_reason`) on its result, so JSON consumers can tell "peers can't see it yet" from "it didn't land". The deferred commit publishes on the next non-offline write, or on `act remote sync`; a bare push on the nested repo covers every local commit reachable from HEAD, so nothing is lost by waiting. The `push_exhausted` envelope (exit 4) that this path used to emit is **retired** — it reported failure on a write that had already landed, and callers applying the ordinary `rc != 0 ⇒ the write didn't happen` rule retried and duplicated the op.
+
+**Untracked op-file collisions are resolved by act, not by the operator (act-650378).** The publish path's fetch-and-rebase detaches HEAD onto `origin/<branch>`, and git refuses to detach when the checkout would overwrite an untracked working-tree file — `error: could not detach HEAD`, listing paths under `ops/`. That state arises routinely: an op can exist on disk while origin already tracks its path (concurrent writers in a shared checkout, a state import). act resolves it itself and retries the rebase once, rather than emitting git's "Please move or remove them" — an instruction to delete files inside the tracker's own state directory. The policy is conservative and reported on stderr:
+
+- Only paths under `ops/` are touched, and only ones git reports as untracked. A colliding path outside that lane aborts the whole resolution and the original rebase error surfaces unchanged.
+- A local file byte-identical to origin's copy is **deleted** — the checkout is about to write the same bytes.
+- A local file that **differs** is **moved**, never deleted, to `.act/.collisions/<timestamp>/<original-path>`.
+
+The fail-soft boundary is exactly the commit: every failure *before* the auto-commit (op write, staging, hook, commit itself) still exits non-zero with its own envelope, because nothing landed in those cases. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path. The `remote_unreachable` envelope is a `bootstrap-worker` clone-failure outcome, not a write-path one.
 
 `act harvest` is **not** in the auto-publish list. Harvest is the orchestrator-side fan-in primitive; the orchestrator's nested `.act/.git` typically has no `origin` remote (it IS the canonical history workers push to), so auto-pushing after a harvest commit would be a silent no-op in the common production shape. In Phase 2 remote-attached mode the worker already pushed its ops to the orchestrator before harvest ran (harvest short-circuits with a skip for that shape). In Phase 1.5 sandboxed mode, publishing a harvest fold upward to an upstream remote is an orchestrator-level concern handled by `act remote sync`, not by harvest itself.
 
@@ -1008,12 +1018,15 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `index_corrupt`            | 9    | `index.db corrupt or schema-mismatched; rerun 'act doctor --rebuild'`      | `reason`                                      |
 | `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
 | `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
-| `push_exhausted`           | 4    | `push retries exhausted after <N> attempts; last error: <msg>`             | `retry_count`, `shallow_unshallow_attempted`, `last_error` |
 | `remote_unreachable`       | 3    | `act bootstrap-worker: clone <url>: <reason>`                              | `url`, `stderr_tail`                          |
 | `bootstrap_timeout`        | 4    | `act bootstrap-worker: clone <url> exceeded <N>s budget`                   | `timeout_seconds`, `url`                      |
 | `target_not_empty`         | 2    | `act bootstrap-worker: <path> exists and is non-empty; pass --force to overwrite` | `target`                                |
 | `blocked_by_external_dep`  | 2    | `<cmd>: <id> has <N> open external dep(s); clear with --ext-rm or override with --force` | `external_deps[]`               |
 | `blocked_requires_dep`     | 2    | `act update: --status blocked: <id> has no blocked-by dep edge; add one first with \`act dep add <id> <blocker-id> --type blocks\`` | none |
+
+Retired codes (kept here so a reader who greps for one finds out why it is gone, rather than concluding the table is stale):
+
+- `push_exhausted` (was exit 4) — retired by act-89a595. A push failure on an op that is already committed locally is a deferral, not a failure: the command exits 0, queues the commit to `.act/.pending-pushes`, and warns on stderr. See §"Auto-publish on write".
 
 Rules:
 - Every command MUST return exactly one error class on failure; no compound errors.

@@ -58,7 +58,10 @@ act-4b45 2 cli: act ready shows assignee and claimed_at columns
 $ act update --claim act-3c89    # atomic; concurrent claimers resolve last-write-wins
 # ...write the code, run the tests...
 $ act close act-3c89 --reason "added --full flag; tests cover both truncation paths"
-$ git commit -am "act show --full disables truncation" -m "Act-Id: act-3c89"
+$ git commit -m "act show --full disables truncation" -m "Act-Id: act-3c89" \
+    -- internal/cli/show.go internal/cli/show_test.go   # name the paths; -a would
+                                                        # sweep in a sibling
+                                                        # session's dirty files
 $ git push
 ```
 

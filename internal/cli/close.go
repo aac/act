@@ -99,6 +99,17 @@ type CloseResult struct {
 	Committed    bool   `json:"committed"`
 	CommitMarker string `json:"commit_marker,omitempty"`
 	Reason       string `json:"reason"`
+
+	// PushDeferred (act-89a595) is true when the close op committed
+	// locally but the push to origin failed and was queued to
+	// `.act/.pending-pushes` instead. The close still succeeded (exit
+	// 0) — the op is durable — so JSON consumers that care whether
+	// peers can see it yet read this field rather than the exit code.
+	// Omitted when false, which is the ordinary case.
+	PushDeferred bool `json:"push_deferred,omitempty"`
+	// PushDeferredReason carries the underlying push failure when
+	// PushDeferred is set. Omitted otherwise.
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // CloseAlreadyClosed is the JSON-serialisable envelope returned when the
@@ -377,6 +388,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	}
 
 	committed := false
+	var publish PublishResult
 	if !opts.NoCommit {
 		// Phase 1: writes target the nested .act/ git repo. Close
 		// always commits standalone in the nested repo.
@@ -468,27 +480,24 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 				}, 1
 			}
 		} else {
-			// Phase 2 ticket 3b: flush any prior --offline backlog
-			// before this close's own push.
-			if err := FlushPendingPushes(gops, gops.RepoRoot); err != nil {
-				return closeErrorForPushFailure(err)
-			}
-			// Phase 2 ticket 3a: synchronous publish on every close that
-			// commits. If origin is configured, AutoPushAfterCommit invokes
-			// PushWithRetry. On *PushExhaustedError we surface envelope
-			// `push_exhausted` (exit 4 per spec §error-envelope) with
-			// details.retry_count / shallow_unshallow_attempted populated
-			// from the structured error; a fetch failure during the retry
-			// loop is carried inside that error's last_error (act-6d9546 —
-			// PushWithRetry never bubbles a bare ErrFetchFailed, so the close
-			// path cannot emit `remote_unreachable`). Other push errors
-			// surface as the legacy `push_failed` (exit 1). The commit has
-			// already landed; on push failure we do NOT roll it back — the
-			// close op is on disk locally and recoverable via the harvest
-			// path.
-			if err := gops.AutoPushAfterCommitToBranch(opts.Branch); err != nil {
-				return closeErrorForPushFailure(err)
-			}
+			// Phase 2 ticket 3a/3b: synchronous publish on every close
+			// that commits — flush any prior --offline backlog, then
+			// push this close op.
+			//
+			// act-89a595: the close op is committed by this point, so a
+			// publish failure NO LONGER fails the close. The old
+			// behavior emitted envelope `push_exhausted` (exit 4) or
+			// `push_failed` (exit 1) on an op that was already durable,
+			// and an agent reading `rc != 0` as "the close didn't land"
+			// retried a close that had in fact happened. The publish now
+			// degrades: the commit is queued to .act/.pending-pushes, a
+			// warning goes to stderr, `push_deferred` is set on the JSON
+			// result, and the close exits 0.
+			//
+			// The failure paths ABOVE this point (op write, stage, hook,
+			// commit) still fail loudly and non-zero — nothing landed in
+			// those cases. That asymmetry is the whole contract.
+			publish = PublishCommittedOp(gops, env.OpType, opts.Branch, opts.Stderr)
 		}
 	}
 
@@ -520,14 +529,21 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		emitMarkerCorrelationWarning(opts.Stderr, paths.Root, full, short)
 	}
 
-	return CloseResult{
+	res := CloseResult{
 		ID:           full,
 		ShortID:      short,
 		OpsWritten:   1,
 		Committed:    committed,
 		CommitMarker: WorkCommitMarker(full),
 		Reason:       opts.Reason,
-	}, 0
+	}
+	if publish.Deferred {
+		res.PushDeferred = true
+		if publish.Reason != nil {
+			res.PushDeferredReason = publish.Reason.Error()
+		}
+	}
+	return res, 0
 }
 
 // emitMarkerCorrelationWarning runs the single-issue commit-marker
@@ -595,41 +611,4 @@ func FormatCloseHuman(res CloseResult) string {
 // FormatCloseAlreadyClosedHuman renders a CloseAlreadyClosed envelope.
 func FormatCloseAlreadyClosedHuman(res CloseAlreadyClosed) string {
 	return fmt.Sprintf("Already closed: %s\n", res.ID)
-}
-
-// closeErrorForPushFailure classifies a push failure returned by
-// AutoPushAfterCommit and produces the right CloseErrorOutput shape +
-// exit code. *PushExhaustedError → envelope `push_exhausted` with
-// details.retry_count and details.shallow_unshallow_attempted (exit 4
-// per spec §error-envelope). Everything else → legacy `push_failed`
-// (exit 1).
-//
-// Note (act-6d9546): the close push path can NOT surface
-// `remote_unreachable`. PushWithRetry stores a mid-loop ErrFetchFailed in
-// lastErr and retries to exhaustion, so a genuine fetch failure during the
-// retry loop surfaces as `push_exhausted` (with the fetch error carried in
-// details.last_error), never as a bare ErrFetchFailed. `remote_unreachable`
-// is reachable only from `act bootstrap-worker` (clone failure, exit 3 — see
-// bootstrap_worker.go and the spec error table). There is therefore no
-// ErrFetchFailed branch here.
-func closeErrorForPushFailure(err error) (any, int) {
-	var pe *gitops.PushExhaustedError
-	if errors.As(err, &pe) {
-		details := map[string]any{
-			"retry_count":                 pe.RetryCount,
-			"shallow_unshallow_attempted": pe.ShallowUnshallowAttempted,
-		}
-		if pe.LastError != nil {
-			details["last_error"] = pe.LastError.Error()
-		}
-		return CloseErrorOutput{
-			Error:   ErrPushExhausted,
-			Message: fmt.Sprintf("push retries exhausted after %d attempts; last error: %v", pe.RetryCount, pe.LastError),
-			Details: details,
-		}, 4
-	}
-	return CloseErrorOutput{
-		Error:   "push_failed",
-		Message: err.Error(),
-	}, 1
 }

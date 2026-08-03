@@ -85,8 +85,12 @@ you've read it.
    - **Don't construct the marker by hand** — slicing the id yourself is how it drifts
      into a form `act doctor` can't find.
 
+   - **Name the paths you changed** — don't commit with `-a`. Where several sessions
+     share one checkout (the norm for parallel agents), "all modified files" is
+     another session's in-flight work, and `-a` sweeps it into your commit.
+
    ```
-   git commit -a -m "<subject>" -m "Act-Id: act-XXXXXX"
+   git commit -m "<subject>" -m "Act-Id: act-XXXXXX" -- path/one path/two
    ```
 
 4. **Close the issue.** `act_finish` (MCP) or `act finish <id>` /
@@ -94,6 +98,11 @@ you've read it.
    it itself** — there is no separate `git push` for the close op — so concurrent agents
    see it immediately and session-death can't lose finished work. (No remote configured,
    e.g. a local-only repo → it commits locally and skips the push; close still succeeds.)
+   - **A failed push is not a failed write.** If origin is unreachable, act still exits 0:
+     the op is committed locally, queued in `.act/.pending-pushes`, and an
+     `act: WARNING:` block on stderr says so (`push_deferred: true` in `--json`). Do
+     **not** re-run the command — re-running duplicates the op. A later write publishes
+     the backlog. Anything that fails *before* the commit still exits non-zero.
 
 5. **Repeat** until `act ready` (or `act_next`) returns empty.
 

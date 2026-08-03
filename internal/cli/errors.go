@@ -48,13 +48,22 @@ const (
 	ErrHLCDrift          = "hlc_drift"
 	ErrIndexCorrupt      = "index_corrupt"
 	ErrImportInvalidJSON = "import_invalid_jsonl"
-	// Phase 2 push-retry codes (act-9f3fc5). `push_exhausted` is
-	// emitted by gitops.PushWithRetry after MaxRetries full retry
-	// rounds; `remote_unreachable` is emitted when the underlying
-	// `git fetch` fails for non-recoverable reasons (auth, DNS,
-	// missing remote). Both carry `details.retry_count` and, for
-	// `push_exhausted`, `details.shallow_unshallow_attempted`.
-	ErrPushExhausted     = "push_exhausted"
+	// RETIRED (act-89a595): `push_exhausted` used to be the write
+	// path's envelope when gitops.PushWithRetry gave up, exiting 4 on
+	// an op that had ALREADY been committed locally. That made the
+	// exit code lie — callers reading `rc != 0` as "the write didn't
+	// happen" retried and duplicated a durable op. A push failure on a
+	// committed op is now a deferral, not an error: the commit is
+	// queued to `.act/.pending-pushes`, a warning goes to stderr, and
+	// the command exits 0 (see publish.go). No CLI path emits
+	// `push_exhausted` any more; the underlying
+	// gitops.PushExhaustedError still exists and is reported as the
+	// deferral's reason.
+	//
+	// `remote_unreachable` is emitted when `act state import`'s clone
+	// of the remote act-state fails for non-recoverable reasons (auth,
+	// DNS, missing remote). It is a bootstrap-path code, not a
+	// write-path one.
 	ErrRemoteUnreachable = "remote_unreachable"
 	// ErrUpstreamNotConfigured is emitted by `act remote sync` (Phase 2
 	// ticket 6a) when `origin-upstream` is not configured in the

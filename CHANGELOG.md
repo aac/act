@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A failed push is no longer a failed write (act-89a595).** An `act` write
+  whose op was durably committed still exited non-zero when the push to origin
+  failed — envelope `push_exhausted` (exit 4) or `push_failed` (exit 1) on a
+  ticket that had, in fact, been filed. Agents applying the ordinary
+  `rc != 0 ⇒ the write didn't happen` rule retried and duplicated the op. The
+  publish leg now degrades instead of failing: the commit is queued to
+  `.act/.pending-pushes`, an unmissable `act: WARNING:` block goes to stderr
+  saying the op is committed but not pushed, and the command **exits 0**.
+  `act close --json` additionally reports `push_deferred: true` and
+  `push_deferred_reason`, so JSON consumers can distinguish "peers can't see
+  it yet" from "it didn't land".
+  - **The boundary is exactly the commit.** Every failure *before* the
+    auto-commit — op write, staging, hook, the commit itself — still exits
+    non-zero with its own envelope, because nothing landed. Both sides are
+    pinned by tests (`internal/cli/publish_test.go`).
+  - The `push_exhausted` envelope is **retired**; no CLI path emits it. Exit
+    4's remaining label in `act help errors` is `bootstrap_timeout`. The
+    underlying `gitops.PushExhaustedError` still exists and is reported as the
+    deferral's reason.
+- **act resolves untracked op-file checkout collisions itself (act-650378).**
+  The publish path's fetch-and-rebase detaches HEAD onto `origin/<branch>`, and
+  git refuses when that checkout would overwrite an untracked working-tree file
+  — `error: could not detach HEAD`, listing paths under `ops/`. That state is
+  routine (concurrent writers in a shared checkout, a state import), and act's
+  only advice was git's: "Please move or remove them", i.e. delete files inside
+  the tracker's own state directory, which an agent's permission classifier is
+  right to refuse. act now clears the collision and retries the rebase once:
+  a local op file byte-identical to origin's copy is deleted, one that
+  **differs** is moved (never deleted) to `.act/.collisions/<timestamp>/`, and
+  both actions are reported on stderr. Only untracked paths under `ops/` are
+  ever touched; any other colliding path aborts the whole resolution and the
+  original rebase error surfaces unchanged.
+- **The canonical loop no longer teaches `git commit -a` (act-57e743).** `act
+  help`, the bundled `act` skill, and the README showed the work commit with a
+  commit-all flag. Where several agent sessions share one checkout — the normal
+  parallel-agent setup — that commits whatever a *sibling* session has dirty at
+  that instant, which has already swept unrelated in-flight edits into
+  act-marked commits. All three surfaces now show an explicit pathspec
+  (`git commit -m "..." -m "Act-Id: ..." -- path/one path/two`) and say why.
 - **`act init` no longer touches the host repo unasked (act-66f987).** It used
   to commit `.gitignore` + a generated `CONTRIBUTING.md` stanza to the host
   repo on every init, and to write that stanza automatically for any repo with

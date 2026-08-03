@@ -71,6 +71,21 @@ type docClaim struct {
 // depend on it.
 var docClaimRegistry = []docClaim{
 	{
+		// act-57e743: the canonical loop's work commit names explicit
+		// paths, and both surfaces say why — in a checkout several
+		// sessions share, `-a` commits a sibling session's dirty files.
+		name:         "help-commit-pathspec-rationale",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "share one checkout",
+		testName:     "TestDocClaim_Docs_CommitPathspecRationale",
+	},
+	{
+		name:         "skill-commit-pathspec-rationale",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "share one checkout",
+		testName:     "TestDocClaim_Docs_CommitPathspecRationale",
+	},
+	{
 		// act-66f987: `act init` never commits to the host repo without
 		// --commit-host. README states it for adopters; the flag help
 		// states it at the CLI. TestDocClaim_Init_NoHostCommitByDefault
@@ -431,10 +446,13 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_AmbiguousPrefix_ExitsTwoWithIdAmbiguous",
 	},
 	{
-		name:         "errors-push-exhausted",
+		// act-89a595: the spec's error section now RETIRES
+		// `push_exhausted`; the asserting test proves no CLI path
+		// emits it and that the deferral replaced it.
+		name:         "errors-push-exhausted-retired",
 		docFile:      "docs/spec.md",
-		claimPattern: "push_exhausted",
-		testName:     "TestDocClaim_Errors_PushExhausted",
+		claimPattern: "`push_exhausted` (was exit 4) — retired by act-89a595",
+		testName:     "TestDocClaim_Errors_PushExhaustedRetired",
 	},
 	{
 		name:         "errors-remote-unreachable",
@@ -453,8 +471,9 @@ var docClaimRegistry = []docClaim{
 	// project pushes synchronously. The spec sentences in docs/spec.md
 	// are the load-bearing contract — agents reading the spec cold must
 	// learn (a) that auto-publish is on by default when origin is set,
-	// (b) that no-origin repos remain local-only, and (c) that retry
-	// exhaustion surfaces envelope push_exhausted exit 4. Behavioral
+	// (b) that no-origin repos remain local-only, and (c) that a failed
+	// publish on a committed op DEFERS (exit 0 + queue + warning)
+	// rather than failing the write — act-89a595. Behavioral
 	// assertions live in push_integration_test.go; these entries lock the
 	// doc claims that the behavior is supposed to match.
 	{
@@ -470,10 +489,19 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_PushOnWrite_NoOriginIsLocalOnly",
 	},
 	{
-		name:         "pushwrite-exhaustion-envelope",
+		// act-650378: act resolves untracked-op-file checkout collisions
+		// itself instead of emitting git's "move or remove them", which
+		// asks a human to delete files inside act's own state dir.
+		name:         "sync-resolves-untracked-op-collision",
 		docFile:      "docs/spec.md",
-		claimPattern: "exits 4 with envelope `push_exhausted`",
-		testName:     "TestDocClaim_PushOnWrite_ExhaustionSurfaceIsPushExhausted",
+		claimPattern: "Untracked op-file collisions are resolved by act, not by the operator (act-650378)",
+		testName:     "TestDocClaim_Sync_ResolvesUntrackedOpCollision",
+	},
+	{
+		name:         "pushwrite-publish-failure-defers",
+		docFile:      "docs/spec.md",
+		claimPattern: "**Publish failure is a deferral, not an error (act-89a595).**",
+		testName:     "TestDocClaim_PushOnWrite_PublishFailureDefers",
 	},
 	{
 		name:         "prefix-ok-create-parent",
@@ -1213,7 +1241,9 @@ var docClaimRegistry = []docClaim{
 	},
 	// help-errors-exit-{3,4,5} (act-387e01, act-a373bb): `act help errors`
 	// EXIT CODES block previously listed only exits 1 and 2. Exit 3
-	// (issue_not_found) and exit 4 (push_exhausted) were added by act-387e01;
+	// (issue_not_found) and exit 4 were added by act-387e01; exit 4's
+	// label became bootstrap_timeout when act-89a595 retired the
+	// push_exhausted envelope (a committed op no longer fails on push);
 	// exit 5 (claim_lost) by act-a373bb when the lost-claim code was
 	// reconciled to the spec. remote_unreachable is NOT listed under exit 4
 	// (act-6d9546): it is a bootstrap-worker exit-3 outcome, not a close-path
@@ -1226,9 +1256,9 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive",
 	},
 	{
-		name:         "help-errors-exit-4-push-exhausted",
+		name:         "help-errors-exit-4-bootstrap-timeout",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "exit 4   push_exhausted",
+		claimPattern: "exit 4   bootstrap_timeout",
 		testName:     "TestDocClaim_HelpErrors_ExitCodesListsThreeFourFive",
 	},
 	{
@@ -1739,6 +1769,12 @@ var unregisteredDocClaimOptOut = map[string]string{
 	// positive string to pin), so it lives here as an opt-out from the
 	// orphan check rather than a registry entry.
 	"TestDocClaim_Help_NoBareTrackerIDs": "cmd/act/help.go (absence: no bare act-XXXX outside example blocks)",
+	// act-57e743. Absence property: no instructional surface teaches the
+	// work commit with a commit-all flag (-a / -am / --all), which in a
+	// checkout shared by concurrent sessions commits a sibling session's
+	// dirty files. The positive half (the shared-checkout rationale must
+	// be present) IS in the registry above.
+	"TestDocClaim_Docs_NoCommitAllInCanonicalLoop": "cmd/act/help.go, skills/act/SKILL.md, README.md (absence: no `git commit -a` in the taught loop)",
 }
 
 // TestDocSweep_NoOrphanedDocClaimTests is the inverse pass: every
