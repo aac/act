@@ -46,6 +46,7 @@ func runUpdate(args []string) int {
 	descriptionFlag := fs.String("description", "", "new description (empty string explicitly clears the existing description. Contrast 'act create --description \"\"' which is silently accepted as a no-op — see act-f2c7).")
 	descriptionFileFlag := fs.String("description-file", "", "read new description from file (UTF-8); use - for stdin")
 	descriptionAppendFlag := fs.String("description-append", "", "append this text to the existing description instead of replacing it, separated by a blank line. This is the note-append path: `act update <id> --description-append \"...\"` annotates an issue in one command, with no read-modify-write of the whole body. Mutually exclusive with --description and --description-file.")
+	descriptionAppendFileFlag := fs.String("description-append-file", "", "append the contents of this file to the existing description (UTF-8); use - for stdin. The file twin of --description-append, for a note too long or too quote-hostile for one argv token. Mutually exclusive with --description, --description-file and --description-append.")
 	var acceptFlag stringSliceFlag
 	fs.Var(&acceptFlag, "accept", "replace the acceptance criteria with exactly these (repeatable; the set REPLACES any prior criteria, it does not append). Supplying --accept with no value clears all criteria. Use --accept-add to append, --accept-rm to remove one.")
 	var acceptAddFlag stringSliceFlag
@@ -138,6 +139,14 @@ func runUpdate(args []string) int {
 		emitBadFlag(*asJSON, "act update: --description-append is mutually exclusive with --description and --description-file")
 		return 2
 	}
+	// Same contradiction, one flag over: the file twin extends, so it
+	// cannot be paired with either replace flag — nor with its own inline
+	// form, which would leave the order of the two appends unstated
+	// (act-0bec25).
+	if visited["description-append-file"] && (visited["description"] || visited["description-file"] || visited["description-append"]) {
+		emitBadFlag(*asJSON, "act update: --description-append-file is mutually exclusive with --description, --description-file and --description-append")
+		return 2
+	}
 	if visited["description"] {
 		d := *descriptionFlag
 		opts.Description = &d
@@ -154,6 +163,15 @@ func runUpdate(args []string) int {
 	if visited["description-append"] {
 		a := *descriptionAppendFlag
 		opts.DescriptionAppend = &a
+	}
+	if visited["description-append-file"] {
+		body, code, errEnv := loadDescriptionPayload("--description-append-file", *descriptionAppendFileFlag)
+		if code != 0 {
+			errEnv["message"] = "act update: " + errEnv["message"].(string)
+			emitUpdate(*asJSON, errEnv)
+			return code
+		}
+		opts.DescriptionAppend = &body
 	}
 
 	root, err := findRepoRoot()

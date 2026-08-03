@@ -13,7 +13,14 @@ import (
 // which use len() rather than a rune count.
 const maxDescriptionBytes = 16384
 
-// loadDescriptionFile reads a description payload from path. If path is
+// loadDescriptionFile reads a description payload from path for
+// --description-file. See loadDescriptionPayload for the mechanics; this
+// is the flag-named wrapper the replace path uses.
+func loadDescriptionFile(path string) (string, int, map[string]any) {
+	return loadDescriptionPayload("--description-file", path)
+}
+
+// loadDescriptionPayload reads a description payload from path. If path is
 // "-", stdin is consumed instead. Returns (contents, exitCode, errorEnv).
 // On success exitCode is 0 and errorEnv is nil. On failure exitCode is 2
 // (bad flag / oversize / read error) or 3 (file missing) and errorEnv is
@@ -23,7 +30,11 @@ const maxDescriptionBytes = 16384
 // io.LimitReader) so we can distinguish "exactly 16384 bytes" from
 // "more than 16384 bytes" without pulling a multi-megabyte file into
 // memory.
-func loadDescriptionFile(path string) (string, int, map[string]any) {
+//
+// flagName names the flag in every error message so --description-file
+// and --description-append-file each report themselves rather than one
+// impersonating the other (act-0bec25).
+func loadDescriptionPayload(flagName, path string) (string, int, map[string]any) {
 	var (
 		r       io.Reader
 		closer  io.Closer
@@ -38,12 +49,12 @@ func loadDescriptionFile(path string) (string, int, map[string]any) {
 			if os.IsNotExist(err) {
 				return "", 3, map[string]any{
 					"error":   "file_not_found",
-					"message": fmt.Sprintf("--description-file %q: file not found", path),
+					"message": fmt.Sprintf("%s %q: file not found", flagName, path),
 				}
 			}
 			return "", 2, map[string]any{
 				"error":   "bad_flag",
-				"message": fmt.Sprintf("--description-file %q: %v", path, err),
+				"message": fmt.Sprintf("%s %q: %v", flagName, path, err),
 			}
 		}
 		r = f
@@ -57,15 +68,15 @@ func loadDescriptionFile(path string) (string, int, map[string]any) {
 	if err != nil {
 		return "", 2, map[string]any{
 			"error":   "bad_flag",
-			"message": fmt.Sprintf("--description-file %s: read: %v", display, err),
+			"message": fmt.Sprintf("%s %s: read: %v", flagName, display, err),
 		}
 	}
 	if len(buf) > maxDescriptionBytes {
 		return "", 2, map[string]any{
 			"error": "bad_flag",
 			"message": fmt.Sprintf(
-				"--description-file %s: content exceeds %d-char description limit",
-				display, maxDescriptionBytes,
+				"%s %s: content exceeds %d-char description limit",
+				flagName, display, maxDescriptionBytes,
 			),
 		}
 	}
