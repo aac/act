@@ -39,13 +39,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/gitops"
 )
 
 // RemoteStatus is the case-(f) / case-(g) / case-(h) / slow-write
@@ -258,10 +258,8 @@ func countLocalUnpushed(gitDir, branch string) (int, error) {
 	// Sanity: confirm refs/remotes/origin/<branch> exists. The remote
 	// ref may be unpopulated on a fresh clone that has not yet
 	// fetched; in that case rev-list errors and we return 0.
-	cmd := exec.Command("git", "--git-dir="+gitDir, "rev-list", "--count",
+	out, err := nestedProbe(gitDir).RunGit("rev-list", "--count",
 		"origin/"+branch+"..HEAD")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
 	if err != nil {
 		// Missing remote ref → exit 128 with stderr "unknown
 		// revision". Treat as "no baseline; nothing to report".
@@ -278,10 +276,8 @@ func countLocalUnpushed(gitDir, branch string) (int, error) {
 // origin-upstream/<branch>..origin/<branch>`. Returns 0 on missing
 // refs (treat as "no drift signal yet") or 0 on success.
 func countCommitsBehind(gitDir, branch string) (int, error) {
-	cmd := exec.Command("git", "--git-dir="+gitDir, "rev-list", "--count",
+	out, err := nestedProbe(gitDir).RunGit("rev-list", "--count",
 		UpstreamRemoteName+"/"+branch+".."+"origin/"+branch)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
 	if err != nil {
 		return 0, nil
 	}
@@ -306,18 +302,28 @@ func fetchDryRun(gitDir string, timeout time.Duration) (string, bool) {
 // fetchDryRunRemote is the generic helper backing both case (g)'s
 // origin probe and case (h)'s preparatory origin-upstream fetch.
 func fetchDryRunRemote(gitDir, remote string, timeout time.Duration) (string, bool) {
-	cmd := exec.Command("git", "--git-dir="+gitDir, "fetch", "--dry-run", remote)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	// Bound the wall-clock so a hung TCP connect doesn't stall doctor.
-	timer := time.AfterFunc(timeout, func() {
-		_ = cmd.Process.Kill()
-	})
-	out, err := cmd.CombinedOutput()
-	_ = timer
+	// act-40e336: `git fetch` fires detached auto-maintenance even under
+	// --dry-run (measured), so this probe in particular must not exec git
+	// directly — the shared handle's maintenance overrides are what keep a
+	// read-only doctor run from spawning a background process inside
+	// .act/.git. The wall-clock bound (a hung TCP connect must not stall
+	// doctor) now comes from the wrapper's own timeout path rather than a
+	// hand-rolled AfterFunc that never stopped its timer.
+	out, err := nestedProbe(gitDir).RunGitCombinedTimeout(timeout,
+		"fetch", "--dry-run", remote)
 	if err != nil {
-		return strings.TrimSpace(string(out)) + ": " + err.Error(), false
+		return strings.TrimSpace(out) + ": " + err.Error(), false
 	}
 	return "", true
+}
+
+// nestedProbe builds the read-only handle doctor's remote probes use
+// against the nested `.act/.git`. GIT_TERMINAL_PROMPT=0 preserves what
+// these call sites set directly before act-40e336 routed them through
+// gitops: a remote that wants credentials must fail fast rather than
+// block a non-interactive doctor run on a password prompt.
+func nestedProbe(gitDir string) *gitops.ActGitOps {
+	return gitops.NewActGitOpsFromGitDir(gitDir).WithEnv("GIT_TERMINAL_PROMPT=0")
 }
 
 // readDriftThresholdCommits reads `act.upstreamDriftThresholdCommits`

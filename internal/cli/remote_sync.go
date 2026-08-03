@@ -32,7 +32,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -319,16 +318,16 @@ func readPackedRef(gitDir, target string) (string, error) {
 // <branch>`. The combined output is folded into the returned error
 // so the fail-soft log captures the diagnostic.
 func gitPushUpstream(gitDir, branch string) error {
-	cmd := exec.Command("git", "--git-dir="+gitDir, "push", UpstreamRemoteName, branch)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Run(); err != nil {
-		out := strings.TrimSpace(buf.String())
-		if out == "" {
-			return err
+	// act-40e336: routed through the shared gitops handle rather than
+	// exec'ing git here, so this push gets the same git-dir pinning and
+	// maintenance overrides as every other nested-repo invocation.
+	out, err := gitops.NewActGitOpsFromGitDir(gitDir).
+		RunGitCombined("push", UpstreamRemoteName, branch)
+	if err != nil {
+		if trimmed := strings.TrimSpace(out); trimmed != "" {
+			return fmt.Errorf("%v: %s", err, trimmed)
 		}
-		return fmt.Errorf("%v: %s", err, out)
+		return err
 	}
 	return nil
 }

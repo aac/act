@@ -120,6 +120,23 @@ type GitOps struct {
 	// test-injection seam; production callers leave it zero and let the
 	// config key drive it (act-76cd7a).
 	FetchTimeout time.Duration
+
+	// Env holds extra `KEY=value` entries appended to the inherited
+	// process environment for every invocation this handle makes. Empty
+	// (the default) leaves the child's environment untouched — plain
+	// inheritance, which is what every write path wants. The remote-facing
+	// probes set GIT_TERMINAL_PROMPT=0 through it so a repo with a
+	// credential-prompting remote can't block a non-interactive run
+	// (act-40e336, preserving what those call sites did directly before
+	// they became callers of this package).
+	Env []string
+}
+
+// WithEnv appends `KEY=value` entries to the handle's child environment
+// and returns the receiver for chaining. See the Env field.
+func (g *GitOps) WithEnv(entries ...string) *GitOps {
+	g.Env = append(g.Env, entries...)
+	return g
 }
 
 // WithRunner overrides the git command runner (default exec.Command) and
@@ -172,6 +189,21 @@ func NewGitOps(repoRoot string) *GitOps {
 // repo is act's own, so act gets to decide how git maintains it. Commits
 // act makes into a caller's host repo keep the host's git configuration,
 // including its background-maintenance preference.
+//
+// KNOWN GAP — `git push` ignores this (measured on git 2.50.1, act-40e336).
+// Same repo, same config, same invocation shape:
+//
+//	commit -c maintenance.autoDetach=false → maintenance run --auto --no-detach
+//	push   -c maintenance.autoDetach=false → maintenance run --auto --detach
+//
+// `commit` and `fetch` (including `fetch --dry-run`) honor the override;
+// `push` spawns the detached child anyway. So routing every nested-repo
+// invocation through this handle removes the FOOTGUN — no call site can
+// forget the override — but it does not make act push-detach-free, and
+// this comment is the honest statement of that. Suppressing maintenance
+// outright for pushes (`maintenance.auto=false`) would work but trades
+// "wait for it" for "never do it", a different policy than the one this
+// variable encodes; that call is tracked separately.
 var noDetachedMaintenance = []string{
 	"-c", "maintenance.autoDetach=false",
 	"-c", "gc.autoDetach=false",
@@ -236,6 +268,16 @@ func NewActGitOps(actStateRoot string) *ActGitOps {
 	g := NewGitOps(actStateRoot)
 	g.gitDir = filepath.Join(actStateRoot, ".git")
 	return g
+}
+
+// NewActGitOpsFromGitDir is NewActGitOps for callers that already hold
+// the `<...>/.act/.git` path rather than the `.act/` working tree — the
+// remote-sync, remote-upstream and doctor code paths all thread a gitDir
+// around. Added by act-40e336 so those call sites could stop exec'ing git
+// directly (and so silently skipping the discovery pinning and the
+// maintenance overrides) without each having to re-derive the work tree.
+func NewActGitOpsFromGitDir(gitDir string) *ActGitOps {
+	return NewActGitOps(filepath.Dir(gitDir))
 }
 
 // HostGitOps is the read-only handle act uses to scan the host repo's
@@ -308,6 +350,54 @@ func (h *HostGitOps) CheckIgnored(path string) (bool, error) {
 	return h.inner.CheckIgnored(path)
 }
 
+// newCmd is THE construction point for every git subprocess act runs
+// against a repo handle — the single place the discovery pinning
+// (`--git-dir=`/`--work-tree=`, act-784b), the foreground-maintenance
+// overrides (act-5ed9f5), the working directory, and the environment are
+// applied. run, runCombined and runCombinedTimeout all build on it, and
+// the exported Run* escape hatches make it reachable from other packages.
+//
+// act-40e336: before this, five call sites in internal/cli exec'd git
+// directly against the nested `.act/.git` and therefore silently opted
+// out of all of the above — most visibly the maintenance overrides, so
+// PR #4's claim that detached auto-maintenance was handled was only true
+// for the writers that happened to go through this package. The fix is
+// structural: one construction point, everything else is a caller.
+// TestNoDirectGitExec (internal/gitops) is the guard that keeps it that
+// way.
+func (g *GitOps) newCmd(args []string) *exec.Cmd {
+	r := g.runner
+	if r == nil {
+		r = exec.Command
+	}
+	cmd := r("git", g.gitArgs(args)...)
+	cmd.Dir = g.RepoRoot
+	if len(g.Env) > 0 {
+		cmd.Env = append(os.Environ(), g.Env...)
+	}
+	return cmd
+}
+
+// RunGit runs `git <args...>` against this handle and returns stdout,
+// with stderr folded into the error on failure. It is the escape hatch
+// for callers outside this package that need a git invocation the typed
+// method surface doesn't cover (act-40e336) — they get the git-dir
+// pinning and maintenance overrides for free instead of re-deriving them
+// at each call site, which is exactly what went wrong before.
+func (g *GitOps) RunGit(args ...string) (string, error) { return g.run(args...) }
+
+// RunGitCombined is RunGit with stdout and stderr interleaved into one
+// string, for callers that surface git's diagnostic verbatim.
+func (g *GitOps) RunGitCombined(args ...string) (string, error) { return g.runCombined(args...) }
+
+// RunGitCombinedTimeout is RunGitCombined with a wall-clock bound; the
+// process is killed on expiry. A timeout <= 0 means unbounded. Doctor's
+// remote-reachability probes use this so a hung TCP connect can't stall
+// a diagnostic run.
+func (g *GitOps) RunGitCombinedTimeout(timeout time.Duration, args ...string) (string, error) {
+	return g.runCombinedTimeout(timeout, args...)
+}
+
 // run executes `git <args...>` with cwd=RepoRoot and returns stdout. stderr
 // is included in the error message on failure.
 //
@@ -315,12 +405,7 @@ func (h *HostGitOps) CheckIgnored(path string) (bool, error) {
 // gitArgs — see that function for the discovery pinning (act-784b) and the
 // foreground-maintenance overrides (act-5ed9f5).
 func (g *GitOps) run(args ...string) (string, error) {
-	r := g.runner
-	if r == nil {
-		r = exec.Command
-	}
-	cmd := r("git", g.gitArgs(args)...)
-	cmd.Dir = g.RepoRoot
+	cmd := g.newCmd(args)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

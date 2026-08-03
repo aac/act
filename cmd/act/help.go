@@ -781,4 +781,25 @@ EXIT CODES
   Failures BEFORE the commit — op write, staging, hook, commit — still
   exit non-zero, because nothing landed. (The old push_exhausted exit-4
   envelope was retired for exactly this reason; see act help errors.)
+
+AN OP WHOSE COMMIT FAILED IS INVISIBLE
+  The other half of that contract. When the commit step itself fails,
+  act moves the op file it had written OUT of .act/ops before
+  returning, so no later read can fold it: a non-zero exit and a later
+  'act show' / 'act list' always agree that the write did not happen.
+  Ops that DID land locally — the --offline / pending-push path — are
+  untouched by this; only the op whose own commit just failed is
+  withdrawn.
+
+  A STAGE failure is the documented exception: its usual cause is a
+  stale .act/.git lock, and the recovery runbook under "If a write is
+  interrupted" in the README needs that op file left in .act/ops.
+
+  The envelope is preserved, not deleted. It is moved intact to
+  .act/.failed-ops/<timestamp>/ops/... and that path is reported back:
+  under --json as details.quarantined_op, and in the plain-text message
+  as '(op file preserved at <path>; nothing was recorded)'. Copy it
+  back under .act/ops/ and commit it to replay the write verbatim, or
+  ignore it and simply re-run the command — re-running is safe here,
+  precisely because nothing was recorded.
 `
