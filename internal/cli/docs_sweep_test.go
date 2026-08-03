@@ -918,8 +918,24 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_MCP_CreateBlockedByAndBlocks",
 	},
 	{
+		// act-ca659d: read_only left every tool schema (2,048 B of the
+		// advertised surface) because nothing enforced it per-call. The spec
+		// now says so; the test pins both halves — schemas carry no
+		// read_only/no_commit/isolated property, and --read-only still
+		// refuses writes. Drift shape: someone re-adds the advisory param,
+		// or the trim quietly takes the enforcement with it.
+		name:         "mcp-read-only-is-server-level",
+		docFile:      "docs/spec.md",
+		claimPattern: "no tool schema advertises a `read_only` parameter",
+		testName:     "TestDocClaim_MCP_ReadOnlyIsServerLevelNotPerCallParam",
+	},
+	{
+		// act-ca659d moved the dep-add direction worked example OUT of the
+		// MCP schema description (re-read every turn) and INTO the skill
+		// (read once). The behavior claim is unchanged and the same test
+		// still asserts it at the tool boundary; only the doc surface moved.
 		name:         "mcp-dep-add-direction-example",
-		docFile:      "internal/mcp/server.go",
+		docFile:      "skills/act/SKILL.md",
 		claimPattern: "to make act-A block act-B (B must wait on A), call child=act-B, parent=act-A",
 		testName:     "TestDocClaim_MCP_DepAddDirectionExample",
 	},

@@ -126,6 +126,38 @@ requirement; a project can make it mandatory in its own `CLAUDE.md`.
 appends to the existing description, separated by a blank line — no read-modify-write of the
 whole body. `act log` is a read-only op viewer and takes no message.
 
+## Dependency edges: getting the direction right
+
+A `blocks` edge has a dependent and a blocker, and the two are easy to swap. Prefer the
+surfaces that name the *blocker* directly — they read the way you think:
+
+- **Filing something that's already blocked:** `act create "<title>" --blocked-by <blocker>`
+  (MCP: `blocked_by` on `act_create`, or `act_file_blocker`). The new issue stays out of
+  `act ready` until every blocker closes.
+- **Blocking an issue that already exists:** `act block <id> --blocked-by <blocker>`
+  (MCP: `act_block`). One atomic commit; `blocked` is derived from the edge, not stored.
+
+`act dep add` is the escape hatch, and its parameters read backwards as a sentence: the
+**child is blocked BY the parent**. Worked example:
+to make act-A block act-B (B must wait on A), call child=act-B, parent=act-A.
+The response carries a plain-English `summary` (e.g.
+"act-B is blocked by act-A") — **trust the summary over the raw child/parent fields.**
+`act show <id>` is the authority after the fact: its `blocked_by` lists what blocks this
+issue, its `blocks` lists what waits on it.
+
+## Editing acceptance criteria
+
+Three surfaces, easy to confuse — `accept` **replaces**, the other two are additive:
+
+| Intent | CLI | MCP |
+|---|---|---|
+| Replace the whole list | `--accept "<a>" --accept "<b>"` | `accept: ["<a>","<b>"]` |
+| Clear every criterion | `--accept ""` … see `act help` | `accept: []` |
+| Append one | `--accept-add "<c>"` | `accept_add: ["<c>"]` |
+| Remove by index (0-based) | `--accept-rm 1` | `accept_rm: [1]` |
+
+Rewriting one criterion is `--accept-rm N` plus `--accept-add`, not a full replace.
+
 ## External dependencies
 
 When an issue is blocked on work in another tracker that act doesn't import — a Linear

@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **MCP tool schemas are ~34% smaller (14,320 B → 9,420 B across the 16
+  tools).** The schema text is re-read on every turn of every session that
+  wires the server, so it is a recurring cost rather than a one-off.
+  - `read_only` no longer appears on any tool schema. It was a per-call
+    advisory nothing enforced (its own description deferred to the
+    server-level `--read-only` flag) and it cost ~2 KB — 14% of the whole
+    surface. Read-only enforcement is unchanged: `act mcp --read-only`
+    still refuses every write tool.
+  - `no_commit` and `isolated` are no longer advertised on the four tools
+    that carried them. An agent driving the tracker over MCP has no reason
+    to skip the auto-commit that makes a write durable and shareable.
+    `push` is still advertised.
+  - Cross-tool explanatory prose (the `act dep add` direction worked
+    example, the accept-vs-accept_add contrast) moved into the act skill,
+    which an agent reads once, out of the schemas it re-reads every turn.
+  - No parameter was renamed, retyped, or changed in required-ness, and
+    tool schemas leave `additionalProperties` unconstrained — a client
+    holding a cached older schema that still sends `read_only`,
+    `no_commit`, or `isolated` behaves exactly as before.
 - **BREAKING: `act list` now lists the working set — closed issues are
   excluded from the default listing.** A tracker accumulates closed work
   indefinitely; in the repo that surfaced this, 264 of 268 issues were

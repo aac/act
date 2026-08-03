@@ -337,6 +337,84 @@ func TestReadOnlyRefusal(t *testing.T) {
 	}
 }
 
+// TestDocClaim_MCP_ReadOnlyIsServerLevelNotPerCallParam asserts the spec's
+// MCP-tool-surface claim (act-ca659d): no advertised tool schema carries a
+// `read_only` property, AND read-only enforcement is unchanged — a write tool
+// is still refused when the server runs with --read-only.
+//
+// Asserted at the wire boundary (tools/list + tools/call), not against the
+// tools() slice, because the claim is about what a client actually reads and
+// what a client actually gets back. The two halves are one test on purpose:
+// dropping the param would be a regression if it had quietly taken the
+// enforcement with it.
+func TestDocClaim_MCP_ReadOnlyIsServerLevelNotPerCallParam(t *testing.T) {
+	root := makeRepo(t)
+
+	listed := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ro-list",
+		"method":  "tools/list",
+		"params":  map[string]any{},
+	})
+	if listed.Error != nil {
+		t.Fatalf("tools/list: unexpected error: %+v", listed.Error)
+	}
+	lm, _ := listed.Result.(map[string]any)
+	tools, _ := lm["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatalf("tools/list returned no tools")
+	}
+	for _, raw := range tools {
+		td, _ := raw.(map[string]any)
+		name, _ := td["name"].(string)
+		schema, _ := td["inputSchema"].(map[string]any)
+		props, _ := schema["properties"].(map[string]any)
+		for _, dropped := range []string{"read_only", "no_commit", "isolated"} {
+			if _, ok := props[dropped]; ok {
+				t.Errorf("tool %s advertises dropped plumbing param %q", name, dropped)
+			}
+		}
+	}
+
+	// Enforcement half: server-level --read-only still refuses a write tool.
+	refused := runOne(t, root, true, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ro-call",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "act_create",
+			"arguments": map[string]any{"title": "still refused"},
+		},
+	})
+	rm, _ := refused.Result.(map[string]any)
+	if isErr, _ := rm["isError"].(bool); !isErr {
+		t.Fatalf("read-only server did not refuse act_create: %+v", rm)
+	}
+
+	// The wire still ACCEPTS an unadvertised plumbing param (schemaObject
+	// leaves additionalProperties unconstrained), so a client with a cached
+	// older schema keeps working rather than erroring on an unknown field.
+	accepted := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ro-compat",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "act_list",
+			"arguments": map[string]any{
+				"limit":     1,
+				"read_only": true,
+			},
+		},
+	})
+	if accepted.Error != nil {
+		t.Fatalf("act_list with a legacy read_only arg errored: %+v", accepted.Error)
+	}
+	am, _ := accepted.Result.(map[string]any)
+	if isErr, _ := am["isError"].(bool); isErr {
+		t.Errorf("act_list rejected a legacy read_only arg: %+v", am)
+	}
+}
+
 // TestActNextHappyPath: with one ready issue and no contention, act_next
 // claims the issue and returns {claimed:true, issue:{...}, commit_marker}.
 func TestActNextHappyPath(t *testing.T) {
