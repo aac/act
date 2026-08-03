@@ -19,7 +19,14 @@ func collisionFixture(t *testing.T, localContent, remoteContent string) (*GitOps
 	t.Helper()
 	base := t.TempDir()
 	bare := filepath.Join(base, "bare.git")
-	runGit(t, base, "init", "-q", "--bare", bare)
+	// `-b main` explicitly: a bare repo's HEAD otherwise follows the
+	// host's init.defaultBranch, and a bare whose HEAD names a branch
+	// that never gets created makes the peer clone below land on an
+	// unborn branch with no local `main` to push. That is invisible on a
+	// machine configured with init.defaultBranch=main and fails on one
+	// that isn't — which is exactly how it got past a local run and
+	// broke CI.
+	runGit(t, base, "init", "-q", "--bare", "-b", "main", bare)
 
 	local := initRepo(t)
 	runGit(t, local, "remote", "add", "origin", bare)
@@ -29,6 +36,9 @@ func collisionFixture(t *testing.T, localContent, remoteContent string) (*GitOps
 	// the path.
 	peer := filepath.Join(base, "peer")
 	runGit(t, base, "clone", "-q", bare, peer)
+	// Belt-and-braces against the same class of surprise: pin the peer
+	// to origin/main regardless of what the clone chose to check out.
+	runGit(t, peer, "checkout", "-q", "-B", "main", "origin/main")
 	runGit(t, peer, "config", "user.email", "peer@example.com")
 	runGit(t, peer, "config", "user.name", "peer")
 	runGit(t, peer, "config", "commit.gpgsign", "false")
