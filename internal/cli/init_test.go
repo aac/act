@@ -62,8 +62,7 @@ func makeRepo(t *testing.T) string {
 
 func TestRunInit_HappyPath(t *testing.T) {
 	root := makeRepo(t)
-	out, code := RunInit(root, false, "machine-abc", "alice@example.com",
-		fakeNow(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)))
+	out, code := RunInit(root, InitOptions{Force: false, MachineID: "machine-abc", GitEmail: "alice@example.com", Now: fakeNow(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC))})
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
 	}
@@ -144,8 +143,7 @@ func TestDocClaim_InitCloseHookSample(t *testing.T) {
 
 	// (2) Behavior: a fresh `act init` drops the scaffold.
 	repo := makeRepo(t)
-	if _, code := RunInit(repo, false, "machine-abc", "alice@example.com",
-		fakeNow(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC))); code != 0 {
+	if _, code := RunInit(repo, InitOptions{Force: false, MachineID: "machine-abc", GitEmail: "alice@example.com", Now: fakeNow(time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC))}); code != 0 {
 		t.Fatalf("RunInit exit = %d, want 0", code)
 	}
 	hooksDir := config.Layout(repo).Hooks
@@ -177,7 +175,7 @@ func TestRunInit_NoGit(t *testing.T) {
 	if hasGitDir(root) {
 		t.Skip("test host has .git/ on an ancestor of the temp dir")
 	}
-	out, code := RunInit(root, false, "m", "e", nil)
+	out, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil})
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3", code)
 	}
@@ -192,10 +190,10 @@ func TestRunInit_NoGit(t *testing.T) {
 
 func TestRunInit_RejectsReinitWithoutForce(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
-	out, code := RunInit(root, false, "m", "e", nil)
+	out, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil})
 	if code != 1 {
 		t.Fatalf("second init code = %d, want 1", code)
 	}
@@ -211,12 +209,12 @@ func TestRunInit_RejectsReinitWithoutForce(t *testing.T) {
 func TestRunInit_ForceReinitOverwrites(t *testing.T) {
 	root := makeRepo(t)
 	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, code := RunInit(root, false, "m", "e", fakeNow(t1)); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: fakeNow(t1)}); code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
 
 	t2 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	_, code := RunInit(root, true, "m2", "e2", fakeNow(t2))
+	_, code := RunInit(root, InitOptions{Force: true, MachineID: "m2", GitEmail: "e2", Now: fakeNow(t2)})
 	if code != 0 {
 		t.Fatalf("force re-init code = %d, want 0", code)
 	}
@@ -239,7 +237,7 @@ func TestRunInit_ForceReinitOverwrites(t *testing.T) {
 // nested-repo tree is gitignored from the host).
 func TestRunInit_GitignoreEntry(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
 	gi := filepath.Join(root, ".gitignore")
@@ -252,7 +250,7 @@ func TestRunInit_GitignoreEntry(t *testing.T) {
 	}
 
 	// Second init with --force should not duplicate the entry.
-	if _, code := RunInit(root, true, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: true, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("second init code = %d", code)
 	}
 	second, err := os.ReadFile(gi)
@@ -285,7 +283,7 @@ func TestRunInit_GitignoreEntry(t *testing.T) {
 // see TestRunInit_GitignoreLeavesPreExistingAskAlone.
 func TestDocClaim_Init_GitignoreNoAskEntry(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	body, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -317,7 +315,7 @@ func TestRunInit_GitignoreLeavesPreExistingAskAlone(t *testing.T) {
 	if err := os.WriteFile(gi, []byte(".ask/\nnode_modules/\n"), 0o644); err != nil {
 		t.Fatalf("seed gitignore: %v", err)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	got, err := os.ReadFile(gi)
@@ -349,7 +347,7 @@ func TestRunInit_GitignorePreservesExisting(t *testing.T) {
 	if err := os.WriteFile(gi, []byte("node_modules/\n"), 0o644); err != nil {
 		t.Fatalf("seed gitignore: %v", err)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	got, err := os.ReadFile(gi)
@@ -373,7 +371,7 @@ func TestRunInit_GitignoreMissingNoTrailingNewline(t *testing.T) {
 	if err := os.WriteFile(gi, []byte("node_modules/"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	got, err := os.ReadFile(gi)
@@ -393,7 +391,7 @@ func TestRunInit_GitignoreMissingNoTrailingNewline(t *testing.T) {
 // act-managed block.
 func TestRunInit_PreCommitHookInstalled(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 
@@ -406,7 +404,7 @@ func TestRunInit_PreCommitHookInstalled(t *testing.T) {
 		t.Errorf("pre-commit hook missing act block: %q", string(body))
 	}
 	// Re-init should be idempotent: hook body must not grow.
-	if _, code := RunInit(root, true, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: true, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("re-init code = %d", code)
 	}
 	body2, err := os.ReadFile(hook)
@@ -433,7 +431,7 @@ func TestRunInit_PreCommitHookInstalled(t *testing.T) {
 // hint.
 func TestRunInit_PreCommitHookRejectsActPaths(t *testing.T) {
 	root := makeRealGitRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 
@@ -474,7 +472,7 @@ func TestRunInit_PreCommitHookAugmentsExisting(t *testing.T) {
 		t.Fatalf("seed pre-commit: %v", err)
 	}
 
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	got, err := os.ReadFile(filepath.Join(hooksDir, "pre-commit"))
@@ -490,7 +488,10 @@ func TestRunInit_PreCommitHookAugmentsExisting(t *testing.T) {
 }
 
 // TestRunInit_ContributingStanzaForGithubRemote verifies the CONTRIBUTING
-// stanza is emitted when origin points at github.com.
+// stanza is emitted when the caller opts in with --contributing (and that
+// re-init stays idempotent). Since act-66f987 the public-looking remote is
+// no longer sufficient on its own — see
+// TestDocClaim_Init_NoContributingWithoutOptIn.
 func TestRunInit_ContributingStanzaForGithubRemote(t *testing.T) {
 	root := makeRepo(t)
 	addRemote := exec.Command("git", "remote", "add", "origin", "https://github.com/example/repo.git")
@@ -498,7 +499,7 @@ func TestRunInit_ContributingStanzaForGithubRemote(t *testing.T) {
 	if out, err := addRemote.CombinedOutput(); err != nil {
 		t.Fatalf("add remote: %v\n%s", err, out)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Contributing: true}); code != 0 {
 		t.Fatalf("init code = %d", code)
 	}
 	body, err := os.ReadFile(filepath.Join(root, "CONTRIBUTING.md"))
@@ -512,7 +513,7 @@ func TestRunInit_ContributingStanzaForGithubRemote(t *testing.T) {
 		t.Errorf("CONTRIBUTING.md missing Act-Id reference: %q", string(body))
 	}
 	// Re-init is idempotent.
-	if _, code := RunInit(root, true, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: true, MachineID: "m", GitEmail: "e", Contributing: true}); code != 0 {
 		t.Fatalf("re-init: %d", code)
 	}
 	body2, err := os.ReadFile(filepath.Join(root, "CONTRIBUTING.md"))
@@ -525,7 +526,8 @@ func TestRunInit_ContributingStanzaForGithubRemote(t *testing.T) {
 }
 
 // TestRunInit_ContributingStanzaForSSHGithubRemote covers `git@github.com:`
-// shape which is the common SSH form.
+// shape which is the common SSH form. Opt-in via --contributing since
+// act-66f987.
 func TestRunInit_ContributingStanzaForSSHGithubRemote(t *testing.T) {
 	root := makeRepo(t)
 	addRemote := exec.Command("git", "remote", "add", "origin", "git@github.com:example/repo.git")
@@ -533,7 +535,7 @@ func TestRunInit_ContributingStanzaForSSHGithubRemote(t *testing.T) {
 	if out, err := addRemote.CombinedOutput(); err != nil {
 		t.Fatalf("add remote: %v\n%s", err, out)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Contributing: true}); code != 0 {
 		t.Fatalf("init: %d", code)
 	}
 	if _, err := os.Stat(filepath.Join(root, "CONTRIBUTING.md")); err != nil {
@@ -550,7 +552,7 @@ func TestRunInit_NoContributingStanzaForPrivateRemote(t *testing.T) {
 	if out, err := addRemote.CombinedOutput(); err != nil {
 		t.Fatalf("add remote: %v\n%s", err, out)
 	}
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init: %d", code)
 	}
 	if _, err := os.Stat(filepath.Join(root, "CONTRIBUTING.md")); !os.IsNotExist(err) {
@@ -562,7 +564,7 @@ func TestRunInit_NoContributingStanzaForPrivateRemote(t *testing.T) {
 // no remote at all also doesn't get the stanza.
 func TestRunInit_NoContributingStanzaForNoRemote(t *testing.T) {
 	root := makeRepo(t)
-	if _, code := RunInit(root, false, "m", "e", nil); code != 0 {
+	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil}); code != 0 {
 		t.Fatalf("init: %d", code)
 	}
 	if _, err := os.Stat(filepath.Join(root, "CONTRIBUTING.md")); !os.IsNotExist(err) {
@@ -576,7 +578,7 @@ func TestRunInit_NoContributingStanzaForNoRemote(t *testing.T) {
 // envelope; older shape (`committed`) is replaced.
 func TestRunInit_OutputJSONShape(t *testing.T) {
 	root := makeRepo(t)
-	out, code := RunInit(root, false, "m", "alice@example.com", nil)
+	out, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "alice@example.com", Now: nil})
 	if code != 0 {
 		t.Fatalf("code = %d", code)
 	}
@@ -625,9 +627,10 @@ func makeRealGitRepo(t *testing.T) string {
 	return dir
 }
 
-// TestRunInit_HostCommitOnRealRepo asserts that on a host repo with a
-// HEAD, RunInit ends up with a host-side commit that contains only
-// .gitignore (and CONTRIBUTING.md when present) — not -A, no DIRTY work.
+// TestRunInit_HostCommitOnRealRepo asserts that when the caller opts in
+// with --commit-host, RunInit's host-side commit contains only .gitignore
+// (and CONTRIBUTING.md when present) — not -A, no DIRTY work. The default
+// (no commit at all) is asserted by TestDocClaim_Init_NoHostCommitByDefault.
 func TestRunInit_HostCommitOnRealRepo(t *testing.T) {
 	root := makeRealGitRepo(t)
 
@@ -639,7 +642,7 @@ func TestRunInit_HostCommitOnRealRepo(t *testing.T) {
 
 	beforeCount := mustGitCommitCount(t, root)
 
-	out, code := RunInit(root, false, "m", "alice@example.com", nil)
+	out, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "alice@example.com", CommitHost: true})
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; out=%+v", code, out)
 	}
@@ -680,7 +683,7 @@ func TestRunInit_ErrorJSONShape(t *testing.T) {
 	if hasGitDir(root) {
 		t.Skip("temp dir has ancestor .git")
 	}
-	out, code := RunInit(root, false, "m", "e", nil)
+	out, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: nil})
 	if code != 3 {
 		t.Fatalf("code = %d", code)
 	}

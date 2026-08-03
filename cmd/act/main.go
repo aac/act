@@ -222,6 +222,11 @@ func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "reinitialize even if .act/ already exists")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	// act-66f987: both host-repo effects are opt-in. Without them init
+	// writes .gitignore and the pre-commit hook into the working tree and
+	// commits nothing to the host repo.
+	contributing := fs.Bool("contributing", false, "append the Act-Id trailer stanza to the host repo's CONTRIBUTING.md (off by default; act init never edits CONTRIBUTING.md unasked)")
+	commitHost := fs.Bool("commit-host", false, "commit the host-side files act init wrote (.gitignore, and CONTRIBUTING.md with --contributing); off by default — act init never commits to the host repo unasked")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -237,7 +242,13 @@ func runInit(args []string) int {
 		return 3
 	}
 
-	out, code := cli.RunInit(root, *force, getMachineID(), getGitEmail(), nil)
+	out, code := cli.RunInit(root, cli.InitOptions{
+		Force:        *force,
+		MachineID:    getMachineID(),
+		GitEmail:     getGitEmail(),
+		Contributing: *contributing,
+		CommitHost:   *commitHost,
+	})
 	emitInit(*asJSON, out, code == 0)
 	return code
 }
@@ -269,7 +280,7 @@ func emitInit(asJSON bool, payload any, success bool) {
 			fmt.Println(`Bootstrapped nested .act/ git repo with initial commit.`)
 		}
 		if hc, _ := m["host_committed"].(bool); hc {
-			fmt.Println(`Committed host-side changes (.gitignore + CONTRIBUTING stanza).`)
+			fmt.Println(`Committed host-side changes (--commit-host).`)
 		} else if gi, _ := m["gitignore_updated"].(bool); gi {
 			fmt.Println(`Added .act/ to host .gitignore (commit pending; run git commit when ready).`)
 		}
@@ -277,7 +288,20 @@ func emitInit(asJSON bool, payload any, success bool) {
 			fmt.Println(`Installed host pre-commit hook to reject accidental .act/* stages.`)
 		}
 		if ce, _ := m["contributing_emitted"].(bool); ce {
-			fmt.Println(`Appended Act-Id trailer stanza to CONTRIBUTING.md (public-looking remote detected).`)
+			fmt.Println(`Appended Act-Id trailer stanza to CONTRIBUTING.md (--contributing).`)
+		}
+		// act-66f987: name every host-repo file left uncommitted, and make
+		// the CONTRIBUTING offer a suggestion the operator opts into rather
+		// than an edit they discover after the fact.
+		if files, ok := m["host_files_uncommitted"].([]any); ok && len(files) > 0 {
+			parts := make([]string, 0, len(files))
+			for _, f := range files {
+				parts = append(parts, fmt.Sprintf("%v", f))
+			}
+			fmt.Printf("Left uncommitted in the host repo (act init does not commit to it): %s\n", strings.Join(parts, ", "))
+		}
+		if cs, _ := m["contributing_suggested"].(bool); cs {
+			fmt.Println(`Suggestion: this repo has a public-looking remote. To document the Act-Id trailer for outside contributors, re-run with 'act init --force --contributing' (act init never edits CONTRIBUTING.md unasked).`)
 		}
 		if pf, ok := m["partial_failures"].([]any); ok && len(pf) > 0 {
 			fmt.Fprintln(os.Stderr, "warning: some host-side steps did not complete:")
@@ -488,6 +512,7 @@ func runLog(args []string) int {
 	byIssue := fs.String("by-issue", "", "only include ops for this issue id (full or unique prefix)")
 	typeFlag := fs.String("type", "", "only include ops of these types (comma-separated, e.g. create,close)")
 	summary := fs.Bool("summary", false, "render one line per op (timestamp, op_type, 8-char hash, summary) instead of full envelopes")
+	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -512,7 +537,7 @@ func runLog(args []string) int {
 		return 2
 	}
 
-	opts := cli.LogOptions{ByIssue: *byIssue, Summary: *summary}
+	opts := cli.LogOptions{ByIssue: *byIssue, Summary: *summary, NoFetch: *noFetch}
 	if *since != "" {
 		d, perr := parseSinceDuration(*since)
 		if perr != nil {
@@ -541,6 +566,15 @@ func runLog(args []string) int {
 		return code
 	}
 
+	res, ok := out.(cli.LogResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act log: unexpected output type %T\n", out)
+		return 1
+	}
+	// A failed refresh is non-fatal but never silent, in both modes
+	// (act-3803ac).
+	defer fmt.Fprint(os.Stderr, cli.FormatRefreshWarning(res.Refresh))
+
 	if *asJSON {
 		data, err := json.Marshal(out)
 		if err != nil {
@@ -549,12 +583,6 @@ func runLog(args []string) int {
 		}
 		fmt.Println(string(data))
 		return 0
-	}
-
-	res, ok := out.(cli.LogResult)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "act log: unexpected output type %T\n", out)
-		return 1
 	}
 	if *summary {
 		fmt.Print(cli.FormatLogHumanSummary(res))
@@ -635,6 +663,7 @@ func runSearch(args []string) int {
 	status := fs.String("status", "", "comma-separated status filter")
 	limit := fs.Int("limit", 50, "maximum number of results")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -664,16 +693,26 @@ func runSearch(args []string) int {
 	}
 
 	out, code := cli.RunSearch(root, query, cli.SearchOptions{
-		In:     *in,
-		Status: *status,
-		Limit:  *limit,
-		AsJSON: *asJSON,
+		In:      *in,
+		Status:  *status,
+		Limit:   *limit,
+		AsJSON:  *asJSON,
+		NoFetch: *noFetch,
 	})
 	if code != 0 {
 		m, _ := toMap(out)
 		emitSearchError(*asJSON, m)
 		return code
 	}
+
+	res, ok := out.(cli.SearchResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act search: unexpected output type %T\n", out)
+		return 1
+	}
+	// A failed refresh is non-fatal but never silent, in both modes
+	// (act-3803ac).
+	defer fmt.Fprint(os.Stderr, cli.FormatRefreshWarning(res.Refresh))
 
 	if *asJSON {
 		data, jerr := json.Marshal(out)
@@ -685,11 +724,6 @@ func runSearch(args []string) int {
 		return 0
 	}
 
-	res, ok := out.(cli.SearchResult)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "act search: unexpected output type %T\n", out)
-		return 1
-	}
 	fmt.Print(cli.FormatSearchHuman(res))
 	return 0
 }
@@ -711,6 +745,7 @@ func runList(args []string) int {
 	limit := fs.Int("limit", 200, "maximum number of issues to return; --limit 0 means no limit (return every match). A capped listing prints a WARNING to stderr naming how many issues were hidden.")
 	sortFlag := fs.String("sort", "", "comma-separated sort keys; prefix with - for desc; default priority,-created_at")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
+	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -738,6 +773,7 @@ func runList(args []string) int {
 		Limit:    *limit,
 		Sort:     *sortFlag,
 		AsJSON:   *asJSON,
+		NoFetch:  *noFetch,
 	})
 	if code != 0 {
 		m, _ := toMap(out)
@@ -769,6 +805,8 @@ func runList(args []string) int {
 	if notice := cli.FormatListTruncationNotice(res); notice != "" {
 		fmt.Fprint(os.Stderr, notice)
 	}
+	// Same rule for a failed refresh: non-fatal, never silent (act-3803ac).
+	fmt.Fprint(os.Stderr, cli.FormatRefreshWarning(res.Refresh))
 	return 0
 }
 
@@ -869,6 +907,7 @@ func runShow(args []string) int {
 	includeOps := fs.Bool("include-ops", false, "inline the HLC-sorted op stream alongside the snapshot")
 	commitMarker := fs.Bool("commit-marker", false, "emit just the Act-Id: act-XXXX commit-message trailer for this issue and exit")
 	full := fs.Bool("full", false, "render description and closed_reason without truncation in human format (--json is always full)")
+	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -901,6 +940,7 @@ func runShow(args []string) int {
 		AsJSON:     *asJSON,
 		IncludeOps: *includeOps,
 		Full:       *full,
+		NoFetch:    *noFetch,
 	})
 	if code != 0 {
 		m, _ := toMap(out)
@@ -932,6 +972,12 @@ func runShow(args []string) int {
 			})
 			return 3
 		}
+	}
+
+	// A failed refresh is non-fatal but never silent, in both modes
+	// (act-3803ac). Tombstoned results carry no refresh info.
+	if sr, ok := out.(cli.ShowResult); ok {
+		defer fmt.Fprint(os.Stderr, cli.FormatRefreshWarning(sr.Refresh))
 	}
 
 	if *asJSON {

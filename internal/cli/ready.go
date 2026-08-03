@@ -43,6 +43,12 @@ type ReadyOptions struct {
 	// before reading state, regardless of FETCH_HEAD freshness. Wired by
 	// `act ready --fresh` and the `--no-cache` alias (Phase 2 ticket 5).
 	Fresh bool
+	// NoFetch, when true, makes this a genuinely non-mutating read: the
+	// cache layer skips the fetch+rebase entirely and the command
+	// answers from on-disk state (act-3803ac). Wired by `--no-fetch`;
+	// ACT_NO_FETCH=1 has the same effect process-wide. Mutually
+	// exclusive with Fresh — the CLI rejects both together.
+	NoFetch bool
 }
 
 // ReadyIssue is one row of the ready set.
@@ -86,6 +92,11 @@ type ReadyResult struct {
 	Total int `json:"total"`
 	// Truncated reports whether Limit dropped ready issues.
 	Truncated bool `json:"truncated"`
+	// Refresh reports what the read-path cache layer did before this
+	// answer was produced — served from cache, freshly fetched, skipped
+	// under --no-fetch, or failed. Omitted when there is nothing to say
+	// (no .act/ at all). act-3803ac.
+	Refresh *RefreshInfo `json:"refresh,omitempty"`
 }
 
 // ReadyErrorOutput is the failure envelope. Candidates is non-nil only on
@@ -138,12 +149,18 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		}, 3
 	}
 
-	// Phase 2 ticket 5: read-path cache check. Fetch+rebase if FETCH_HEAD
-	// is stale or a bypass is set; no-op silently when there's no remote
-	// or no nested .git yet. Errors here are non-fatal — the underlying
-	// command falls through to read whatever state is currently on disk
-	// so a transient network failure doesn't break read-only commands.
-	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
+	// Read-path cache check. Fetch+rebase if FETCH_HEAD is stale or a
+	// bypass is set; no-op silently when there's no remote, no nested
+	// .git, or --no-fetch/ACT_NO_FETCH=1 asked for a genuinely
+	// non-mutating read (act-3803ac).
+	//
+	// The outcome is NOT discarded (it used to be): a failed refresh is
+	// non-fatal — we fall through to on-disk state so a transient network
+	// failure doesn't break a read — but it is REPORTED, via the
+	// `refresh` key and a stderr warning, so served-from-cache and
+	// could-not-refresh stop looking identical.
+	refreshRes, refreshErr := MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh, NoFetch: opts.NoFetch})
+	refresh := NewRefreshInfo(refreshRes, refreshErr)
 
 	// Step 2: open + rebuild the index.
 	idx, err := index.Open(paths.IndexDB)
@@ -314,7 +331,7 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 	}
 	prefixes := ids.ShortestUniquePrefixes(allIDs)
 
-	out := ReadyResult{Ready: make([]ReadyIssue, 0, len(ready))}
+	out := ReadyResult{Ready: make([]ReadyIssue, 0, len(ready)), Refresh: refresh}
 	for _, r := range ready {
 		short := prefixes[r.ID]
 		if short == "" {

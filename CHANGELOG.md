@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`act init` no longer touches the host repo unasked (act-66f987).** It used
+  to commit `.gitignore` + a generated `CONTRIBUTING.md` stanza to the host
+  repo on every init, and to write that stanza automatically for any repo with
+  a github/gitlab/bitbucket remote. Across the 2026-07-28/29 bootstrap of 17
+  repos that produced an unrequested commit in every host repo with host-side
+  changes; 13 needed hand-reverting.
+  - The host commit is now opt-in: `act init --commit-host`. By default init
+    writes `.gitignore` and the pre-commit hook into the working tree, names
+    them in `host_files_uncommitted`, and leaves the commit to the operator.
+  - The CONTRIBUTING stanza is opt-in: `act init --contributing`. A
+    public-looking remote now only sets `contributing_suggested` and prints
+    the offer.
+  - An already-active pre-close gate (`.act/hooks/close`) is left alone and no
+    `close.sample` is dropped beside it, including under `--force`.
+  - `cli.RunInit` takes an `InitOptions` struct instead of four positional
+    parameters. The MCP `act_init` tool is unchanged and deliberately does not
+    expose either opt-in.
+
+### Added
+- **A genuinely non-mutating read mode: `--no-fetch` / `ACT_NO_FETCH=1`
+  (act-3803ac).** `ready`, `list`, `show`, `log` and `search` refresh the
+  store before reading — a `git pull --rebase` inside the nested `.act/.git`
+  that, when HEAD moves, deletes the fold checkpoint and `index.db`. A sweep
+  across N stores was therefore N rebases into repos an agent fleet may be
+  writing to concurrently, and every reader had to reimplement a busy-window
+  discipline or accept the hazard. Under `--no-fetch` the read returns before
+  any git command runs: HEAD, `FETCH_HEAD`, the fold checkpoint and `index.db`
+  all come out unchanged.
+- **Read commands report the refresh outcome instead of discarding it
+  (act-3803ac).** The five read paths called `_, _ = MaybeRefresh(...)`, so a
+  failed refresh — unreachable bare host, no network — looked exactly like a
+  successful one and the command served on-disk state with exit 0. `--json`
+  output now carries a `refresh` object (`reason`, `fetched`, `invalidated`,
+  `age_seconds`, and `error` when the refresh failed), and a failed refresh
+  prints a WARNING to stderr in both human and `--json` mode. The command
+  still exits 0: stale-but-readable is a usable answer as long as the caller
+  is told. `age_seconds` is the age of `FETCH_HEAD`, which saves aggregators
+  from stat'ing it themselves.
+- **`act ready` rejects `--no-fetch` with `--fresh`/`--no-cache`** (exit 2)
+  rather than silently picking one; they ask for opposite things.
+
 ### Fixed
 - **`act ready --limit 0` returns every ready issue, and a capped ready set
   now says so.** `--limit 0` meant "no limit" on `act list` and "fall back to

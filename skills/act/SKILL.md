@@ -222,6 +222,9 @@ locally and offline (no remote or CI required). The hook reads the op from `$ACT
 `$ACT_OP_TYPE`, `$ACT_OP_ID`, `$ACT_HOOK_PHASE`, and the nested state directory from
 `$ACT_STATE_PATH`.
 
+Once a gate is active, `act init` leaves it alone: an existing `.act/hooks/close` is never
+rewritten, and no `close.sample` is dropped beside it — including on `act init --force`.
+
 **Wire it to this project's check.** The scaffold is toolchain-agnostic; put the project's
 real definition-of-done command in it — `go test ./...`, `npm test`, `pytest`, `make check`,
 whatever this project uses. When you start work in a project, activate the gate if it isn't

@@ -43,8 +43,7 @@ import (
 func makeHarvestHost(t *testing.T) string {
 	t.Helper()
 	host := makeRepo(t)
-	out, code := RunInit(host, false, "machine-host", "host@example.com",
-		func() time.Time { return time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) })
+	out, code := RunInit(host, InitOptions{Force: false, MachineID: "machine-host", GitEmail: "host@example.com", Now: func() time.Time { return time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) }})
 	if code != 0 {
 		t.Fatalf("RunInit host: code=%d out=%+v", code, out)
 	}

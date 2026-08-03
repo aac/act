@@ -45,6 +45,12 @@ type ShowOptions struct {
 	// ticket 5). Not surfaced as a CLI flag on `act show` in this phase;
 	// callers wire it programmatically or rely on ACT_DISPATCH_MODE.
 	Fresh bool
+	// NoFetch, when true, makes this a genuinely non-mutating read: the
+	// cache layer skips the fetch+rebase entirely and the command
+	// answers from on-disk state (act-3803ac). Wired by `--no-fetch`;
+	// ACT_NO_FETCH=1 has the same effect process-wide. Mutually
+	// exclusive with Fresh — the CLI rejects both together.
+	NoFetch bool
 }
 
 // ShowResult is the success-shape returned by RunShow on a live (non-
@@ -73,6 +79,10 @@ type ShowResult struct {
 	// guard on description and closed_reason and render them verbatim
 	// (act-3c89). Plumbed in from ShowOptions.Full.
 	Full bool
+	// Refresh reports what the read-path cache layer did before this
+	// answer was produced (act-3803ac). ShowJSON emits it under
+	// `refresh`; nil when there is nothing to say.
+	Refresh *RefreshInfo
 }
 
 // ShowTombstoned is the success-shape returned by RunShow when the resolved
@@ -121,9 +131,18 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 		}, 3
 	}
 
-	// Phase 2 ticket 5: read-path cache check (no flag wiring on show
-	// yet; bypass via ACT_DISPATCH_MODE=1 or the option is supported).
-	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
+	// Read-path cache check. Fetch+rebase if FETCH_HEAD is stale or a
+	// bypass is set; no-op silently when there's no remote, no nested
+	// .git, or --no-fetch/ACT_NO_FETCH=1 asked for a genuinely
+	// non-mutating read (act-3803ac).
+	//
+	// The outcome is NOT discarded (it used to be): a failed refresh is
+	// non-fatal — we fall through to on-disk state so a transient network
+	// failure doesn't break a read — but it is REPORTED, via the
+	// `refresh` key and a stderr warning, so served-from-cache and
+	// could-not-refresh stop looking identical.
+	refreshRes, refreshErr := MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh, NoFetch: opts.NoFetch})
+	refresh := NewRefreshInfo(refreshRes, refreshErr)
 
 	// Step 2: resolve id against known full ids on disk.
 	allIDs, err := listIssueIDs(paths.Ops)
@@ -205,7 +224,7 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	rendered["blocked_by"] = blockedBy
 	rendered["blocks"] = blocksReverseFromIndex(paths, full)
 
-	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps, Full: opts.Full}
+	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps, Full: opts.Full, Refresh: refresh}
 
 	// Step 6a: list work commits attributed to this issue via the
 	// `(act-XXXX)` marker. Read-side, no caching, single git invocation;
@@ -518,6 +537,9 @@ func (r ShowResult) ShowJSON() map[string]any {
 		out["commits"] = []gitops.WorkCommit{}
 	} else {
 		out["commits"] = r.Commits
+	}
+	if r.Refresh != nil {
+		out["refresh"] = r.Refresh
 	}
 	return out
 }

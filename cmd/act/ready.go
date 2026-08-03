@@ -30,7 +30,15 @@ func runReady(args []string) int {
 	// bypassed by ACT_DISPATCH_MODE=1 in the environment.
 	fresh := fs.Bool("fresh", false, "bypass the read-path TTL cache and fetch+rebase before reading")
 	noCache := fs.Bool("no-cache", false, "alias for --fresh: bypass the read-path TTL cache and fetch+rebase")
+	// act-3803ac: the opposite pole of --fresh. --fresh forces the
+	// mutating refresh; --no-fetch skips it entirely. Asking for both is
+	// a contradiction, so we reject it rather than silently pick.
+	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *noFetch && (*fresh || *noCache) {
+		emitBadFlag(*asJSON, "act ready: --no-fetch and --fresh/--no-cache are mutually exclusive")
 		return 2
 	}
 	if *as != "" && !*mine {
@@ -79,6 +87,7 @@ func runReady(args []string) int {
 		AssigneeFilter: assigneeFilter,
 		AsJSON:         *asJSON,
 		Fresh:          *fresh || *noCache,
+		NoFetch:        *noFetch,
 	})
 	if code != 0 {
 		m, _ := toMap(out)
@@ -110,6 +119,10 @@ func runReady(args []string) int {
 	if notice := cli.FormatReadyTruncationNotice(res); notice != "" {
 		fmt.Fprint(os.Stderr, notice)
 	}
+	// A failed refresh is non-fatal (we served on-disk state) but must not
+	// be silent — same stderr-in-both-modes rule as the truncation notice
+	// above. act-3803ac.
+	fmt.Fprint(os.Stderr, cli.FormatRefreshWarning(res.Refresh))
 	return 0
 }
 
