@@ -24,6 +24,11 @@ import (
 type LogResult struct {
 	ID  string        `json:"id"`
 	Ops []op.Envelope `json:"ops"`
+	// Refresh reports what the read-path cache layer did before this
+	// answer was produced — served from cache, freshly fetched, skipped
+	// under --no-fetch, or failed. Omitted when there is nothing to say
+	// (no .act/ at all). act-3803ac.
+	Refresh *RefreshInfo `json:"refresh,omitempty"`
 }
 
 // LogOptions carries the filter knobs for RunLog. All fields are optional;
@@ -49,6 +54,12 @@ type LogOptions struct {
 	ByIssue string
 	Types   []string
 	Summary bool
+	// NoFetch, when true, makes this a genuinely non-mutating read: the
+	// cache layer skips the fetch+rebase entirely and the command
+	// answers from on-disk state (act-3803ac). Wired by `--no-fetch`;
+	// ACT_NO_FETCH=1 has the same effect process-wide. `act log` has no
+	// --fresh counterpart, so there is nothing to conflict with.
+	NoFetch bool
 }
 
 // LogErrorOutput is the structured shape returned to the caller when log
@@ -115,10 +126,18 @@ func RunLogOpts(repoRoot, idOrPrefix string, asJSON bool, opts LogOptions) (outp
 		}, 3
 	}
 
-	// Phase 2 ticket 5: read-path cache check. RunLog has no Fresh
-	// option struct today, so only env-based ACT_DISPATCH_MODE bypass
-	// applies; the default TTL gate still fires.
-	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{})
+	// Read-path cache check. Fetch+rebase if FETCH_HEAD is stale or a
+	// bypass is set; no-op silently when there's no remote, no nested
+	// .git, or --no-fetch/ACT_NO_FETCH=1 asked for a genuinely
+	// non-mutating read (act-3803ac).
+	//
+	// The outcome is NOT discarded (it used to be): a failed refresh is
+	// non-fatal — we fall through to on-disk state so a transient network
+	// failure doesn't break a read — but it is REPORTED, via the
+	// `refresh` key and a stderr warning, so served-from-cache and
+	// could-not-refresh stop looking identical.
+	refreshRes, refreshErr := MaybeRefresh(repoRoot, MaybeRefreshOptions{NoFetch: opts.NoFetch})
+	refresh := NewRefreshInfo(refreshRes, refreshErr)
 
 	opsDir := filepath.Join(actDir, "ops")
 	allIDs, err := listIssueIDs(opsDir)
@@ -192,7 +211,7 @@ func RunLogOpts(repoRoot, idOrPrefix string, asJSON bool, opts LogOptions) (outp
 
 	envs = applyLogFilters(envs, sinceMs, typeFilter)
 	sortLogOps(envs)
-	return LogResult{ID: resolvedID, Ops: envelopesOnly(envs)}, 0
+	return LogResult{ID: resolvedID, Ops: envelopesOnly(envs), Refresh: refresh}, 0
 }
 
 // applyLogFilters returns the subset of envs that pass the active

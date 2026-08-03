@@ -32,8 +32,7 @@ func makeRealRepo(t *testing.T) string {
 	}
 	mustGitMCP(t, dir, "add", "README")
 	mustGitMCP(t, dir, "commit", "-q", "--no-verify", "-m", "init")
-	out, code := cli.RunInit(dir, false, "machine-mcp", "mcp@example.com",
-		func() time.Time { return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC) })
+	out, code := cli.RunInit(dir, cli.InitOptions{Force: false, MachineID: "machine-mcp", GitEmail: "mcp@example.com", Now: func() time.Time { return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC) }})
 	if code != 0 {
 		t.Fatalf("RunInit failed: code=%d out=%+v", code, out)
 	}
@@ -82,8 +81,7 @@ func makeRepo(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir .git: %v", err)
 	}
-	_, code := cli.RunInit(root, false, "machine-mcp", "mcp@example.com",
-		func() time.Time { return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC) })
+	_, code := cli.RunInit(root, cli.InitOptions{Force: false, MachineID: "machine-mcp", GitEmail: "mcp@example.com", Now: func() time.Time { return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC) }})
 	if code != 0 {
 		t.Fatalf("RunInit failed: code=%d", code)
 	}

@@ -124,7 +124,9 @@ Beyond the defense-in-depth pre-commit hook (item 7 in the delta), document the 
 
 ### CONTRIBUTING template
 
-`act init` emits a short stanza into CONTRIBUTING.md (or appends to an existing one) for any host repo with a public-looking remote: "Maintainers use a tracker that adds an `Act-Id:` trailer to commit messages. External contributors don't need to do anything with these — submit PRs normally and we'll add trailers on merge if relevant." This makes the convention discoverable without requiring contributor participation. (OSS review finding #7.)
+`act init --contributing` appends a short stanza to CONTRIBUTING.md (creating it if absent): "Maintainers use a tracker that adds an `Act-Id:` trailer to commit messages. External contributors don't need to do anything with these — submit PRs normally and we'll add trailers on merge if relevant." This makes the convention discoverable without requiring contributor participation. (OSS review finding #7.)
+
+**Revised by act-66f987 (host-repo restraint).** The stanza was originally written automatically for any host repo with a public-looking remote, and the host-side changes were committed to the host repo in the same run. Across the 2026-07-28/29 bootstrap of 17 repos that produced an unrequested commit in every host repo with host-side changes; 13 needed hand-reverting. Both effects are now opt-in: `--contributing` writes the stanza, `--commit-host` makes the commit. A public-looking remote only sets `contributing_suggested` so the CLI can print the offer. `.gitignore` and the host pre-commit hook are still written to the working tree — act's correctness depends on the host not tracking `.act/` — and are reported in `host_files_uncommitted` for the operator to commit.
 
 ## Migration story
 

@@ -248,8 +248,7 @@ func TestE2E_UpstreamDrift(t *testing.T) {
 	// remote enable` (which writes act.role=orchestrator and the
 	// drift-threshold config keys).
 	host := newHostRepo(t)
-	if _, code := cli.RunInit(host, false, "machine-orch", "orch@example.com",
-		func() time.Time { return time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC) }); code != 0 {
+	if _, code := cli.RunInit(host, cli.InitOptions{Force: false, MachineID: "machine-orch", GitEmail: "orch@example.com", Now: func() time.Time { return time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC) }}); code != 0 {
 		t.Fatalf("RunInit: code=%d", code)
 	}
 	if _, code := cli.RunRemote(cli.RemoteOptions{Verb: "enable", SourceCWD: host}); code != 0 {
@@ -390,8 +389,7 @@ func TestE2E_SlowFilesystem(t *testing.T) {
 	t.Setenv("ACT_TEST_SLOW_COMMIT_MS", "2000")
 
 	host := newHostRepo(t)
-	if _, code := cli.RunInit(host, false, "machine-slow", "slow@example.com",
-		func() time.Time { return time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC) }); code != 0 {
+	if _, code := cli.RunInit(host, cli.InitOptions{Force: false, MachineID: "machine-slow", GitEmail: "slow@example.com", Now: func() time.Time { return time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC) }}); code != 0 {
 		t.Fatalf("RunInit: code=%d", code)
 	}
 
@@ -489,8 +487,7 @@ func TestE2E_DispatchLoop(t *testing.T) {
 
 	// Stand up the orchestrator.
 	host := newHostRepo(t)
-	if _, code := cli.RunInit(host, false, "machine-orch5", "orch5@example.com",
-		func() time.Time { return time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC) }); code != 0 {
+	if _, code := cli.RunInit(host, cli.InitOptions{Force: false, MachineID: "machine-orch5", GitEmail: "orch5@example.com", Now: func() time.Time { return time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC) }}); code != 0 {
 		t.Fatalf("RunInit: code=%d", code)
 	}
 	if _, code := cli.RunRemote(cli.RemoteOptions{Verb: "enable", SourceCWD: host}); code != 0 {

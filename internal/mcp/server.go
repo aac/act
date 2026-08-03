@@ -834,7 +834,12 @@ func (s *Server) callInit(raw json.RawMessage) (any, bool) {
 	}
 	// MCP-driven init under Phase 1 always bootstraps the nested .act/ repo
 	// with its initial commit; there's no --no-commit toggle anymore.
-	out, code := cli.RunInit(s.repoRoot, args.Force, "", "", nil)
+	//
+	// The host-repo opt-ins (Contributing, CommitHost) are deliberately not
+	// exposed over MCP (act-66f987): the surprise this ticket fixes was an
+	// agent-driven bootstrap mutating host repos, and an agent that truly
+	// wants the stanza or the commit can run the CLI flags explicitly.
+	out, code := cli.RunInit(s.repoRoot, cli.InitOptions{Force: args.Force})
 	return out, code != 0
 }
 

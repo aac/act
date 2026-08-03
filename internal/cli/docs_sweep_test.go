@@ -71,6 +71,87 @@ type docClaim struct {
 // depend on it.
 var docClaimRegistry = []docClaim{
 	{
+		// act-66f987: `act init` never commits to the host repo without
+		// --commit-host. README states it for adopters; the flag help
+		// states it at the CLI. TestDocClaim_Init_NoHostCommitByDefault
+		// asserts the host HEAD does not move on a default init.
+		name:         "readme-init-no-host-commit",
+		docFile:      "README.md",
+		claimPattern: "`act init` never commits to the host repo.",
+		testName:     "TestDocClaim_Init_NoHostCommitByDefault",
+	},
+	{
+		name:         "init-flag-commit-host",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "act init never commits to the host repo unasked",
+		testName:     "TestDocClaim_Init_NoHostCommitByDefault",
+	},
+	{
+		// act-66f987: the CONTRIBUTING stanza is opt-in. A public-looking
+		// remote produces only a printed suggestion.
+		name:         "init-flag-contributing-opt-in",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "act init never edits CONTRIBUTING.md unasked",
+		testName:     "TestDocClaim_Init_NoContributingWithoutOptIn",
+	},
+	{
+		name:         "readme-init-contributing-opt-in",
+		docFile:      "README.md",
+		claimPattern: "never edits `CONTRIBUTING.md`",
+		testName:     "TestDocClaim_Init_NoContributingWithoutOptIn",
+	},
+	{
+		// act-66f987: an active .act/hooks/close gate is never rewritten by
+		// init, and no sample is dropped beside it — including --force.
+		name:         "skill-init-preserves-active-close-hook",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "an existing `.act/hooks/close` is never\nrewritten",
+		testName:     "TestDocClaim_Init_PreservesExistingCloseHook",
+	},
+	{
+		// act-3803ac: --no-fetch is a genuinely non-mutating read.
+		// TestDocClaim_NoFetch_DoesNotTouchStore asserts the store is
+		// unchanged on every axis the refresh path can touch, against a
+		// control that demonstrably mutates.
+		name:         "readme-no-fetch-does-not-touch-store",
+		docFile:      "README.md",
+		claimPattern: "read without touching the\nstore at all",
+		testName:     "TestDocClaim_NoFetch_DoesNotTouchStore",
+	},
+	{
+		name:         "readme-no-fetch-env-var",
+		docFile:      "README.md",
+		claimPattern: "`ACT_NO_FETCH=1`",
+		testName:     "TestDocClaim_NoFetch_EnvVarEquivalent",
+	},
+	{
+		// act-3803ac: the refresh outcome is reported, not discarded.
+		name:         "readme-refresh-reported",
+		docFile:      "README.md",
+		claimPattern: "reports what\nthe refresh layer did under a `refresh` key",
+		testName:     "TestDocClaim_ReadCommands_SurfaceRefreshOutcome",
+	},
+	{
+		name:         "readme-refresh-failure-not-silent",
+		docFile:      "README.md",
+		claimPattern: "`refresh.error` names the failure",
+		testName:     "TestDocClaim_RefreshFailure_IsReportedNotSilent",
+	},
+	{
+		name:         "no-fetch-flag-help",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "skip the read-path fetch+rebase entirely",
+		testName:     "TestDocClaim_NoFetch_CLISurface",
+	},
+	{
+		// act-3803ac: --no-fetch and --fresh are contradictory asks, so
+		// `act ready` rejects the pair instead of silently picking.
+		name:         "no-fetch-fresh-mutually-exclusive",
+		docFile:      "cmd/act/ready.go",
+		claimPattern: "--no-fetch and --fresh/--no-cache are mutually exclusive",
+		testName:     "TestDocClaim_NoFetch_RejectsFreshCombo",
+	},
+	{
 		name:         "act-help-go-install",
 		docFile:      "cmd/act/help.go",
 		claimPattern: "go install github.com/aac/act/cmd/act@latest",

@@ -172,14 +172,24 @@ func TestRunSearch_EmptyResult(t *testing.T) {
 	if len(res.Matches) != 0 {
 		t.Fatalf("matches has %d entries, want 0", len(res.Matches))
 	}
-	// And the JSON shape matches the spec.
+	// And the JSON shape matches the spec. `refresh` (act-3803ac) rides
+	// alongside and is asserted separately; strip it before comparing the
+	// result shape so this test stays about matches/count.
 	data, err := json.Marshal(res)
 	if err != nil {
 		t.Fatalf("json marshal: %v", err)
 	}
-	got := string(data)
-	if got != `{"matches":[],"count":0}` {
-		t.Fatalf("empty-result JSON = %q, want %q", got, `{"matches":[],"count":0}`)
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(data, &shape); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	delete(shape, "refresh")
+	rest, err := json.Marshal(shape)
+	if err != nil {
+		t.Fatalf("json re-marshal: %v", err)
+	}
+	if got := string(rest); got != `{"count":0,"matches":[]}` {
+		t.Fatalf("empty-result JSON (minus refresh) = %q, want %q", got, `{"count":0,"matches":[]}`)
 	}
 }
 

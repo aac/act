@@ -47,8 +47,7 @@ func makeBootstrapSource(t *testing.T) (srcRoot, issueID string) {
 	// tests have already established that RunInit + RunCreate work
 	// end-to-end. Calling them directly keeps this test hermetic and
 	// fast.
-	out, code := RunInit(srcRoot, false, "machine-bw", "bw@example.com",
-		func() time.Time { return time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) })
+	out, code := RunInit(srcRoot, InitOptions{Force: false, MachineID: "machine-bw", GitEmail: "bw@example.com", Now: func() time.Time { return time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC) }})
 	if code != 0 {
 		t.Fatalf("RunInit: code=%d out=%+v", code, out)
 	}

@@ -32,6 +32,12 @@ type SearchOptions struct {
 	// before reading state (Phase 2 ticket 5). Not surfaced as a CLI
 	// flag on `act search` in this phase.
 	Fresh bool
+	// NoFetch, when true, makes this a genuinely non-mutating read: the
+	// cache layer skips the fetch+rebase entirely and the command
+	// answers from on-disk state (act-3803ac). Wired by `--no-fetch`;
+	// ACT_NO_FETCH=1 has the same effect process-wide. Mutually
+	// exclusive with Fresh — the CLI rejects both together.
+	NoFetch bool
 }
 
 // SearchMatch is one row in the search results.
@@ -47,6 +53,11 @@ type SearchMatch struct {
 type SearchResult struct {
 	Matches []SearchMatch `json:"matches"`
 	Count   int           `json:"count"`
+	// Refresh reports what the read-path cache layer did before this
+	// answer was produced — served from cache, freshly fetched, skipped
+	// under --no-fetch, or failed. Omitted when there is nothing to say
+	// (no .act/ at all). act-3803ac.
+	Refresh *RefreshInfo `json:"refresh,omitempty"`
 }
 
 // SearchErrorOutput is the failure envelope returned by RunSearch. Code is
@@ -130,8 +141,18 @@ func RunSearch(repoRoot, query string, opts SearchOptions) (output any, exitCode
 		}, 2
 	}
 
-	// Phase 2 ticket 5: read-path cache check.
-	_, _ = MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh})
+	// Read-path cache check. Fetch+rebase if FETCH_HEAD is stale or a
+	// bypass is set; no-op silently when there's no remote, no nested
+	// .git, or --no-fetch/ACT_NO_FETCH=1 asked for a genuinely
+	// non-mutating read (act-3803ac).
+	//
+	// The outcome is NOT discarded (it used to be): a failed refresh is
+	// non-fatal — we fall through to on-disk state so a transient network
+	// failure doesn't break a read — but it is REPORTED, via the
+	// `refresh` key and a stderr warning, so served-from-cache and
+	// could-not-refresh stop looking identical.
+	refreshRes, refreshErr := MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh, NoFetch: opts.NoFetch})
+	refresh := NewRefreshInfo(refreshRes, refreshErr)
 
 	// 2. Open the index and rebuild for freshness.
 	paths := config.Layout(repoRoot)
@@ -251,7 +272,7 @@ func RunSearch(repoRoot, query string, opts SearchOptions) (output any, exitCode
 	if matches == nil {
 		matches = []SearchMatch{}
 	}
-	return SearchResult{Matches: matches, Count: len(matches)}, 0
+	return SearchResult{Matches: matches, Count: len(matches), Refresh: refresh}, 0
 }
 
 // FormatSearchHuman renders a SearchResult as one line per match:

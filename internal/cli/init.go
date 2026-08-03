@@ -38,25 +38,71 @@ type errorOutput struct {
 //     landed. This is the load-bearing piece: without it the act state has
 //     no history and doctor cannot reconcile.
 //   - HostCommitted reflects whether the host repo's .gitignore +
-//     pre-commit hook + (optional) CONTRIBUTING update committed in a single
-//     host-side commit. May be false when the host repo has no commits yet
-//     (we still write the files, just don't auto-commit) or when the commit
-//     step failed; the on-disk state is still valid in either case.
+//     (optional) CONTRIBUTING update committed in a single host-side commit.
+//     It is false unless the caller explicitly asked for the commit with
+//     `act init --commit-host` (act-66f987): init writes host-side files but
+//     never commits them unasked. It is also false when the host repo has no
+//     commits yet, or when the commit step failed; the on-disk state is
+//     still valid in every case.
 //   - PartialFailures lists per-step warnings: nested-commit ok but host
 //     gitignore failed, hook install failed, CONTRIBUTING stanza failed,
 //     etc. Per the failure-mode contract (docs/coordination-plane-design.md
 //     "Failure-mode write order"), we leave nested in place and surface the
 //     partial state for the operator to remediate.
 type successOutput struct {
-	OK                  bool     `json:"ok"`
-	ActDir              string   `json:"act_dir"`
-	NodeID              string   `json:"node_id"`
-	NestedCommitted     bool     `json:"nested_committed"`
-	HostCommitted       bool     `json:"host_committed"`
-	GitignoreUpdated    bool     `json:"gitignore_updated"`
-	HookInstalled       bool     `json:"hook_installed"`
-	ContributingEmitted bool     `json:"contributing_emitted,omitempty"`
-	PartialFailures     []string `json:"partial_failures,omitempty"`
+	OK                  bool   `json:"ok"`
+	ActDir              string `json:"act_dir"`
+	NodeID              string `json:"node_id"`
+	NestedCommitted     bool   `json:"nested_committed"`
+	HostCommitted       bool   `json:"host_committed"`
+	GitignoreUpdated    bool   `json:"gitignore_updated"`
+	HookInstalled       bool   `json:"hook_installed"`
+	ContributingEmitted bool   `json:"contributing_emitted,omitempty"`
+	// ContributingSuggested is true when the host repo has a
+	// public-looking remote and the caller did NOT pass --contributing.
+	// It is the printed-suggestion half of act-66f987: the stanza is
+	// offered, never written unasked. A JSON consumer reads this to know
+	// the offer was made and declined by default.
+	ContributingSuggested bool `json:"contributing_suggested,omitempty"`
+	// HostFilesUncommitted lists the host-repo working-tree paths init
+	// wrote and deliberately left uncommitted (act-66f987). Empty when
+	// nothing was written or when --commit-host committed them. Callers
+	// render it so the operator knows exactly what to review.
+	HostFilesUncommitted []string `json:"host_files_uncommitted,omitempty"`
+	PartialFailures      []string `json:"partial_failures,omitempty"`
+}
+
+// InitOptions carries the knobs for RunInit.
+//
+// Force, MachineID, GitEmail and Now were positional parameters before
+// act-66f987; the struct exists so the two new opt-in host-side switches
+// (Contributing, CommitHost) don't extend an already-long positional
+// signature. Zero value = the safe default: bootstrap the nested .act/
+// repo, write host-side files, commit nothing to the host repo, and emit
+// no CONTRIBUTING stanza.
+type InitOptions struct {
+	// Force reinitializes even when .act/config.json already exists.
+	Force bool
+	// MachineID and GitEmail feed node_id derivation and the nested
+	// repo's commit identity. Empty is allowed (MCP passes empty).
+	MachineID string
+	GitEmail  string
+	// Contributing opts in to appending the Act-Id trailer stanza to the
+	// host repo's CONTRIBUTING.md. Before act-66f987 this happened
+	// automatically whenever the host had a public-looking remote, which
+	// surprised operators across a 17-repo bootstrap; it is now never
+	// done unasked. Without it, a public-looking remote only produces a
+	// printed suggestion.
+	Contributing bool
+	// CommitHost opts in to committing the host-side files init wrote
+	// (.gitignore, and CONTRIBUTING.md when Contributing is set). Before
+	// act-66f987 this commit was unconditional and 13 of 17 host repos
+	// needed hand-reverting. Without it the files are left in the working
+	// tree for the operator to review and commit.
+	CommitHost bool
+	// Now overrides the clock for deterministic tests. nil means
+	// time.Now.
+	Now func() time.Time
 }
 
 // gitignoreEntry is the host-repo .gitignore line act init appends. Matching
@@ -137,7 +183,24 @@ var publicRemoteRegex = regexp.MustCompile(`^(?:https://|git@|ssh://git@)?(?:git
 // Phase 1 makes act init a two-repo bootstrap: a nested git repo at .act/
 // (with its own history for the op-log) plus host-side changes (gitignore
 // entry, pre-commit hook rejecting accidental .act/ stages, and an optional
-// CONTRIBUTING stanza when the host has a public-looking remote).
+// CONTRIBUTING stanza).
+//
+// act-66f987 — HOST-REPO RESTRAINT. init never commits to the host repo and
+// never writes CONTRIBUTING.md unless the caller asks:
+//
+//   - The host commit happens only under opts.CommitHost (`--commit-host`).
+//     It used to be unconditional; across the 2026-07-28/29 bootstrap of 17
+//     repos it produced an unrequested commit in every host repo with
+//     host-side changes and 13 needed hand-reverting.
+//   - The CONTRIBUTING stanza is written only under opts.Contributing
+//     (`--contributing`). A public-looking remote now only sets
+//     ContributingSuggested so the caller can print the offer.
+//
+// .gitignore and the pre-commit hook are still written: without the ignore
+// entry the host would track the nested state repo, and the hook exists to
+// stop exactly that. Both are working-tree writes, reported in
+// HostFilesUncommitted (the hook lives in .git/hooks and is never tracked),
+// and the operator decides whether to commit.
 //
 // Write order is load-bearing per the failure-mode contract: nested init
 // runs FIRST. If it fails, no host-side changes happen and the caller can
@@ -153,10 +216,12 @@ var publicRemoteRegex = regexp.MustCompile(`^(?:https://|git@|ssh://git@)?(?:git
 // `act init` does; there is no flag to suppress it (suppressing would
 // leave the act state without an initial commit, which doctor cannot
 // reconcile).
-func RunInit(repoRoot string, force bool, machineID, gitEmail string, now func() time.Time) (any, int) {
+func RunInit(repoRoot string, opts InitOptions) (any, int) {
+	now := opts.Now
 	if now == nil {
 		now = time.Now
 	}
+	force, machineID, gitEmail := opts.Force, opts.MachineID, opts.GitEmail
 
 	// Refuse if repoRoot is not inside a git working tree. We walk upward
 	// looking for a `.git` entry; this matches the resolution helper in
@@ -273,32 +338,54 @@ func RunInit(repoRoot string, force bool, machineID, gitEmail string, now func()
 		out.HookInstalled = installed
 	}
 
-	// 2c. CONTRIBUTING.md stanza (only when host has a public-looking remote).
-	if isPublic, _ := hasPublicLookingRemote(repoRoot); isPublic {
+	// 2c. CONTRIBUTING.md stanza — OPT-IN ONLY (act-66f987). A
+	// public-looking remote is a reason to *suggest* the stanza, never to
+	// write it: the file is the host project's, addressed to its human
+	// contributors, and act editing it unasked is the surprise the ticket
+	// was filed over.
+	if opts.Contributing {
 		if added, err := ensureContributingStanza(repoRoot); err != nil {
 			out.PartialFailures = append(out.PartialFailures,
 				fmt.Sprintf("CONTRIBUTING.md: %v", err))
 		} else {
 			out.ContributingEmitted = added
 		}
+	} else if isPublic, _ := hasPublicLookingRemote(repoRoot); isPublic {
+		out.ContributingSuggested = true
 	}
 
-	// 2d. Commit the host-side changes to the host repo as a single commit.
-	// We deliberately do NOT --no-verify here: if a host has a pre-commit
-	// hook that rejects something other than .act/ (the act block we just
-	// installed doesn't fire because the staged paths are .gitignore /
-	// CONTRIBUTING.md / .git/hooks/pre-commit), the user wants to know.
+	// 2d. Commit the host-side changes — OPT-IN ONLY (act-66f987). Without
+	// --commit-host we leave every host-side file in the working tree and
+	// name it in HostFilesUncommitted so the operator can review and commit
+	// (or discard) on their own terms.
+	//
+	// We deliberately do NOT --no-verify when we do commit: if a host has a
+	// pre-commit hook that rejects something other than .act/ (the act block
+	// we just installed doesn't fire because the staged paths are
+	// .gitignore / CONTRIBUTING.md), the user wants to know.
 	//
 	// Skip the commit attempt if the host repo has no HEAD yet — a fresh
 	// `git init` with no initial commit isn't going to accept a commit
 	// without prior `git add` of something, and our changes aren't worth
 	// forcing the first commit on the user's behalf.
-	if hostHasHEAD(repoRoot) && (out.GitignoreUpdated || out.HookInstalled || out.ContributingEmitted) {
+	hostFilesWritten := out.GitignoreUpdated || out.ContributingEmitted
+	if opts.CommitHost && hostHasHEAD(repoRoot) && hostFilesWritten {
 		if err := commitHostChanges(repoRoot, out.GitignoreUpdated, out.ContributingEmitted); err != nil {
 			out.PartialFailures = append(out.PartialFailures,
 				fmt.Sprintf("host commit: %v", err))
 		} else {
 			out.HostCommitted = true
+		}
+	}
+	if !out.HostCommitted {
+		// The pre-commit hook is not listed: it lives in .git/hooks/,
+		// which git never tracks, so there is nothing for the operator
+		// to commit.
+		if out.GitignoreUpdated {
+			out.HostFilesUncommitted = append(out.HostFilesUncommitted, ".gitignore")
+		}
+		if out.ContributingEmitted {
+			out.HostFilesUncommitted = append(out.HostFilesUncommitted, "CONTRIBUTING.md")
 		}
 	}
 
@@ -363,7 +450,17 @@ exit 0
 // <hooksDir>/close.sample if it is not already present. Idempotent (re-init
 // and --force leave an existing sample untouched). Mode 0o644 — it is a
 // template, not an executable hook; activating it is the agent's job.
+//
+// act-66f987: an ACTIVE `close` hook suppresses the sample entirely. init
+// must never touch a project's real gate — not the file itself (it never
+// did; the sample has its own name) and not the directory around it, since
+// dropping a scaffold next to a working hook is what makes a re-init look
+// like it replaced the gate. A project that already has a gate has no use
+// for the template.
 func writeCloseHookSample(hooksDir string) error {
+	if _, err := os.Stat(filepath.Join(hooksDir, "close")); err == nil {
+		return nil
+	}
 	path := filepath.Join(hooksDir, "close.sample")
 	if _, err := os.Stat(path); err == nil {
 		return nil

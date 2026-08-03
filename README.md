@@ -42,6 +42,11 @@ act init      # creates the nested .act/ (its own .git/) and gitignores it from 
 act help      # tutorial; `act help workflow` for the canonical claim/work/close loop
 ```
 
+`act init` never commits to the host repo. It writes the `.act/` ignore entry and a
+pre-commit hook into your working tree and leaves them for you to review; pass
+`--commit-host` if you want act to make that commit. It also never edits `CONTRIBUTING.md`
+unless you pass `--contributing`.
+
 ## What a session looks like
 
 ```sh
@@ -98,6 +103,29 @@ loop identically. Setup and diagnostic verbs (`act init`, `act doctor`, `act sea
 `act ready`, `act close`, `act dep add`, `act log`, `act version`) are CLI-only: every
 advertised tool's schema is re-read on each agent turn, so the MCP surface carries only
 what the loop runs.
+
+## Reading many stores at once
+
+Read commands (`ready`, `list`, `show`, `log`, `search`) normally refresh the tracker first:
+a `git pull --rebase` inside the store's own `.act/.git`, which — when it moves HEAD — drops
+the fold checkpoint and index so the next read rebuilds. That is the right default for one
+repo you are working in, and the wrong one for a sweep: N stores means N rebases into repos
+other agents may be writing to right now.
+
+Pass `--no-fetch` (or set `ACT_NO_FETCH=1` for a whole sweep) to read without touching the
+store at all — no fetch, no rebase, no checkpoint or index deletion. Every read reports what
+the refresh layer did under a `refresh` key, including `age_seconds` — how stale the answer
+is — so an aggregator never has to stat `FETCH_HEAD` itself:
+
+```sh
+$ ACT_NO_FETCH=1 act ready --json | jq .refresh
+{ "reason": "no_fetch", "fetched": false, "age_seconds": 412 }
+```
+
+A refresh that *fails* (unreachable remote, no network) is no longer silent: the command
+still answers from on-disk state and still exits 0, but `refresh.error` names the failure
+and a `WARNING` goes to stderr. Before, a failed refresh looked exactly like a successful
+one.
 
 ## If a write is interrupted
 
