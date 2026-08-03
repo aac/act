@@ -404,7 +404,10 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}, 1
 		}
 
-		// Stage the close op file.
+		// Stage the close op file. See the act-94272e note on the stage
+		// step in WriteOpAndAutoCommit: a stage failure keeps its op file
+		// in ops/ because README's stale-lock recovery runbook depends on
+		// it. Only the commit-failure path below withdraws the op.
 		if err := gops.StageOpFile(opPath); err != nil {
 			return CloseErrorOutput{
 				Error:   "stage_failed",
@@ -462,9 +465,15 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}
 		if err := gops.CommitOp(msg, swCtx); err != nil {
 			_ = runUnstage(gops.RepoRoot, opPath)
+			// act-94272e: the commit did not land, so the close did not
+			// happen — move the envelope out of the op log so the fold
+			// cannot report this issue closed. The envelope is kept
+			// (path in details.quarantined_op), not destroyed.
+			q, _ := quarantineFailedOp(paths.Root, opPath)
 			return CloseErrorOutput{
 				Error:   "commit_failed",
 				Message: err.Error(),
+				Details: withQuarantineDetail(nil, q),
 			}, 1
 		}
 		committed = true

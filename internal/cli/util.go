@@ -195,6 +195,16 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	if err := gops.EnsureBranch(opts.Branch); err != nil {
 		return fmt.Errorf("cli: ensure branch: %w", err)
 	}
+	// NOTE (act-94272e): a stage failure deliberately does NOT withdraw
+	// the op file, even though it leaves the same exit-code-vs-`act show`
+	// disagreement a failed commit used to. The dominant cause of a stage
+	// failure is a stale `.act/.git/index.lock`, and README "If a write is
+	// interrupted" documents — and TestDocClaim_StaleLock_OpSurvivesAnd
+	// Recovers asserts — a recovery sequence that depends on the op file
+	// still being in ops/ (`git -C .act add ops && ... && act doctor
+	// --fix`). Reconciling that documented runbook with the
+	// invisible-until-committed rule is its own decision, tracked
+	// separately; this ticket withdraws ops only where the COMMIT failed.
 	if err := gops.StageOpFile(opPath); err != nil {
 		return fmt.Errorf("cli: stage: %w", err)
 	}
@@ -246,10 +256,14 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	}
 	if err := gops.CommitOp(msg, swCtx); err != nil {
 		// Best-effort un-stage so the working tree returns to its
-		// pre-attempt state; the op file is intentionally left on disk so
-		// the user can retry without rebuilding the envelope.
+		// pre-attempt state, then move the op file out of the op log:
+		// the commit did not land, so no reader may see this op
+		// (act-94272e). The envelope is preserved at the quarantine
+		// path named in the error, so a retry still does not have to
+		// rebuild it.
 		_ = unstage(gops, opPath)
-		return fmt.Errorf("cli: commit: %w", err)
+		q, _ := quarantineFailedOp(paths.Root, opPath)
+		return fmt.Errorf("cli: commit: %w%s", err, quarantineSuffix(q))
 	}
 
 	// Phase 2 ticket 3b: --offline path. Defer the push by appending a

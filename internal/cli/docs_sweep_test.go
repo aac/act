@@ -1766,6 +1766,31 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Append this text to the existing description",
 		testName:     "TestDocClaim_MCP_UpdateDescriptionAppend",
 	},
+	// act-94272e: a write whose commit failed must not read back as
+	// having happened. `act help errors` now states the semantics act
+	// chose (invisible until committed) and the recovery affordance
+	// (envelope preserved under .act/.failed-ops, path reported). Drift
+	// shape: someone restores the old "leave the op file in ops/ so the
+	// user can retry" behavior, and the exit code and `act show` go back
+	// to disagreeing — silently, because both surfaces still "work".
+	{
+		name:         "help-errors-op-invisible-until-committed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "AN OP WHOSE COMMIT FAILED IS INVISIBLE",
+		testName:     "TestDocClaim_FailedCommitStaysUnclosed",
+	},
+	{
+		name:         "help-errors-failed-op-envelope-preserved",
+		docFile:      "cmd/act/help.go",
+		claimPattern: ".act/.failed-ops/<timestamp>/ops/...",
+		testName:     "TestDocClaim_FailedCommitPreservesEnvelope",
+	},
+	{
+		name:         "help-errors-failed-op-details-key",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "details.quarantined_op",
+		testName:     "TestDocClaim_FailedCommitCreateStaysInvisible",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
