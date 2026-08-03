@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -66,6 +67,32 @@ type Server struct {
 	repoRoot     string
 	rootErr      error
 	rootResolved bool
+
+	// clientRoots caches the workspace roots the CLIENT declared over the
+	// standard MCP `roots` capability (see requestClientRoots). Empty when the
+	// client never advertised roots, hasn't answered yet, or answered with an
+	// empty list — in all of those cases resolution falls back to process cwd.
+	clientRoots []string
+
+	// rootsDeclared records whether the client advertised `roots` during
+	// initialize. We only ever issue a server->client `roots/list` request to a
+	// client that did: the spec obliges such a client to answer, and gating on
+	// the declaration keeps us from waiting on a client that cannot reply.
+	rootsDeclared bool
+
+	// rootsAsked guards the one-shot request so a `roots/list_changed`
+	// notification (and only that) can re-ask.
+	rootsAsked bool
+
+	// reader is the framed stdin reader owned by Run. It is a field, not a
+	// local, because requestClientRoots has to read the client's response off
+	// the same stream mid-session.
+	reader *bufio.Reader
+
+	// pending holds frames that arrived while we were awaiting a
+	// server->client response. Run drains this queue before reading new input,
+	// so nothing a client sends during that window is lost or reordered.
+	pending [][]byte
 
 	readOnly bool
 	in       io.Reader
@@ -133,13 +160,27 @@ func (s *Server) hostRoot() (string, error) {
 // does, however, carry the real workspace on every `tools/call` in a
 // proprietary `_meta` block; we read it and resolve the host repo from it.
 //
+// Claude Code takes the third path: it sends no workspace in `_meta`, but it
+// DOES advertise the standard MCP `roots` capability and answers a
+// server->client `roots/list` with the session's working directory
+// (act-516314). That is the portable, spec-blessed version of the same idea,
+// so it slots in as a second client-declared source.
+//
 // Precedence: a client-supplied workspace is authoritative (resolve the host
 // repo from it, or surface that workspace's error — never silently fall back
-// to cwd, which is the plugin dir and the bug). Only when no workspace hint is
-// present do we fall back to the cwd-based resolver (the Claude / direct-CLI
-// path).
+// to cwd, which is the plugin dir and the bug). Per-call `_meta` outranks
+// session-scoped `roots` because it is the more specific statement. Only when
+// the client declared no workspace at all do we fall back to the cwd-based
+// resolver (the direct-CLI path, and any client supporting neither).
 func (s *Server) effectiveRoot(rawParams json.RawMessage) (string, error) {
 	ws := workspacesFromMeta(rawParams)
+	if len(ws) == 0 {
+		// No per-call hint. Next-best client-declared source is the standard
+		// MCP `roots` capability (act-516314): Claude Code advertises it and
+		// answers `roots/list` with the session's working directory, which is
+		// the user's project even when the server's process cwd is not.
+		ws = s.clientRoots
+	}
 	if len(ws) == 0 {
 		return s.hostRoot()
 	}
@@ -186,6 +227,136 @@ func workspacesFromMeta(rawParams json.RawMessage) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// rootsRequestID is the JSON-RPC id we use for our own `roots/list` request.
+// A string id (clients use numbers) makes a collision with a client-originated
+// id impossible, so matching the response is unambiguous.
+const rootsRequestID = "act-roots-list"
+
+// rootsFrameBudget caps how many frames requestClientRoots will read while
+// looking for its response. A spec-conformant client that advertised `roots`
+// answers immediately, so the budget only matters for a misbehaving one: it
+// bounds the wait at "a few of its other messages" instead of forever. Frames
+// consumed along the way are queued for the main loop, not dropped.
+const rootsFrameBudget = 32
+
+// clientDeclaresRoots reports whether an initialize params block advertised
+// the `roots` capability. A malformed or absent capabilities block reads as
+// "no" — we then never issue the request, which is the safe direction.
+func clientDeclaresRoots(rawParams json.RawMessage) bool {
+	if len(rawParams) == 0 {
+		return false
+	}
+	var p struct {
+		Capabilities struct {
+			Roots *json.RawMessage `json:"roots"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(rawParams, &p); err != nil {
+		return false
+	}
+	return p.Capabilities.Roots != nil
+}
+
+// requestClientRoots asks a roots-capable client where its workspace is, and
+// caches the answer for effectiveRoot. It is a no-op unless the client
+// advertised `roots` during initialize and we haven't already asked.
+//
+// The read is synchronous because the server is single-threaded by design (see
+// Server): issuing the request and consuming the reply inline keeps that
+// invariant, with no goroutine racing the main loop for stdin. Frames that are
+// not our response are pushed onto s.pending so Run processes them next, in
+// order — so a client that interleaves other traffic (or never answers) loses
+// nothing and simply falls back to cwd-based resolution.
+func (s *Server) requestClientRoots(enc *json.Encoder) {
+	if !s.rootsDeclared || s.rootsAsked {
+		return
+	}
+	s.rootsAsked = true
+	if err := enc.Encode(jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`"` + rootsRequestID + `"`),
+		Method:  "roots/list",
+	}); err != nil {
+		return
+	}
+	for i := 0; i < rootsFrameBudget; i++ {
+		line, err := s.reader.ReadBytes('\n')
+		line = trimLine(line)
+		if len(line) > 0 {
+			if roots, ok := rootsFromResponse(line); ok {
+				s.clientRoots = roots
+				return
+			}
+			// Not our response — hand it back to the main loop.
+			s.pending = append(s.pending, append([]byte(nil), line...))
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// rootsFromResponse decodes a frame as the response to our `roots/list`
+// request, returning the filesystem paths it named. ok is false for any other
+// frame (a client request, a notification, someone else's response), which is
+// the caller's signal to queue it for normal dispatch.
+func rootsFromResponse(line []byte) (paths []string, ok bool) {
+	var resp struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Result *struct {
+			Roots []struct {
+				URI string `json:"uri"`
+			} `json:"roots"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(line, &resp); err != nil {
+		return nil, false
+	}
+	if resp.Method != "" {
+		return nil, false
+	}
+	var id string
+	if json.Unmarshal(resp.ID, &id) != nil || id != rootsRequestID {
+		return nil, false
+	}
+	// Our id, so this frame is ours whatever it carries: an error reply (no
+	// result) resolves to "no roots" rather than being queued as stray input.
+	if resp.Result == nil {
+		return nil, true
+	}
+	for _, r := range resp.Result.Roots {
+		if p := fileURIToPath(r.URI); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, true
+}
+
+// fileURIToPath converts a `file://` root URI to a local path. MCP roots are
+// spec'd as file URIs; anything else (an http root, a malformed value) yields
+// "" and is skipped rather than being fed to the repo resolver.
+func fileURIToPath(uri string) string {
+	const scheme = "file://"
+	if !strings.HasPrefix(uri, scheme) {
+		return ""
+	}
+	// Drop an optional empty authority: file:///path and file://localhost/path
+	// both name a local path.
+	rest := strings.TrimPrefix(uri, scheme)
+	if i := strings.Index(rest, "/"); i > 0 {
+		rest = rest[i:]
+	}
+	if !strings.HasPrefix(rest, "/") {
+		return ""
+	}
+	decoded, err := url.PathUnescape(rest)
+	if err != nil {
+		return ""
+	}
+	return decoded
 }
 
 // jsonRPCRequest is the inbound shape on stdin. id is `any` so we round-trip
@@ -254,7 +425,7 @@ type toolContent struct {
 // reported as a Parse Error and the loop continues; a malformed-but-parsed
 // request returns Invalid Request.
 func (s *Server) Run(ctx context.Context) error {
-	r := bufio.NewReader(s.in)
+	s.reader = bufio.NewReader(s.in)
 	enc := json.NewEncoder(s.out)
 	// MCP transport is plain JSON-RPC over stdio; the response body is never
 	// embedded in HTML, so encoding/json's default escape (act-e26e) of '<',
@@ -270,15 +441,24 @@ func (s *Server) Run(ctx context.Context) error {
 			return ctx.Err()
 		default:
 		}
-		line, err := r.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				if len(line) == 0 {
-					return nil
+		// Frames buffered while we were awaiting a server->client response are
+		// replayed first, in arrival order, before any new input is read.
+		var line []byte
+		var err error
+		if len(s.pending) > 0 {
+			line = s.pending[0]
+			s.pending = s.pending[1:]
+		} else {
+			line, err = s.reader.ReadBytes('\n')
+			if err != nil {
+				if err == io.EOF {
+					if len(line) == 0 {
+						return nil
+					}
+					// fall through and process trailing partial line
+				} else {
+					return err
 				}
-				// fall through and process trailing partial line
-			} else {
-				return err
 			}
 		}
 		line = trimLine(line)
@@ -319,7 +499,17 @@ func (s *Server) dispatch(ctx context.Context, enc *json.Encoder, req jsonRPCReq
 	case "initialize":
 		s.handleInitialize(enc, req)
 	case "initialized", "notifications/initialized":
-		// Notification — no response.
+		// Notification — no response. This is the first point at which the
+		// client is ready to answer server->client requests, so it is where we
+		// learn the workspace from a roots-capable client.
+		s.requestClientRoots(enc)
+	case "notifications/roots/list_changed", "roots/list_changed":
+		// The workspace moved (a switched worktree, an added folder). Drop the
+		// cached answer and re-ask rather than keep routing writes at a stale
+		// root.
+		s.clientRoots = nil
+		s.rootsAsked = false
+		s.requestClientRoots(enc)
 	case "tools/list":
 		s.handleToolsList(enc, req)
 	case "tools/call":
@@ -335,6 +525,7 @@ func (s *Server) dispatch(ctx context.Context, enc *json.Encoder, req jsonRPCReq
 // we support tools; resources, prompts, sampling are unimplemented and
 // omitted from capabilities so clients don't try to call them.
 func (s *Server) handleInitialize(enc *json.Encoder, req jsonRPCRequest) {
+	s.rootsDeclared = clientDeclaresRoots(req.Params)
 	res := map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities": map[string]any{
