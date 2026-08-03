@@ -40,7 +40,7 @@ type ReadyOptions struct {
 // ReadyIssue is one row of the ready set.
 type ReadyIssue struct {
 	ID        string `json:"id"`
-	ShortID   string `json:"short_id"`
+	ShortID   string `json:"short_id,omitempty"`
 	Title     string `json:"title"`
 	Priority  int    `json:"priority"`
 	Status    string `json:"status"`

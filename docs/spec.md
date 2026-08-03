@@ -932,17 +932,20 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 
 ### MCP tool surface
 
-The server exposes one tool per CLI command, named `act_<verb>` (`act_init`, `act_create`, `act_list`, `act_show`, `act_update`, `act_close`, `act_dep_add`, `act_ready`, `act_search`, `act_log`, `act_doctor`, `act_version`), plus three composed tools. All tools accept a `read_only: bool` field; the server rejects any write tool when started with `--read-only` regardless of this field. Transport is stdio. JSON Schema (concise) for each:
+The server exposes one tool per CLI command, named `act_<verb>` (`act_init`, `act_create`, `act_list`, `act_show`, `act_update`, `act_close`, `act_dep_add`, `act_ready`, `act_search`, `act_log`, `act_doctor`, `act_version`), plus three composed tools. Read-only enforcement is a server-level concern: **no tool schema advertises a `read_only` parameter** (act-ca659d — it was a per-call advisory nothing enforced), and the server rejects any write tool when started with `--read-only`. Tool schemas leave `additionalProperties` unconstrained, so a client holding a cached older schema may still send `read_only`/`no_commit`/`isolated` and the call behaves as before. Transport is stdio. JSON Schema (concise) for each:
 
 **Per-command tools.** Each `act_<verb>` accepts an object whose fields mirror the CLI flags (kebab-case becomes snake_case). Output is the command's `--json` body. Errors surface as MCP tool errors carrying `{code, kind, message}`.
+
+**Advertised surface.** `tools/list` advertises the eight tools the work loop runs — `act_next`, `act_finish`, `act_block`, `act_file_blocker`, `act_list`, `act_show`, `act_create`, `act_update` (act-8a6536). The setup/diagnostic verbs (`act_init`, `act_version`, `act_doctor`, `act_log`, `act_search`, `act_ready`, `act_close`, `act_dep_add`) are **reachable through the identically-named CLI verbs** and remain dispatchable over MCP for clients holding a cached tool list; they are simply not advertised, because every advertised schema is re-read on every turn.
+
+**`short_id` in responses.** Every payload that carries both `id` and `short_id` emits `short_id` **only when it differs from `id`** (act-8a6536). Ids are generated at the shortest-unique-prefix floor, so for an unextended id the two are byte-identical and emitting both duplicated the string on every row of every listing. Consumers MUST read an absent `short_id` as `short_id == id`, never as "no short handle".
 
 **Composed tool: `act_next`**
 
 Input:
 ```json
 {"type":"object","properties":{
-  "under":{"type":"string"},
-  "read_only":{"type":"boolean"}
+  "under":{"type":"string"}
 }}
 ```
 Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming.

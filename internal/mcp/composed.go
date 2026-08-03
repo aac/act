@@ -253,12 +253,16 @@ func (s *Server) callFinish(raw json.RawMessage) (any, bool) {
 	}
 	switch r := out.(type) {
 	case cli.CloseResult:
-		return map[string]any{
-			"closed":   true,
-			"id":       r.ID,
-			"short_id": r.ShortID,
-			"reason":   r.Reason,
-		}, false
+		body := map[string]any{
+			"closed": true,
+			"id":     r.ID,
+			"reason": r.Reason,
+		}
+		// short_id only when it differs from id (act-8a6536).
+		if r.ShortID != "" && r.ShortID != r.ID {
+			body["short_id"] = r.ShortID
+		}
+		return body, false
 	case cli.CloseAlreadyClosed:
 		return map[string]any{
 			"closed":         true,
@@ -560,13 +564,18 @@ func (s *Server) callFileBlocker(raw json.RawMessage) (any, bool) {
 	if !ok {
 		return errEnvelope("internal", fmt.Sprintf("create: unexpected type %T", out)), true
 	}
-	return map[string]any{
+	body := map[string]any{
 		"ok":         true,
 		"id":         res.ID,
-		"short_id":   res.Prefix,
 		"title":      res.Title,
 		"blocked_by": args.BlockedBy,
 		"committed":  res.Committed,
 		"pushed":     res.Pushed,
-	}, false
+	}
+	// short_id only when it carries information (act-8a6536); absent means
+	// it equals id.
+	if res.Prefix != "" && res.Prefix != res.ID {
+		body["short_id"] = res.Prefix
+	}
+	return body, false
 }

@@ -181,10 +181,17 @@ func TestRunList_JSONShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("first issue type = %T", issuesAny[0])
 	}
-	for _, k := range []string{"id", "short_id", "title", "status"} {
+	for _, k := range []string{"id", "title", "status"} {
 		if _, ok := first[k]; !ok {
 			t.Errorf("missing key %q in issue: %+v", k, first)
 		}
+	}
+	// short_id is emitted only when it differs from id (act-8a6536). These
+	// fixture ids are unextended, so the shortest unique prefix IS the id and
+	// the key must be absent — see TestDocClaim_ShortID_OmittedWhenSameAsID
+	// for both directions of the rule.
+	if _, ok := first["short_id"]; ok {
+		t.Errorf("short_id present but identical to id: %+v", first)
 	}
 }
 

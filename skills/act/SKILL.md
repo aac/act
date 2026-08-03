@@ -34,16 +34,27 @@ unavailable.
 
 | Loop step | MCP | CLI |
 |---|---|---|
-| See the ready set (without claiming) | `act_ready` | `act ready` |
+| See the ready set (without claiming) | CLI-only | `act ready` |
 | Claim the next issue | `act_next` (picks highest-priority unblocked issue, claims it, returns `id` + `commit_marker`; adds bounded backoff retry if a claim is lost to a racing writer) | `act next` (same composed pick + claim + show, but walks the ready candidates once with no sleep/backoff) or `act update --claim <id>` |
 | Release a claim (can't finish it) | `unclaim` on `act_update` | `act update --unclaim <id>` |
 | Get the commit marker | `commit_marker` field on `act_next` (no separate call) | `act show <id> --commit-marker` |
 | Close | `act_finish` (closes; pushes the close op to the `.act/` tracker remote, not your host commit) | `act finish <id>` (same) or `act close <id> --reason "<one-liner>"` |
 | File a follow-up | `act_create` | `act create "<title>" --type <t> --description ... --accept ...` |
-| Attach/clear external blocker | `external` on `act_dep_add` / `ext_rm` on `act_update` | `act dep add <id> --external "<ref>"` / `act update <id> --ext-rm "<ref>"` |
+| Attach/clear external blocker | CLI-only for the add; `ext_rm` on `act_update` clears | `act dep add <id> --external "<ref>"` / `act update <id> --ext-rm "<ref>"` |
+
+**Eight tools are advertised over MCP** — `act_next`, `act_finish`, `act_block`,
+`act_file_blocker`, `act_list`, `act_show`, `act_create`, `act_update`. The setup and
+diagnostic verbs — `act init`, `act version`, `act doctor`, `act log`, `act search`,
+`act ready`, `act close`, `act dep add` — are **CLI-only**: run them as commands. Every
+one of them exists as a CLI verb of the same name, so nothing is unreachable; they are
+just not worth the schema an MCP session re-reads every turn.
+
+**Reading ids out of a response:** `short_id` is emitted only when it differs from `id`.
+Ids are already the shortest unique prefix in the normal case, so **an absent `short_id`
+means it equals `id`** — read it as "short_id, else id", not as a missing field.
 
 Drive the loop with `act next`/`act finish` (`act_next`/`act_finish` are their MCP names);
-use `act ready`/`act_ready` to *survey* the ready set without claiming (e.g. an orchestrator
+use `act ready` (CLI) to *survey* the ready set without claiming (e.g. an orchestrator
 deciding what to dispatch). The two forms differ only in claim-loss handling: MCP `act_next`
 retries with bounded backoff, CLI `act next` walks the ready candidates once and returns.
 
@@ -126,6 +137,38 @@ requirement; a project can make it mandatory in its own `CLAUDE.md`.
 appends to the existing description, separated by a blank line — no read-modify-write of the
 whole body. `act log` is a read-only op viewer and takes no message.
 
+## Dependency edges: getting the direction right
+
+A `blocks` edge has a dependent and a blocker, and the two are easy to swap. Prefer the
+surfaces that name the *blocker* directly — they read the way you think:
+
+- **Filing something that's already blocked:** `act create "<title>" --blocked-by <blocker>`
+  (MCP: `blocked_by` on `act_create`, or `act_file_blocker`). The new issue stays out of
+  `act ready` until every blocker closes.
+- **Blocking an issue that already exists:** `act block <id> --blocked-by <blocker>`
+  (MCP: `act_block`). One atomic commit; `blocked` is derived from the edge, not stored.
+
+`act dep add` is the escape hatch, and its parameters read backwards as a sentence: the
+**child is blocked BY the parent**. Worked example:
+to make act-A block act-B (B must wait on A), call child=act-B, parent=act-A.
+The response carries a plain-English `summary` (e.g.
+"act-B is blocked by act-A") — **trust the summary over the raw child/parent fields.**
+`act show <id>` is the authority after the fact: its `blocked_by` lists what blocks this
+issue, its `blocks` lists what waits on it.
+
+## Editing acceptance criteria
+
+Three surfaces, easy to confuse — `accept` **replaces**, the other two are additive:
+
+| Intent | CLI | MCP |
+|---|---|---|
+| Replace the whole list | `--accept "<a>" --accept "<b>"` | `accept: ["<a>","<b>"]` |
+| Clear every criterion | `--accept ""` … see `act help` | `accept: []` |
+| Append one | `--accept-add "<c>"` | `accept_add: ["<c>"]` |
+| Remove by index (0-based) | `--accept-rm 1` | `accept_rm: [1]` |
+
+Rewriting one criterion is `--accept-rm N` plus `--accept-add`, not a full replace.
+
 ## External dependencies
 
 When an issue is blocked on work in another tracker that act doesn't import — a Linear
@@ -147,8 +190,9 @@ act update <id> --ext-rm "linear:ENG-123"
 
 Both add and remove are idempotent. The surfaces are symmetric with internal blockers:
 `act dep add` adds the edge (`--blocked-by` for an act id, `--external` for a cross-tracker
-ref), `act update` removes it (`--dep-rm` internal, `--ext-rm` external). In MCP sessions,
-pass the `external` array on `act_dep_add` and the `ext_rm` array on `act_update`. An issue
+ref), `act update` removes it (`--dep-rm` internal, `--ext-rm` external). In MCP sessions, adding
+one is a CLI call (`act dep add` is not an MCP tool); clearing one is the `ext_rm` array on
+`act_update`. An issue
 may carry both internal and external blockers; either one keeps it out of `act ready` until
 cleared.
 

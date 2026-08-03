@@ -348,8 +348,9 @@ func (s *Server) handleInitialize(enc *json.Encoder, req jsonRPCRequest) {
 	s.writeResult(enc, req.ID, res)
 }
 
-// handleToolsList returns the static tool registry. The list shape and
-// schemas are stable; clients are expected to cache them per-session.
+// handleToolsList returns the ADVERTISED tool registry (see exposedTools).
+// The list shape and schemas are stable; clients are expected to cache them
+// per-session.
 func (s *Server) handleToolsList(enc *json.Encoder, req jsonRPCRequest) {
 	tools := s.tools()
 	s.writeResult(enc, req.ID, map[string]any{"tools": tools})
@@ -527,41 +528,104 @@ func isWriteTool(name string) bool {
 	return false
 }
 
-// tools returns the registered tool descriptors in a deterministic order.
-// Schemas mirror the cli flag sets one-to-one (kebab-case → snake_case).
+// exposedTools is the set of tools ADVERTISED via tools/list (act-8a6536).
+//
+// Every tool schema is re-read on every turn of every session that wires
+// this server, so an advertised tool an agent never calls is a recurring
+// tax. The eight kept here are the ones the work loop actually runs: the
+// composed verbs (act_next / act_finish / act_block / act_file_blocker),
+// the two reads it drives from (act_list / act_show), and the two escape
+// hatches those compose over (act_create / act_update).
+//
+// The rest — act_init, act_version, act_doctor, act_log, act_search,
+// act_ready, act_close, act_dep_add — are setup, diagnostic, or
+// rarely-reached-for verbs. They are NOT gone: every one has a CLI verb of
+// the same name (`act init`, `act doctor`, `act dep add`, …) documented in
+// the act skill's MCP-vs-CLI table, and invoke() still dispatches them, so
+// a client holding a cached older tool list keeps working. What changed is
+// only what a fresh session pays to read.
+//
+// Re-exposing one is a one-line edit here — deliberately, so the decision
+// stays reversible if a tool turns out to be load-bearing over MCP.
+var exposedTools = map[string]bool{
+	"act_next":         true,
+	"act_finish":       true,
+	"act_block":        true,
+	"act_file_blocker": true,
+	"act_list":         true,
+	"act_show":         true,
+	"act_create":       true,
+	"act_update":       true,
+}
+
+// tools returns the advertised tool descriptors in a deterministic order:
+// allTools filtered by exposedTools. Schemas mirror the cli flag sets
+// (kebab-case → snake_case), minus the per-call plumbing params trimmed in
+// act-ca659d.
+//
+// What was dropped from the ADVERTISED schemas and why (the schema text is
+// re-read on every turn of every session that wires this server, so bytes
+// here are a recurring cost, not a one-off):
+//
+//   - read_only — was on all 16 tools; its own description said the
+//     server-level --read-only flag takes precedence, so it was a per-call
+//     advisory nothing enforced. Enforcement is unchanged: handleToolsCall
+//     refuses write tools when the server runs --read-only, and act_finish
+//     still honours a per-call read_only if a client sends one.
+//   - no_commit / isolated — auto-commit and git-touching are what make an
+//     act write durable and shareable; an agent driving the tracker over MCP
+//     has no reason to opt out, and a silently uncommitted op is a stranded
+//     one. Still decoded by the callX glue when passed.
+//
+// Nothing was renamed, retyped, or made (non-)required — dropping a schema
+// property does not remove it from the wire, because schemaObject leaves
+// additionalProperties unconstrained. Cross-tool explanatory prose (the
+// dep-add direction worked example, accept-vs-accept_add contrasts) moved to
+// skills/act/SKILL.md, which an agent reads once instead of every turn.
 func (s *Server) tools() []toolDescriptor {
+	all := allTools()
+	out := make([]toolDescriptor, 0, len(exposedTools))
+	for _, td := range all {
+		if exposedTools[td.Name] {
+			out = append(out, td)
+		}
+	}
+	return out
+}
+
+// allTools is the full descriptor registry, including the tools that are
+// dispatchable but no longer advertised (see exposedTools). Keeping the
+// descriptors intact is what makes re-exposing a tool a one-line change.
+func allTools() []toolDescriptor {
 	return []toolDescriptor{
 		{
 			Name:        "act_init",
 			Description: "Initialize an act repository at the server's repo root.",
 			InputSchema: schemaObject(map[string]any{
 				"force": schemaBool("Reinitialize even if .act/ already exists."),
-				"json":  schemaBool("Emit JSON output (always true via MCP)."),
 			}, nil),
 		},
 		{
 			Name:        "act_create",
-			Description: "Create a new issue, optionally with blocking edges attached atomically in the same commit. Use blocked_by/blocks instead of a follow-up act_dep_add.",
+			Description: "Create an issue. blocked_by/blocks attach dep edges atomically in the same commit — use them instead of a follow-up act_dep_add.",
 			InputSchema: schemaObject(map[string]any{
 				"title":       schemaString("Issue title (required, ≤256 bytes)."),
-				"priority":    schemaInteger("Priority enum (0..3); omitted defaults to 1, an explicit 0 is preserved."),
+				"priority":    schemaInteger("Priority 0-3 (default 1)."),
 				"type":        schemaEnum([]string{"task", "bug", "epic", "chore"}, "Issue type."),
-				"parent":      schemaString("Parent issue id or prefix (hierarchy only — NOT a dep edge; use blocked_by/blocks for blocking)."),
-				"blocked_by":  schemaArrayOfString("Ids the NEW issue is blocked by; each becomes one blocks-edge (new issue is hidden from ready until that id closes). Attached atomically in the create commit. Duplicates fold to one edge."),
-				"blocks":      schemaArrayOfString("Existing ids the NEW issue blocks; each existing id becomes blocked by (hidden from ready until the new issue closes) — the inverse of blocked_by. Attached atomically. An id in both blocks and blocked_by is a bad_flag (2-cycle)."),
+				"parent":      schemaString("Parent id (hierarchy only, NOT a dep edge)."),
+				"blocked_by":  schemaArrayOfString("Ids the NEW issue is blocked by (it stays out of ready until each closes)."),
+				"blocks":      schemaArrayOfString("Existing ids the NEW issue blocks (each stays out of ready until it closes)."),
 				"description": schemaString("Free-text body."),
 				"accept":      schemaArrayOfString("Acceptance criteria, in order."),
-				"no_commit":   schemaBool("Skip auto-commit."),
 				"push":        schemaBool("Push after commit."),
-				"isolated":    schemaBool("Run without touching git state."),
 			}, []string{"title"}),
 		},
 		{
 			Name:        "act_list",
-			Description: "List issues filtered/sorted by the given options. By DEFAULT this is the working set — open, in_progress and blocked — and closed issues are excluded; pass status=\"closed\" or all=true to reach them.",
+			Description: "List issues. By DEFAULT this is the working set (open, in_progress, blocked) and closed issues are excluded; pass status=\"closed\" or all=true to reach them.",
 			InputSchema: schemaObject(map[string]any{
-				"status":   schemaString("Comma-separated status filter. Omit for the default working set (everything except closed)."),
-				"all":      schemaBool("Include closed issues too; closed rows sort after everything still open. Mutually exclusive with status."),
+				"status":   schemaString("Comma-separated status filter. Omit for the working set."),
+				"all":      schemaBool("Include closed issues (sorted last). Mutually exclusive with status."),
 				"assignee": schemaString("Exact-match assignee filter."),
 				"type":     schemaString("Issue type filter (task|bug|epic|chore)."),
 				"limit":    schemaInteger("Maximum issues to return (default 200)."),
@@ -570,7 +634,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_show",
-			Description: "Show one issue's rendered state. In the result, `blocked_by` lists the issues that block THIS issue (its blockers — this issue waits on them), and `blocks` lists the issues THIS issue blocks (they wait on it). These are authoritative for verifying dep direction.",
+			Description: "Show one issue's rendered state. `blocked_by` lists the issues that block THIS issue; `blocks` lists the issues THIS issue blocks. Authoritative for dep direction.",
 			InputSchema: schemaObject(map[string]any{
 				"id":          schemaString("Issue id or prefix."),
 				"include_ops": schemaBool("Include the HLC-sorted op stream."),
@@ -584,20 +648,18 @@ func (s *Server) tools() []toolDescriptor {
 				"status":             schemaString("New status (open|in_progress|blocked|closed)."),
 				"priority":           schemaInteger("New priority (0-3)."),
 				"assignee":           schemaString("New assignee (empty string clears)."),
-				"description":        schemaString("New description (REPLACES the existing body). Use description_append to add to it."),
-				"description_append": schemaString("Append this text to the existing description, separated by a blank line, instead of replacing it. The note-append path: annotates an issue without a read-modify-write of the whole body. Mutually exclusive with description."),
-				"accept":             schemaArrayOfString("Replace the acceptance criteria with exactly this list (the set REPLACES any prior criteria, it does not append). An empty array clears all criteria. Use accept_add to append, accept_rm to remove by index."),
-				"accept_add":         schemaArrayOfString("Append these criteria to the existing acceptance list (additive — contrast accept which replaces)."),
-				"accept_rm":          schemaArrayOfInteger("Remove acceptance criteria by zero-based index against the current list; out-of-range is a no-op."),
+				"description":        schemaString("New description (REPLACES the body; use description_append to add)."),
+				"description_append": schemaString("Append this text to the existing description instead of replacing it. Mutually exclusive with description."),
+				"accept":             schemaArrayOfString("Replace the acceptance criteria with exactly this list (the set REPLACES any prior criteria, it does not append); [] clears."),
+				"accept_add":         schemaArrayOfString("Append these criteria to the existing acceptance list."),
+				"accept_rm":          schemaArrayOfInteger("Remove acceptance criteria by zero-based index; out-of-range is a no-op."),
 				"dep_rm":             schemaArrayOfString("Dep ids to remove."),
-				"ext_rm":             schemaArrayOfString("Opaque external-tracker refs to clear (idempotent on absence). Attach refs via act_dep_add's `external` param."),
+				"ext_rm":             schemaArrayOfString("External-tracker refs to clear."),
 				"claim":              schemaBool("Atomic claim mode."),
-				"unclaim":            schemaBool("Release a claim: return an in_progress issue to open and clear the assignee (reverses claim). Idempotent on a not-in_progress issue."),
+				"unclaim":            schemaBool("Release a claim: in_progress back to open, assignee cleared."),
 				"wait":               schemaBool("Wait for claim to free."),
 				"wait_timeout":       schemaString("Wait timeout (Go duration string)."),
-				"no_commit":          schemaBool("Skip auto-commit."),
 				"push":               schemaBool("Push after commit."),
-				"isolated":           schemaBool("Run without touching git state."),
 				"verify":             schemaBool("Run integrity check after write."),
 			}, []string{"id"}),
 		},
@@ -605,24 +667,20 @@ func (s *Server) tools() []toolDescriptor {
 			Name:        "act_close",
 			Description: "Escape hatch: close an issue. Prefer act_finish for the recommended workflow.",
 			InputSchema: schemaObject(map[string]any{
-				"id":        schemaString("Issue id or prefix."),
-				"reason":    schemaString("Optional close reason (≤500 bytes)."),
-				"no_commit": schemaBool("Skip auto-commit."),
-				"push":      schemaBool("Push after commit."),
-				"isolated":  schemaBool("Run without touching git state."),
+				"id":     schemaString("Issue id or prefix."),
+				"reason": schemaString("Optional close reason (≤500 bytes)."),
+				"push":   schemaBool("Push after commit."),
 			}, []string{"id"}),
 		},
 		{
 			Name:        "act_dep_add",
-			Description: "Escape hatch: add a dependency edge. DIRECTION (edge_type=blocks): the CHILD is blocked BY the PARENT — the child stays out of `act ready` until the parent closes. So `child` is the dependent and `parent` is the blocker. Worked example: to make act-A block act-B (B must wait on A), call child=act-B, parent=act-A (B is blocked by A). The response includes a plain-English `summary` (e.g. \"act-B is blocked by act-A\") — trust it over the raw child/parent fields, which read backwards as SVO. Prefer act_block or act_create's blocked_by/blocks, which name the blocker directly.",
+			Description: "Escape hatch: add a dependency edge. For edge_type=blocks the CHILD is blocked BY the PARENT. Trust the response's plain-English `summary` over the raw child/parent fields. Prefer act_block or act_create's blocked_by/blocks, which name the blocker directly.",
 			InputSchema: schemaObject(map[string]any{
-				"child":     schemaString("Dependent issue id or prefix (for blocks: the issue that becomes blocked / hidden from ready)."),
-				"parent":    schemaString("Blocker issue id or prefix (for blocks: the issue that must close first). Required for internal edges; omit when using `external`."),
+				"child":     schemaString("Dependent id (for blocks: the issue that becomes blocked)."),
+				"parent":    schemaString("Blocker id (for blocks: the issue that must close first). Omit when using `external`."),
 				"edge_type": schemaEnum([]string{"blocks", "relates", "supersedes"}, "Edge type (default 'blocks')."),
-				"external":  schemaArrayOfString("Opaque external-tracker refs to attach to `child` as blocking external deps (e.g. \"linear:ENG-123\"). When set, `parent`/`edge_type` are ignored and one add_external_dep op is written per ref. Clear a ref via act_update's ext_rm."),
-				"no_commit": schemaBool("Skip auto-commit."),
+				"external":  schemaArrayOfString("External-tracker refs to attach to `child` as blocking deps (e.g. \"linear:ENG-123\"). When set, parent/edge_type are ignored."),
 				"push":      schemaBool("Push after commit."),
-				"isolated":  schemaBool("Run without touching git state."),
 			}, []string{"child"}),
 		},
 		{
@@ -667,14 +725,14 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_next",
-			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state. Wraps act_ready + act_update --claim + act_show with bounded retry on claim loss (§5.D.1). Returns `commit_marker` (e.g. \"Act-Id: act-XXXXXX\") — embed this verbatim as a trailer in the BODY of every work-commit message for the claimed issue (separated from the subject by a blank line) so `act doctor` orphan-close can correlate the close with a real commit.",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Optional id prefix; restrict to descendants."),
 			}, nil),
 		},
 		{
 			Name:        "act_finish",
-			Description: "Recommended: close an issue and return the `Act-Id: act-XXXXXX` trailer to embed in the work-commit body so doctor's orphan-close check can correlate. Wraps act_close.",
+			Description: "Recommended: close an issue and return its `Act-Id:` commit-marker trailer. Wraps act_close.",
 			InputSchema: schemaObject(map[string]any{
 				"id":     schemaString("Issue id or prefix (required)."),
 				"reason": schemaString("Optional close reason."),
@@ -682,7 +740,7 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_block",
-			Description: "Recommended: atomically mark an issue blocked AND record a blocks-edge in a single git commit (§5.D.2). Use this instead of issuing act_update + act_dep_add separately.",
+			Description: "Recommended: mark an issue blocked AND record the blocks-edge in a single commit. Use instead of act_update + act_dep_add.",
 			InputSchema: schemaObject(map[string]any{
 				"id":         schemaString("Issue to mark blocked (required)."),
 				"blocked_by": schemaString("Issue that blocks (required)."),
@@ -691,28 +749,26 @@ func (s *Server) tools() []toolDescriptor {
 		},
 		{
 			Name:        "act_file_blocker",
-			Description: "Recommended: file a new issue with one or more `blocks`-edges attached in a single atomic git commit. Replaces the two-call sequence `act_create` + `act_dep_add`. Edge direction is new→<blocked_by> (the new issue is blocked by each target), matching `act_block`'s `blocked_by` semantic. For marking an EXISTING issue blocked by the new one, follow this with `act_block` separately.",
+			Description: "Recommended: file a new issue already blocked by one or more existing issues, in a single atomic commit. Replaces act_create + act_dep_add.",
 			InputSchema: schemaObject(map[string]any{
 				"title":       schemaString("Issue title (required, ≤256 bytes)."),
-				"blocked_by":  schemaArrayOfString("Ids the new issue is blocked by; each becomes one blocks-edge (required, ≥1). Duplicates resolving to the same full id are folded to one edge."),
+				"blocked_by":  schemaArrayOfString("Ids the new issue is blocked by (required, ≥1)."),
 				"description": schemaString("Optional free-text body."),
 				"accept":      schemaArrayOfString("Optional acceptance criteria, in order."),
 				"type":        schemaString("Optional issue type (task|bug|epic|chore; default task)."),
 				"priority":    schemaInteger("Optional priority 0–3 (default 2)."),
-				"parent":      schemaString("Optional parent issue id for hierarchy (not a dep edge; use blocked_by for blocks)."),
+				"parent":      schemaString("Optional parent id (hierarchy, not a dep edge)."),
 			}, []string{"title", "blocked_by"}),
 		},
 	}
 }
 
 // schemaObject is the boilerplate JSON-Schema wrapper used by every tool's
-// input definition. additionalProperties is not constrained because some
-// tools (e.g. act_create) accept extension fields like read_only.
+// input definition. additionalProperties is deliberately unconstrained: the
+// wire still ACCEPTS the plumbing fields the schemas no longer advertise
+// (read_only, no_commit, isolated — see the tools() comment), so a client
+// holding a cached older schema keeps working.
 func schemaObject(props map[string]any, required []string) map[string]any {
-	// Always allow read_only for symmetry with the spec; per-call read_only
-	// is honoured by the cli layer where applicable. The flag itself does
-	// nothing in this scaffold but appears in every tool schema.
-	props["read_only"] = schemaBool("Per-call advisory: skip writes (server-level --read-only takes precedence).")
 	out := map[string]any{
 		"type":       "object",
 		"properties": props,

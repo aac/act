@@ -46,7 +46,7 @@ type ReopenOptions struct {
 // that emitted a new reopen op.
 type ReopenResult struct {
 	ID         string `json:"id"`
-	ShortID    string `json:"short_id"`
+	ShortID    string `json:"short_id,omitempty"`
 	OpsWritten int    `json:"ops_written"`
 	Committed  bool   `json:"committed"`
 	Reason     string `json:"reason,omitempty"`

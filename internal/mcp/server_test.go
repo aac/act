@@ -242,16 +242,15 @@ func TestToolsList(t *testing.T) {
 	}
 	m, _ := resp.Result.(map[string]any)
 	tools, _ := m["tools"].([]any)
-	if got := len(tools); got != 16 {
-		t.Fatalf("tools count = %d, want 16", got)
+	if got := len(tools); got != len(exposedTools) {
+		t.Fatalf("tools count = %d, want %d", got, len(exposedTools))
 	}
+	// The advertised set (act-8a6536): the composed verbs, the two reads the
+	// loop drives from, and the two escape hatches they compose over.
 	want := map[string]bool{
-		"act_init": false, "act_create": false, "act_list": false,
-		"act_show": false, "act_update": false, "act_close": false,
-		"act_dep_add": false, "act_ready": false, "act_search": false,
-		"act_log": false, "act_doctor": false, "act_version": false,
 		"act_next": false, "act_finish": false, "act_block": false,
-		"act_file_blocker": false,
+		"act_file_blocker": false, "act_list": false, "act_show": false,
+		"act_create": false, "act_update": false,
 	}
 	for _, raw := range tools {
 		td, _ := raw.(map[string]any)
@@ -272,6 +271,65 @@ func TestToolsList(t *testing.T) {
 		if !seen {
 			t.Errorf("missing tool %q", n)
 		}
+	}
+}
+
+// TestDocClaim_MCP_UnadvertisedToolsStillDispatch pins the other half of the
+// tool-surface trim (act-8a6536): the eight tools dropped from tools/list are
+// NOT removed from the server. A client holding a cached older tool list —
+// or any caller that names one directly — still gets the real result, not an
+// unknown_tool envelope.
+//
+// This is the compat guarantee that makes the trim safe to ship mid-flight
+// against live sessions, so it is asserted at the tools/call boundary rather
+// than trusted to the dispatch switch reading correctly.
+func TestDocClaim_MCP_UnadvertisedToolsStillDispatch(t *testing.T) {
+	root := makeRepo(t)
+
+	listed := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0", "id": "adv", "method": "tools/list",
+		"params": map[string]any{},
+	})
+	lm, _ := listed.Result.(map[string]any)
+	rawTools, _ := lm["tools"].([]any)
+	advertised := map[string]bool{}
+	for _, raw := range rawTools {
+		td, _ := raw.(map[string]any)
+		n, _ := td["name"].(string)
+		advertised[n] = true
+	}
+
+	for _, name := range []string{
+		"act_init", "act_version", "act_doctor", "act_log",
+		"act_search", "act_ready", "act_close", "act_dep_add",
+	} {
+		if advertised[name] {
+			t.Errorf("tool %q is advertised; expected it to be CLI-only", name)
+		}
+	}
+
+	// act_ready is read-only and needs no fixture state beyond an inited
+	// repo: a working dispatch returns the ready envelope, an undispatched
+	// one returns unknown_tool.
+	called := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0", "id": "unadv", "method": "tools/call",
+		"params": map[string]any{
+			"name":      "act_ready",
+			"arguments": map[string]any{"limit": 1},
+		},
+	})
+	if called.Error != nil {
+		t.Fatalf("act_ready: JSON-RPC error: %+v", called.Error)
+	}
+	cm, _ := called.Result.(map[string]any)
+	content, _ := cm["content"].([]any)
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	if strings.Contains(text, "unknown_tool") {
+		t.Errorf("unadvertised act_ready no longer dispatches: %s", text)
+	}
+	if !strings.Contains(text, `"ready"`) {
+		t.Errorf("act_ready body missing the ready envelope: %s", text)
 	}
 }
 
@@ -337,6 +395,84 @@ func TestReadOnlyRefusal(t *testing.T) {
 	}
 }
 
+// TestDocClaim_MCP_ReadOnlyIsServerLevelNotPerCallParam asserts the spec's
+// MCP-tool-surface claim (act-ca659d): no advertised tool schema carries a
+// `read_only` property, AND read-only enforcement is unchanged — a write tool
+// is still refused when the server runs with --read-only.
+//
+// Asserted at the wire boundary (tools/list + tools/call), not against the
+// tools() slice, because the claim is about what a client actually reads and
+// what a client actually gets back. The two halves are one test on purpose:
+// dropping the param would be a regression if it had quietly taken the
+// enforcement with it.
+func TestDocClaim_MCP_ReadOnlyIsServerLevelNotPerCallParam(t *testing.T) {
+	root := makeRepo(t)
+
+	listed := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ro-list",
+		"method":  "tools/list",
+		"params":  map[string]any{},
+	})
+	if listed.Error != nil {
+		t.Fatalf("tools/list: unexpected error: %+v", listed.Error)
+	}
+	lm, _ := listed.Result.(map[string]any)
+	tools, _ := lm["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatalf("tools/list returned no tools")
+	}
+	for _, raw := range tools {
+		td, _ := raw.(map[string]any)
+		name, _ := td["name"].(string)
+		schema, _ := td["inputSchema"].(map[string]any)
+		props, _ := schema["properties"].(map[string]any)
+		for _, dropped := range []string{"read_only", "no_commit", "isolated"} {
+			if _, ok := props[dropped]; ok {
+				t.Errorf("tool %s advertises dropped plumbing param %q", name, dropped)
+			}
+		}
+	}
+
+	// Enforcement half: server-level --read-only still refuses a write tool.
+	refused := runOne(t, root, true, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ro-call",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "act_create",
+			"arguments": map[string]any{"title": "still refused"},
+		},
+	})
+	rm, _ := refused.Result.(map[string]any)
+	if isErr, _ := rm["isError"].(bool); !isErr {
+		t.Fatalf("read-only server did not refuse act_create: %+v", rm)
+	}
+
+	// The wire still ACCEPTS an unadvertised plumbing param (schemaObject
+	// leaves additionalProperties unconstrained), so a client with a cached
+	// older schema keeps working rather than erroring on an unknown field.
+	accepted := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ro-compat",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "act_list",
+			"arguments": map[string]any{
+				"limit":     1,
+				"read_only": true,
+			},
+		},
+	})
+	if accepted.Error != nil {
+		t.Fatalf("act_list with a legacy read_only arg errored: %+v", accepted.Error)
+	}
+	am, _ := accepted.Result.(map[string]any)
+	if isErr, _ := am["isError"].(bool); isErr {
+		t.Errorf("act_list rejected a legacy read_only arg: %+v", am)
+	}
+}
+
 // TestActNextHappyPath: with one ready issue and no contention, act_next
 // claims the issue and returns {claimed:true, issue:{...}, commit_marker}.
 func TestActNextHappyPath(t *testing.T) {
@@ -373,9 +509,15 @@ func TestActNextHappyPath(t *testing.T) {
 	if !strings.HasPrefix(marker, "Act-Id: act-") {
 		t.Errorf("commit_marker = %q; want `Act-Id: act-XXXXXX` trailer shape", marker)
 	}
+	// short_id is emitted only when it differs from id (act-8a6536), so the
+	// expected handle is short_id when present and id otherwise — the same
+	// fallback every consumer of these payloads must apply.
 	short, _ := issue["short_id"].(string)
+	if short == "" {
+		short, _ = issue["id"].(string)
+	}
 	if want := "Act-Id: " + short; marker != want {
-		t.Errorf("commit_marker = %q; want %q (matching issue.short_id)", marker, want)
+		t.Errorf("commit_marker = %q; want %q (matching issue short handle)", marker, want)
 	}
 }
 
@@ -450,7 +592,16 @@ func TestDocClaim_MCP_UpdatePriorityRangeAndNoCompact(t *testing.T) {
 			props, _ := schema["properties"].(map[string]any)
 			return props
 		}
-		t.Fatalf("tool %q not found in tools/list", toolName)
+		// Not advertised (act-8a6536 trimmed tools/list to the working set),
+		// but still dispatchable — assert against its registered descriptor.
+		for _, td := range allTools() {
+			if td.Name != toolName {
+				continue
+			}
+			props, _ := td.InputSchema["properties"].(map[string]any)
+			return props
+		}
+		t.Fatalf("tool %q not found in tools/list or the descriptor registry", toolName)
 		return nil
 	}
 
@@ -785,9 +936,11 @@ func TestActFinish(t *testing.T) {
 	if m["id"] != id {
 		t.Errorf("id = %v; want %s", m["id"], id)
 	}
+	// short_id appears only when it differs from id (act-8a6536); fall back
+	// to id, which is what the commit subject carries for an unextended id.
 	short, _ := m["short_id"].(string)
 	if short == "" {
-		t.Errorf("short_id empty")
+		short, _ = m["id"].(string)
 	}
 	// Verify commit message includes (act-XXXX).
 	subj := gitOutput(t, filepath.Join(root, ".act"), "log", "-1", "--format=%s")
