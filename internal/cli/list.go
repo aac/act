@@ -49,7 +49,13 @@ type ListOptions struct {
 
 // ListedIssue is one row of the JSON output. JSON tags match the v0.1 spec
 // shape (`id`, `short_id`, `title`, `status`, `priority`, `type`,
-// `assignee`, `created_at`).
+// `assignee`, `created_at`), plus `claimed_at` (act-d627c8).
+//
+// ClaimedAt is what makes an in_progress row readable without a follow-up
+// `act show`: "8 in progress" is a healthy mid-drain or a pile of stale
+// claims depending only on age, and the field is already stored and
+// already returned by show. It is omitempty because it is absent on
+// everything that was never claimed.
 type ListedIssue struct {
 	ID        string `json:"id"`
 	ShortID   string `json:"short_id,omitempty"`
@@ -59,6 +65,7 @@ type ListedIssue struct {
 	Type      string `json:"type"`
 	Assignee  string `json:"assignee,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
+	ClaimedAt string `json:"claimed_at,omitempty"`
 }
 
 // ListResult is the JSON-serialisable wrapper returned on success. The shape
@@ -240,6 +247,7 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 			Type:      r.Type,
 			Assignee:  r.Assignee,
 			CreatedAt: r.CreatedAt,
+			ClaimedAt: r.ClaimedAt,
 		})
 	}
 	out.Count = len(out.Issues)

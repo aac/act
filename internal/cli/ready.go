@@ -19,8 +19,16 @@ type ReadyOptions struct {
 	// Under is an optional id prefix; when set, the result is restricted
 	// to descendants of the resolved issue (via the parent chain).
 	Under string
-	// Limit caps the result size. Zero or negative means use the default
-	// (50).
+	// Limit caps the result size. <=0 means "no limit" — the same
+	// meaning ListOptions.Limit has, so `--limit 0` returns every ready
+	// issue on both subcommands (act-1b816e).
+	//
+	// The 50-row default lives at the CLI flag (and at the other call
+	// sites that want a bound), NOT here. It used to live here, which is
+	// what made `act ready --limit 0` silently fall back to 50 while
+	// `act list --limit 0` returned everything: two subcommands
+	// disagreeing on the same flag, with no way at all to ask ready for
+	// a complete answer.
 	Limit int
 	// AsJSON is reserved for symmetry with other commands; the returned
 	// shape is identical and main.go decides how to render.
@@ -38,6 +46,14 @@ type ReadyOptions struct {
 }
 
 // ReadyIssue is one row of the ready set.
+//
+// CreatedAt and ClaimedAt are carried so a caller can judge AGE without a
+// follow-up `act show` per row (act-d627c8): an aggregator sweeping many
+// stores otherwise pays one subprocess — and one cache-cold fetch — per
+// id, keyed on exactly the projects with the most stale work. Both are
+// omitempty: a ready row is by definition open and unclaimed, so
+// claimed_at is normally absent, and the field earns its place on the
+// --mine/--as views and on any future ready set that admits claimed work.
 type ReadyIssue struct {
 	ID        string `json:"id"`
 	ShortID   string `json:"short_id,omitempty"`
@@ -45,13 +61,31 @@ type ReadyIssue struct {
 	Priority  int    `json:"priority"`
 	Status    string `json:"status"`
 	Assignee  string `json:"assignee,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 	ClaimedAt string `json:"claimed_at,omitempty"`
 }
 
-// ReadyResult is the JSON-serialisable success envelope.
+// ReadyResult is the JSON-serialisable success envelope. The shape is
+// `{"ready": [...], "count": N, "total": N, "truncated": bool}`, matching
+// ListResult field-for-field (act-1b816e).
+//
+// Count is how many rows were RETURNED; Total is how many were ready
+// before Limit was applied. Truncated states the difference outright and
+// carries no `omitempty` for the same reason ListResult.Truncated doesn't:
+// an omitted key reads as null and puts the consumer back to inferring
+// truncation from `count == limit`, which is wrong exactly when the ready
+// count equals the limit. Before this, `act ready --json` carried only
+// {ready, count} — an aggregator sweeping many stores could not tell a
+// project with exactly 50 ready issues from one with 500, and silently
+// under-reported with exit 0.
 type ReadyResult struct {
 	Ready []ReadyIssue `json:"ready"`
 	Count int          `json:"count"`
+	// Total is the pre-limit ready count. Equal to Count when the result
+	// was not capped.
+	Total int `json:"total"`
+	// Truncated reports whether Limit dropped ready issues.
+	Truncated bool `json:"truncated"`
 }
 
 // ReadyErrorOutput is the failure envelope. Candidates is non-nil only on
@@ -64,9 +98,12 @@ type ReadyErrorOutput struct {
 	Candidates []string       `json:"-"`
 }
 
-// defaultReadyLimit matches spec §act ready: bound the result count at 50
-// when --limit is not supplied.
-const defaultReadyLimit = 50
+// DefaultReadyLimit matches spec §act ready: bound the result count at 50
+// when --limit is not supplied. It is exported because the default now
+// belongs to the CALLERS (the `act ready` flag default, act_next's
+// frontier fetch) rather than to RunReady — see ReadyOptions.Limit for
+// why (act-1b816e).
+const DefaultReadyLimit = 50
 
 // RunReady implements `act ready`.
 //
@@ -258,13 +295,14 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		return a.ID < b.ID
 	})
 
-	// Step 6: apply limit.
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = defaultReadyLimit
-	}
-	if len(ready) > limit {
-		ready = ready[:limit]
+	// Step 6: apply limit. `total` is captured BEFORE the cap so the
+	// result can report what the caller did not see (act-1b816e), the
+	// same way RunList does.
+	total := len(ready)
+	truncated := false
+	if opts.Limit > 0 && len(ready) > opts.Limit {
+		ready = ready[:opts.Limit]
+		truncated = true
 	}
 
 	// Materialise output rows with shortest-unique-prefix ids. The prefix
@@ -289,11 +327,33 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 			Priority:  r.Priority,
 			Status:    r.Status,
 			Assignee:  r.Assignee,
+			CreatedAt: r.CreatedAt,
 			ClaimedAt: r.ClaimedAt,
 		})
 	}
 	out.Count = len(out.Ready)
+	out.Total = total
+	out.Truncated = truncated
 	return out, 0
+}
+
+// FormatReadyTruncationNotice returns the one-line warning that must
+// accompany a capped ready set, or "" when nothing was dropped
+// (act-1b816e). It is the `act ready` twin of
+// FormatListTruncationNotice, and the stderr placement is load-bearing
+// for the same reason: `act ready --json | jq '.count'` swallows stdout,
+// so a stdout trailer would never reach the human, and anything added to
+// the row stream corrupts the parse.
+func FormatReadyTruncationNotice(res ReadyResult) string {
+	if !res.Truncated {
+		return ""
+	}
+	return fmt.Sprintf(
+		"act ready: WARNING: showing %d of %d ready issues — %d hidden by --limit. "+
+			"Counts taken from this output will be WRONG. "+
+			"Use `act ready --limit 0` for everything, or narrow with --under/--mine.\n",
+		res.Count, res.Total, res.Total-res.Count,
+	)
 }
 
 // readyEmptyCell is the placeholder for an empty assignee / claimed_at cell
