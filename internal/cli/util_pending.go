@@ -1,11 +1,11 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/aac/act/internal/gitops"
 )
 
 // runListPendingOpFilesForIssue invokes `git ls-files --others --exclude-standard`
@@ -28,20 +28,20 @@ func runListPendingOpFilesForIssue(repoRoot, opsDir, issueID string) ([]string, 
 	}
 	issuePath := filepath.Join(relOpsDir, issueID) + string(filepath.Separator)
 
-	cmd := exec.Command("git", "ls-files",
+	// act-40e336: routed through the shared act handle instead of exec'ing
+	// git with cwd=actDir. `ls-files` does not fire auto-maintenance, but
+	// the point of the refactor is that no call site decides that for
+	// itself — the handle is the only constructor of nested-repo git
+	// invocations, which is what makes TestNoDirectGitExec meaningful.
+	stdout, err := gitops.NewActGitOps(actDir).RunGit("ls-files",
 		"--others", "--exclude-standard", "--full-name", "--",
 		issuePath)
-	cmd.Dir = actDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("cli: list pending ops for %s: git ls-files: %w (stderr: %s)",
-			issueID, err, strings.TrimSpace(stderr.String()))
+	if err != nil {
+		return nil, fmt.Errorf("cli: list pending ops for %s: git ls-files: %w", issueID, err)
 	}
 
 	var result []string
-	for _, line := range strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

@@ -26,11 +26,9 @@
 package cli
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -212,16 +210,15 @@ func resolveAddUpstreamBranch(gitDir string) string {
 // (capped to a reasonable tail) so callers can surface a meaningful
 // diagnostic without re-running.
 func gitPushInitialUpstream(gitDir, branch string) error {
-	cmd := exec.Command("git", "--git-dir="+gitDir, "push", UpstreamRemoteName, branch)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Run(); err != nil {
-		out := strings.TrimSpace(buf.String())
-		if out == "" {
-			return err
+	// act-40e336: see gitPushUpstream — the shared handle is the only
+	// place nested-repo git invocations are constructed.
+	out, err := gitops.NewActGitOpsFromGitDir(gitDir).
+		RunGitCombined("push", UpstreamRemoteName, branch)
+	if err != nil {
+		if trimmed := strings.TrimSpace(out); trimmed != "" {
+			return fmt.Errorf("%v: %s", err, trimmed)
 		}
-		return fmt.Errorf("%v: %s", err, out)
+		return err
 	}
 	return nil
 }

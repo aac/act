@@ -4,13 +4,13 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/gitops"
 )
 
 // rfc3339Millis is the millisecond-precision RFC 3339 layout used throughout
@@ -483,7 +483,7 @@ func bootstrapNestedRepo(actDir, machineID, gitEmail string) (bool, error) {
 	// `git init -b main` to avoid relying on the user's init.defaultBranch
 	// setting. `-q` suppresses the "Initialized empty Git repository" line
 	// that would otherwise leak to stdout when callers wire ours through.
-	if err := runGitIn(actDir, "init", "-q", "-b", "main"); err != nil {
+	if err := runActGitIn(actDir, "init", "-q", "-b", "main"); err != nil {
 		return false, fmt.Errorf("git init in %s: %w", actDir, err)
 	}
 
@@ -496,57 +496,96 @@ func bootstrapNestedRepo(actDir, machineID, gitEmail string) (bool, error) {
 	if commitEmail == "" {
 		commitEmail = "act@example.invalid"
 	}
-	if err := runGitIn(actDir, "config", "user.email", commitEmail); err != nil {
+	if err := runActGitIn(actDir, "config", "user.email", commitEmail); err != nil {
 		return false, fmt.Errorf("git config user.email: %w", err)
 	}
-	if err := runGitIn(actDir, "config", "user.name", "act init"); err != nil {
+	if err := runActGitIn(actDir, "config", "user.name", "act init"); err != nil {
 		return false, fmt.Errorf("git config user.name: %w", err)
 	}
 	// Disable commit signing for the bootstrap commit; the operator can
 	// enable it on subsequent op commits if their global config wants it.
-	_ = runGitIn(actDir, "config", "commit.gpgsign", "false")
+	_ = runActGitIn(actDir, "config", "commit.gpgsign", "false")
 
 	// Skip the initial commit if the repo already has one (re-init case).
 	if hasHEAD(actDir) {
 		return false, nil
 	}
 
-	if err := runGitIn(actDir, "add", "-A"); err != nil {
+	if err := runActGitIn(actDir, "add", "-A"); err != nil {
 		return false, fmt.Errorf("git add -A in %s: %w", actDir, err)
 	}
-	if err := runGitIn(actDir, "commit", "-q", "--no-verify", "-m", "act init: nested act state bootstrap"); err != nil {
+	if err := runActGitIn(actDir, "commit", "-q", "--no-verify", "-m", "act init: nested act state bootstrap"); err != nil {
 		return false, fmt.Errorf("git commit in %s: %w", actDir, err)
 	}
 	_ = machineID
 	return true, nil
 }
 
-// runGitIn runs `git <args>` with cwd=dir. Stderr is captured into the
-// returned error on failure so callers see why git refused.
-func runGitIn(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+// runActGitIn runs `git <args>` against the NESTED act state repo at
+// actDir. Output is captured into the returned error on failure so
+// callers see why git refused.
+//
+// act-40e336: this used to exec git directly with cwd=actDir, which meant
+// the nested bootstrap `git commit` — the very first write act makes into
+// `.act/.git` — spawned detached auto-maintenance, despite PR #4 having
+// claimed that was handled. It now goes through the shared gitops handle
+// like every other nested-repo invocation.
+//
+// actGitOps handles the one genuinely awkward moment: the `git init` that
+// CREATES `.act/.git` runs when there is no git-dir to pin yet.
+func runActGitIn(actDir string, args ...string) error {
+	return runGitVia(actGitOps(actDir), args...)
+}
+
+// runHostGitIn runs `git <args>` against the HOST repo. It deliberately
+// uses the plain cwd-discovery handle, never the act handle: act's
+// maintenance overrides are scoped to act's own nested repo, and a commit
+// act makes into the caller's repo keeps the caller's git configuration
+// (see noDetachedMaintenance's scope note in internal/gitops). Routing it
+// through gitops anyway keeps the "no direct git exec" guard honest —
+// same behavior, one construction point.
+func runHostGitIn(repoRoot string, args ...string) error {
+	return runGitVia(gitops.NewGitOps(repoRoot), args...)
+}
+
+func runGitVia(g *gitops.GitOps, args ...string) error {
+	out, err := g.RunGitCombined(args...)
 	if err != nil {
-		return fmt.Errorf("git %s: %w (output: %s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("git %s: %w (output: %s)", strings.Join(args, " "), err, strings.TrimSpace(out))
 	}
 	return nil
+}
+
+// actGitOps returns the pinned act-state handle for actDir once
+// `.act/.git` exists, and the plain cwd-discovery handle before it does.
+// The second case is exactly one invocation wide — the `git init` that
+// creates the repo — and cwd discovery is what that call needs anyway.
+func actGitOps(actDir string) *gitops.GitOps {
+	if dirOrFileExists(filepath.Join(actDir, ".git")) {
+		return gitops.NewActGitOps(actDir)
+	}
+	return gitops.NewGitOps(actDir)
 }
 
 // hasHEAD reports whether the git repo rooted at dir has a HEAD ref (i.e.
 // at least one commit). Used to skip the initial bootstrap commit on re-
 // init, and to skip auto-committing host-side changes when the host has
 // no initial commit yet.
+// `rev-parse` fires no auto-maintenance, but it routes through the shared
+// handle anyway (act-40e336): the guard's value comes from there being no
+// exceptions to inspect, not from each site re-deciding.
 func hasHEAD(dir string) bool {
-	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
-	cmd.Dir = dir
-	return cmd.Run() == nil
+	_, err := actGitOps(dir).RunGit("rev-parse", "--verify", "HEAD")
+	return err == nil
 }
 
-// hostHasHEAD is hasHEAD with an explicit name for the host-repo case.
-// Same implementation; the distinct identifier reads more naturally at the
-// call site.
-func hostHasHEAD(repoRoot string) bool { return hasHEAD(repoRoot) }
+// hostHasHEAD is hasHEAD for the host-repo case. It uses the plain
+// cwd-discovery handle rather than the act handle, matching runHostGitIn:
+// act does not impose its git configuration on the caller's repo.
+func hostHasHEAD(repoRoot string) bool {
+	_, err := gitops.NewGitOps(repoRoot).RunGit("rev-parse", "--verify", "HEAD")
+	return err == nil
+}
 
 // hasGitDir reports whether repoRoot or any of its ancestors contains a
 // `.git` entry (file or directory). Walks up to the filesystem root.
@@ -686,9 +725,8 @@ func installHostPreCommitHook(repoRoot string) (bool, error) {
 // surfaced via the second return for callers that want to log them, but
 // the boolean is the load-bearing answer.
 func hasPublicLookingRemote(repoRoot string) (bool, error) {
-	cmd := exec.Command("git", "remote", "get-url", "origin")
-	cmd.Dir = repoRoot
-	out, err := cmd.Output()
+	// Host-repo read; plain handle, no act overrides (act-40e336).
+	out, err := gitops.NewGitOps(repoRoot).RunGit("remote", "get-url", "origin")
 	if err != nil {
 		// No origin → not public-looking; no error.
 		return false, nil
@@ -804,10 +842,10 @@ func commitHostChanges(repoRoot string, gitignoreChanged, contributingChanged bo
 		return nil
 	}
 	args := append([]string{"add", "--"}, toStage...)
-	if err := runGitIn(repoRoot, args...); err != nil {
+	if err := runHostGitIn(repoRoot, args...); err != nil {
 		return err
 	}
-	if err := runGitIn(repoRoot, "commit", "-q", "--no-verify",
+	if err := runHostGitIn(repoRoot, "commit", "-q", "--no-verify",
 		"-m", "act init: host gitignore + CONTRIBUTING stanza"); err != nil {
 		return err
 	}

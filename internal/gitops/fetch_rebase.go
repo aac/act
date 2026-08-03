@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -325,13 +324,7 @@ func (g *GitOps) ancestryToOrigin(branch string) (upToDate, alreadyAhead bool, e
 // is pinned to the nested .act/.git and cannot walk up into the host repo
 // (act-784b). Mirrors the override in (*GitOps).run.
 func (g *GitOps) runCombined(args ...string) (string, error) {
-	r := g.runner
-	if r == nil {
-		r = exec.Command
-	}
-	cmd := r("git", g.gitArgs(args)...)
-	cmd.Dir = g.RepoRoot
-	out, err := cmd.CombinedOutput()
+	out, err := g.newCmd(args).CombinedOutput()
 	return string(out), err
 }
 
@@ -376,12 +369,7 @@ func (g *GitOps) runCombinedTimeout(timeout time.Duration, args ...string) (stri
 	if timeout <= 0 {
 		return g.runCombined(args...)
 	}
-	r := g.runner
-	if r == nil {
-		r = exec.Command
-	}
-	cmd := r("git", g.gitArgs(args)...)
-	cmd.Dir = g.RepoRoot
+	cmd := g.newCmd(args)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

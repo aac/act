@@ -2,8 +2,9 @@ package cli
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
+
+	"github.com/aac/act/internal/gitops"
 )
 
 // runUnstage invokes `git restore --staged <path>` with cwd=repoRoot.
@@ -16,23 +17,27 @@ func runUnstage(repoRoot, path string) error {
 	return runUnstageFn(repoRoot, path)
 }
 
-// runUnstageReal runs the actual git invocation. When repoRoot contains
-// a `.git` subdir (the nested-act-repo shape from Phase 1), we pin git's
-// repo discovery with explicit --git-dir/--work-tree flags so the rollback
-// targets the nested repo rather than walking up into a host repo whose
-// .gitignore refuses .act/ paths (act-784b). Mirrors the override in
-// internal/gitops.GitOps.run when gitDir is set.
+// runUnstageReal runs the actual git invocation through the shared gitops
+// handle. When repoRoot contains a `.git` subdir (the nested-act-repo
+// shape from Phase 1) the act handle pins git's repo discovery with
+// explicit --git-dir/--work-tree flags so the rollback targets the nested
+// repo rather than walking up into a host repo whose .gitignore refuses
+// .act/ paths (act-784b); otherwise the plain handle preserves cwd
+// discovery. This used to hand-roll the same prefix locally — act-40e336
+// replaced the copy with a call, so there is one place the pinning and
+// the maintenance overrides are decided.
+//
+// The error is deliberately still swallowed by callers (`_ = runUnstage`);
+// this is a best-effort rollback on a path that already has an error to
+// report.
 func runUnstageReal(repoRoot, path string) error {
-	args := []string{"restore", "--staged", "--", path}
-	if nestedGit := filepath.Join(repoRoot, ".git"); dirOrFileExists(nestedGit) {
-		args = append([]string{
-			"--git-dir=" + nestedGit,
-			"--work-tree=" + repoRoot,
-		}, args...)
+	var g *gitops.GitOps
+	if dirOrFileExists(filepath.Join(repoRoot, ".git")) {
+		g = gitops.NewActGitOps(repoRoot)
+	} else {
+		g = gitops.NewGitOps(repoRoot)
 	}
-	cmd := exec.Command("git", args...)
-	cmd.Dir = repoRoot
-	return cmd.Run()
+	return g.UnstageOpFile(path)
 }
 
 // dirOrFileExists returns true when path resolves to a regular file or
