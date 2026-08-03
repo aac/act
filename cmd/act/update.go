@@ -40,6 +40,13 @@ func (s *intSliceFlag) Set(v string) error {
 // distinguish "unset" from "explicitly cleared".
 func runUpdate(args []string) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	titleFlag := fs.String("title", "", "new title (≤256 bytes; cannot be cleared). Retitle an issue whose scope has moved: the title is what every 'act list' / 'act ready' row shows, so a stale one misleads every reader before they reach the body.")
+	typeFlag := fs.String("type", "", "new issue type (task|bug|epic|chore)")
+	// Backticks in a flag usage string are Go's flag package marking the
+	// value NAME, not markdown — hence `id` here and plain quotes for the
+	// command reference (a backticked 'act dep add' rendered the flag as
+	// "-parent act dep add").
+	parentFlag := fs.String("parent", "", "new parent issue `id`, full or unique prefix (hierarchy only, NOT a dep edge — use 'act dep add' for blocking). Empty string detaches the issue from its parent. Rejected if it would make the issue its own parent or close a cycle in the parent hierarchy.")
 	statusFlag := fs.String("status", "", "new status: `--status open` releases a claim (returns an in_progress issue to open and clears the assignee, same as --unclaim; a closed issue needs `act reopen`, not this); 'blocked' is derived from blocked-by dep edges, not directly settable — use `act dep add --blocked-by <blocker-id>` to create the dep (issue status follows automatically); use --claim for in_progress; `act close` for closed")
 	priorityFlag := fs.Int("priority", -1, "new priority [0..3]")
 	assigneeFlag := fs.String("assignee", "", "new assignee (empty string clears)")
@@ -109,6 +116,18 @@ func runUpdate(args []string) int {
 		Branch:      *branch,
 		AsJSON:      *asJSON,
 		Verify:      *verify,
+	}
+	if visited["title"] {
+		t := *titleFlag
+		opts.Title = &t
+	}
+	if visited["type"] {
+		t := *typeFlag
+		opts.Type = &t
+	}
+	if visited["parent"] {
+		p := *parentFlag
+		opts.Parent = &p
 	}
 	if visited["status"] {
 		s := *statusFlag

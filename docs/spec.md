@@ -717,11 +717,16 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act update <id>`
 
-**Synopsis:** `act update <id> [--status X] [--priority N] [--assignee Y] [--description T] [--description-append T] [--description-append-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+**Synopsis:** `act update <id> [--title T] [--status X] [--priority N] [--type T] [--parent ID] [--assignee Y] [--description T] [--description-append T] [--description-append-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+
+`act update` reaches every one of the six LWW-per-field updatable fields the fold table in §3 names — `title`, `description`, `priority`, `type`, `assignee`, `parent`. This is normative: a field the fold merges per-field MUST have a write path on both the CLI and MCP surfaces, or the storage layer supports a state no caller can reach. Title, type and parent were added in act-3e21b8 to close exactly that gap.
 
 **Flags:**
+- `--title T` (string). REPLACES the title; ≤256 bytes, matching `act create`. Non-empty is required — unlike `--assignee`/`--description`, `--title ""` is exit 2 rather than a clear, because every `act list` / `act ready` row renders the title and nothing else of the body. Retitling is deliberately cheap: a title that has gone stale misleads every dispatcher before they reach the correcting text in the description.
 - `--status X` (enum open|blocked|in_progress|closed). `closed` requires `act close` — exit 2. `in_progress` requires `--claim` — exit 2. `blocked` requires a backing blocked-by dep edge (added via `act dep add --blocked-by`); if none exists, exits 2 with `blocked_requires_dep`. Note: `blocked` status is derived from open `blocks` dep edges; the `update_field status=blocked` op is accepted only when a dep edge already exists and is a no-op on the fold (status follows from deps automatically).
 - `--priority N` (int 0..3).
+- `--type T` (enum task|bug|epic|chore). Any other value → exit 2 with `bad_flag`; the closed set matches `act create --type`.
+- `--parent ID` (string). Sets the hierarchy parent — NOT a dep edge; use `act dep add` for blocking. Resolved through the id-resolution pipeline, so a prefix works (unknown → exit 3, ambiguous → exit 2). `--parent ""` detaches the issue from its parent. An issue naming itself, or a value whose existing parent chain already reaches this issue, → exit 2 with `cycle_detected`: `act doctor`'s `cycle` check walks the *blocks* subgraph only, so a parent cycle has no downstream detector and is refused at the write path instead.
 - `--assignee Y` (string; empty string clears).
 - `--description T` (string). REPLACES the body.
 - `--description-file <path|->` (string). Reads the replacement body from a file, or from stdin for `-`. Mutually exclusive with `--description`.
@@ -751,6 +756,8 @@ Each non-`--claim` field flag generates one op (so `--priority 0 --assignee "me"
 Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
 
 **Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
+
+**Retitling and commit correlation.** A retitle does not disturb commit-marker correlation or `act doctor`'s `orphan-close` check. Both key on the issue **id** — the `Act-Id: act-XXXX` commit-body trailer and the id column in the index — never on the title, which is not an identity key. `act show --json`'s `commits` array and `act doctor --check orphan-close` therefore return the same results before and after `act update --title`.
 
 ---
 

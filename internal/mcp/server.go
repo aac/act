@@ -645,8 +645,11 @@ func allTools() []toolDescriptor {
 			Description: "Escape hatch: update an issue's fields, accept criteria, or claim. Prefer act_next for the claim flow.",
 			InputSchema: schemaObject(map[string]any{
 				"id":                 schemaString("Issue id or prefix."),
+				"title":              schemaString("New title (≤256 bytes). Retitle an issue whose scope moved — the title is all a listing shows."),
 				"status":             schemaString("New status (open|in_progress|blocked|closed)."),
 				"priority":           schemaInteger("New priority (0-3)."),
+				"type":               schemaEnum([]string{"task", "bug", "epic", "chore"}, "New issue type."),
+				"parent":             schemaString("New parent id (hierarchy only, NOT a dep edge); empty string detaches."),
 				"assignee":           schemaString("New assignee (empty string clears)."),
 				"description":        schemaString("New description (REPLACES the body; use description_append to add)."),
 				"description_append": schemaString("Append this text to the existing description instead of replacing it. Mutually exclusive with description."),
@@ -929,8 +932,11 @@ func (s *Server) callShow(raw json.RawMessage) (any, bool) {
 func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 	var args struct {
 		ID                string    `json:"id"`
+		Title             *string   `json:"title"`
 		Status            *string   `json:"status"`
 		Priority          *int      `json:"priority"`
+		Type              *string   `json:"type"`
+		Parent            *string   `json:"parent"`
 		Assignee          *string   `json:"assignee"`
 		Description       *string   `json:"description"`
 		DescriptionAppend *string   `json:"description_append"`
@@ -969,8 +975,11 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 	}
 	out, code := cli.RunUpdate(s.repoRoot, cli.UpdateOptions{
 		ID:          args.ID,
+		Title:       args.Title,
 		Status:      args.Status,
 		Priority:    args.Priority,
+		Type:        args.Type,
+		Parent:      args.Parent,
 		Assignee:    args.Assignee,
 		Description: args.Description,
 		// RunUpdate rejects description + description_append together, so
