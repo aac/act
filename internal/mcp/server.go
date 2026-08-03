@@ -688,7 +688,7 @@ func allTools() []toolDescriptor {
 			Description: "Escape hatch: list the ready set: open issues with no unclosed blocking deps. Prefer act_next which combines ready + claim + show.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Restrict to descendants of this issue id/prefix."),
-				"limit": schemaInteger("Maximum issues to return (default 50)."),
+				"limit": schemaInteger("Maximum issues to return (default 50). The result carries total+truncated, so a capped answer is detectable."),
 			}, nil),
 		},
 		{
@@ -1056,9 +1056,20 @@ func (s *Server) callReady(raw json.RawMessage) (any, bool) {
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
 	}
+	// RunReady's Limit means "no limit" at <=0 (act-1b816e), so the
+	// documented 50-row default is applied here, at the caller, the same
+	// way the `act ready` flag default does it. An omitted `limit` in a
+	// tool call is indistinguishable from 0, and silently returning an
+	// unbounded ready set into a tool response is the wrong default for
+	// this surface; a capped one is now self-describing via
+	// total+truncated.
+	limit := args.Limit
+	if limit <= 0 {
+		limit = cli.DefaultReadyLimit
+	}
 	out, code := cli.RunReady(s.repoRoot, cli.ReadyOptions{
 		Under:  args.Under,
-		Limit:  args.Limit,
+		Limit:  limit,
 		AsJSON: true,
 	})
 	return out, code != 0

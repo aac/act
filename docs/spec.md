@@ -666,13 +666,14 @@ Resolution happens before any op is written, so a write command never partially 
 {"ok": true, "count": 12, "issues": [
   {"id":"act-a1b2c3d4e5f60718","prefix":"act-a1b2","title":"...",
    "status":"open","priority":1,"type":"task","assignee":"agent-1",
-   "parent":null,"created_at":"2026-04-29T14:23:01Z"}
+   "parent":null,"created_at":"2026-04-29T14:23:01Z",
+   "claimed_at":"2026-04-29T15:01:44.318Z"}
 ]}
 ```
 
 **Exit codes:** 0; 2 on bad flag; 3 if `.act/` missing; 4 on version skew during rebuild.
 
-**Edge cases:** empty result returns `count: 0` and exit 0; unknown sort field or `--all` combined with `--status` → exit 2. `--limit 0` means "no limit" (every match).
+**Edge cases:** empty result returns `count: 0` and exit 0; unknown sort field or `--all` combined with `--status` → exit 2. `--limit 0` means "no limit" (every match). `claimed_at` is present on rows that have been claimed and omitted on the rest, so claim age is readable from a listing without one `act show` per in-progress id.
 
 ---
 
@@ -706,13 +707,16 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act update <id>`
 
-**Synopsis:** `act update <id> [--status X] [--priority N] [--assignee Y] [--description T] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+**Synopsis:** `act update <id> [--status X] [--priority N] [--assignee Y] [--description T] [--description-append T] [--description-append-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
 
 **Flags:**
 - `--status X` (enum open|blocked|in_progress|closed). `closed` requires `act close` — exit 2. `in_progress` requires `--claim` — exit 2. `blocked` requires a backing blocked-by dep edge (added via `act dep add --blocked-by`); if none exists, exits 2 with `blocked_requires_dep`. Note: `blocked` status is derived from open `blocks` dep edges; the `update_field status=blocked` op is accepted only when a dep edge already exists and is a no-op on the fold (status follows from deps automatically).
 - `--priority N` (int 0..3).
 - `--assignee Y` (string; empty string clears).
-- `--description T` (string).
+- `--description T` (string). REPLACES the body.
+- `--description-file <path|->` (string). Reads the replacement body from a file, or from stdin for `-`. Mutually exclusive with `--description`.
+- `--description-append T` (string). APPENDS to the existing body, separated by one blank line, resolving the current body server-side — the note-append path, so annotating an issue is one command rather than a read-modify-write of the whole body. Mutually exclusive with both replace flags.
+- `--description-append-file <path|->` (string). The file twin of `--description-append`, for a note too long or too quote-hostile for one argv token; `-` reads stdin. Mutually exclusive with `--description`, `--description-file` and `--description-append`. Note the append resolves against the folded snapshot and is not atomic: two concurrent appends to one issue are last-write-wins on the description field, exactly as two concurrent `--description` writes are.
 - `--accept "..."` (repeatable). REPLACES the acceptance list with exactly the supplied criteria — it does not append. Emits one `set_accept` op so repeated edits set rather than union with prior criteria. Supplying `--accept` with no criteria clears the list.
 - `--accept-add "..."` (repeatable; each appends one criterion via `add_accept` — the additive sibling of `--accept`).
 - `--accept-rm N` (repeatable; removes the criterion at zero-based index `N` against the current list via `remove_accept`. Out-of-range is a no-op. Replace an individual criterion with `--accept-rm N --accept-add "new text"`).
@@ -794,14 +798,17 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 **Flags:**
 - `--under <id>` (string, optional). Restrict output to descendants (via `parent` edges) of this id.
 - `--json` (bool).
-- `--limit N` (int, default 50).
+- `--limit N` (int, default 50). `--limit 0` means "no limit" (every ready issue), the same meaning it has on `act list`.
 
 **Algorithm:** Fold all issues; an issue is **ready** iff `status == open` AND no incoming `blocks` dep points at it from an open/in_progress issue. Sort by priority asc, created_at desc, id asc.
 
 **JSON output:**
 ```json
-{"ok": true, "count": 3, "issues": [{"id":"...","prefix":"...","title":"...","priority":0,"type":"task"}]}
+{"ready": [{"id":"...","short_id":"...","title":"...","priority":0,"status":"open","created_at":"..."}],
+ "count": 3, "total": 3, "truncated": false}
 ```
+
+`count` is how many rows were returned; `total` is how many were ready before `--limit` was applied; `truncated` says outright whether the cap dropped rows. A capped ready set also prints a WARNING to **stderr** naming how many issues were hidden — in both `--json` and human mode, since the JSON consumer's human sees nothing else when stdout is piped. Callers must test `truncated` rather than infer truncation from `count == limit`, which is wrong exactly when the ready count equals the limit.
 
 **Exit codes:** 0; 2 bad flags; 3 missing `.act/`; 4 on skew.
 

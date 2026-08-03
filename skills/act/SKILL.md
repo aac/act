@@ -135,7 +135,14 @@ requirement; a project can make it mandatory in its own `CLAUDE.md`.
 
 **To leave a note on a ticket, use `act update <id> --description-append "<note>"`.** It
 appends to the existing description, separated by a blank line — no read-modify-write of the
-whole body. `act log` is a read-only op viewer and takes no message.
+whole body. For a note too long or too quote-hostile for one shell argument, use
+`act update <id> --description-append-file <path>` (or `-` to read stdin). `act log` is a
+read-only op viewer and takes no message.
+
+**Counting ready work: `act ready` caps at 50 rows.** A capped ready set prints a WARNING to
+stderr and, under `--json`, carries `total` (the pre-limit ready count) and `truncated`. Test
+`truncated` rather than comparing `count` to the limit, and pass `act ready --limit 0` when
+you need every ready issue — the same contract `act list` honours.
 
 ## Dependency edges: getting the direction right
 

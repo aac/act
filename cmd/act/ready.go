@@ -18,7 +18,7 @@ import (
 func runReady(args []string) int {
 	fs := flag.NewFlagSet("ready", flag.ContinueOnError)
 	under := fs.String("under", "", "restrict to descendants of the given issue id (prefix ok)")
-	limit := fs.Int("limit", 50, "maximum number of issues to return")
+	limit := fs.Int("limit", cli.DefaultReadyLimit, "maximum number of issues to return; --limit 0 means no limit (return every ready issue). A capped ready set prints a WARNING to stderr naming how many issues were hidden.")
 	mine := fs.Bool("mine", false, "filter to issues already assigned to the calling node")
 	as := fs.String("as", "", "override identity for --mine; defaults to .act/config.json node_id")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
@@ -86,6 +86,12 @@ func runReady(args []string) int {
 		return code
 	}
 
+	res, ok := out.(cli.ReadyResult)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "act ready: unexpected output type %T\n", out)
+		return 1
+	}
+
 	if *asJSON {
 		data, jerr := json.Marshal(out)
 		if jerr != nil {
@@ -93,15 +99,17 @@ func runReady(args []string) int {
 			return 1
 		}
 		fmt.Println(string(data))
-		return 0
+	} else {
+		fmt.Print(cli.FormatReadyHuman(res))
 	}
 
-	res, ok := out.(cli.ReadyResult)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "act ready: unexpected output type %T\n", out)
-		return 1
+	// The truncation warning goes to stderr in BOTH modes, matching
+	// `act list` (act-1b816e). JSON callers have the `truncated` field;
+	// the human watching a `--json | jq` pipeline has nothing else to
+	// look at, and stderr cannot corrupt the row stream or the JSON.
+	if notice := cli.FormatReadyTruncationNotice(res); notice != "" {
+		fmt.Fprint(os.Stderr, notice)
 	}
-	fmt.Print(cli.FormatReadyHuman(res))
 	return 0
 }
 

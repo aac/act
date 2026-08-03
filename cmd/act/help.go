@@ -410,6 +410,11 @@ THE LOOP IN DETAIL
     BEFORE the cap, or pass --limit 0. Under --json the result
     carries "total" (pre-limit match count) and "truncated".
 
+    'act ready' caps at 50 rows and obeys the same contract: a
+    capped ready set warns on stderr, --json carries "total" and
+    "truncated", and 'act ready --limit 0' returns every ready
+    issue.
+
   DEP DIRECTION PRIMER
     The canonical (child, parent) reading for dep add is:
 

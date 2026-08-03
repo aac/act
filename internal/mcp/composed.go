@@ -99,9 +99,13 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 	jitter := deps.jitterOrDefault()
 	sleep := deps.sleepOrDefault()
 
-	// Step 1: gather the ready set (filtered by under).
+	// Step 1: gather the ready set (filtered by under). The explicit
+	// Limit preserves the 50-row frontier act_next has always worked
+	// against: RunReady's Limit now means "no limit" at <=0 (act-1b816e),
+	// so the bound has to be stated rather than inherited.
 	readyOut, code := cli.RunReady(s.repoRoot, cli.ReadyOptions{
 		Under:  args.Under,
+		Limit:  cli.DefaultReadyLimit,
 		AsJSON: true,
 	})
 	if code != 0 {
@@ -135,6 +139,7 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 		if attempt > 0 {
 			refreshed, rcode := cli.RunReady(s.repoRoot, cli.ReadyOptions{
 				Under:  args.Under,
+				Limit:  cli.DefaultReadyLimit,
 				AsJSON: true,
 			})
 			if rcode == 0 {

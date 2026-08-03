@@ -1519,6 +1519,75 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Update_DescriptionAppendAppends",
 	},
 	{
+		// The file twin of --description-append (act-0bec25). A session
+		// record is a paragraph with quotes and newlines in it — the
+		// payload a single argv token handles worst — so without this
+		// flag the caller falls back to the read-modify-write the append
+		// path exists to remove.
+		//
+		// Drift shape: someone folds the two flags into one and drops the
+		// file form, or lets it be paired with a replace flag so the
+		// ticket body is clobbered by the "append" that was asked for.
+		name:         "update-description-append-file-flag-help",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "append the contents of this file to the existing description",
+		testName:     "TestDocClaim_Update_DescriptionAppendFile",
+	},
+	{
+		name:         "skill-description-append-file",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "act update <id> --description-append-file <path>",
+		testName:     "TestDocClaim_Update_DescriptionAppendFile",
+	},
+	// ready-truncation-* (act-1b816e): `act ready` capped at 50 rows,
+	// emitted no truncation signal at all, and ignored `--limit 0` — so on
+	// the same store `--limit 0` returned 50 while `--limit 500` returned
+	// 99, and `act list` had honoured `--limit 0` since act-b50d81. Any
+	// aggregator counting ready work across stores silently under-reported
+	// with exit 0.
+	//
+	// Drift shape: the 50-row default migrates back INTO RunReady (which
+	// is what made `--limit 0` mean 50), or the notice moves from stderr
+	// into the row stream and corrupts every `--json | jq` consumer.
+	{
+		name:         "ready-limit-zero-means-no-limit",
+		docFile:      "cmd/act/ready.go",
+		claimPattern: "--limit 0 means no limit (return every ready issue)",
+		testName:     "TestDocClaim_Ready_LimitZeroReturnsEverything",
+	},
+	{
+		name:         "ready-capped-warns-on-stderr",
+		docFile:      "cmd/act/ready.go",
+		claimPattern: "A capped ready set prints a WARNING to stderr naming how many issues were hidden",
+		testName:     "TestDocClaim_Ready_CappedSetWarnsOnStderr",
+	},
+	{
+		name:         "ready-counting-guidance-in-help",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act ready' caps at 50 rows",
+		testName:     "TestDocClaim_Ready_CappedSetWarnsOnStderr",
+	},
+	{
+		name:         "skill-ready-truncation",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "`act ready` caps at 50 rows",
+		testName:     "TestDocClaim_Ready_CappedSetWarnsOnStderr",
+	},
+	// listings-claim-age (act-d627c8): claim AGE was reachable only via one
+	// `act show` subprocess per in-progress id, so a cross-store aggregator
+	// paid unbounded fan-out on exactly the projects with the most stale
+	// claims. Additive: claimed_at on `act list --json`, created_at on
+	// `act ready --json`.
+	//
+	// Drift shape: a payload-slimming pass drops the field again as
+	// "redundant with show".
+	{
+		name:         "spec-list-carries-claimed-at",
+		docFile:      "docs/spec.md",
+		claimPattern: "so claim age is readable from a listing without one `act show` per in-progress id",
+		testName:     "TestDocClaim_Listings_CarryClaimAge",
+	},
+	{
 		// MCP parity: act_update advertises description_append, and
 		// `description` says it REPLACES so an agent can tell the pair
 		// apart. The asserting test drives tools/list AND a real

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`act ready --limit 0` returns every ready issue, and a capped ready set
+  now says so.** `--limit 0` meant "no limit" on `act list` and "fall back to
+  the default 50" on `act ready`, so on one real store `act ready --json
+  --limit 0` answered 50 while `--limit 500` answered 99 — the two
+  subcommands disagreeing on the same flag, with no way to ask ready for a
+  complete answer.
+  - `act ready --json` now carries `total` (the pre-limit ready count) and
+    `truncated`, matching `act list` field-for-field. It previously carried
+    only `{ready, count}`, so a caller could not tell a project with exactly
+    50 ready issues from one with 500 — every cross-store count silently
+    under-reported, with exit 0.
+  - A capped ready set prints a WARNING to **stderr** in both human and
+    `--json` mode, naming how many issues were hidden and pointing at
+    `--limit 0`. stderr because `act ready --json | jq` owns stdout.
+  - The 50-row default moved from `RunReady` to its callers (the `act ready`
+    flag default, `act_next`'s frontier fetch, the `act_ready` MCP tool),
+    which is what makes `--limit 0` expressible at all. `ReadyOptions.Limit`
+    now means "no limit" at `<=0`, the same as `ListOptions.Limit`.
+
+### Added
+- **`claimed_at` on `act list --json`, `created_at` on `act ready --json`.**
+  Claim age was reachable only through `act show`, so an aggregator sweeping
+  many stores paid one subprocess per in-progress id — unbounded fan-out
+  keyed on exactly the projects with the most stale claims. Both fields are
+  additive and omitted when empty; nothing was removed or renamed.
+- **`act update <id> --description-append-file <path|->`.** The file twin of
+  `--description-append`, for a session record too long or too quote-hostile
+  for one shell argument; `-` reads stdin. Mutually exclusive with
+  `--description`, `--description-file` and `--description-append`.
+
 ### Changed
 - **`short_id` is emitted only when it differs from `id`.** Ids are
   generated at the shortest-unique-prefix floor, so unless an id was
