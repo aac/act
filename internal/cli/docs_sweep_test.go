@@ -71,6 +71,63 @@ type docClaim struct {
 // depend on it.
 var docClaimRegistry = []docClaim{
 	{
+		// act-3e21b8: `act update --title` exists and replaces the title.
+		// The listing is the surface that matters — TestDocClaim_Update_
+		// TitleSetsTitle asserts through `act list`, not just `act show`.
+		name:         "spec-update-title",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--title T` (string). REPLACES the title",
+		testName:     "TestDocClaim_Update_TitleSetsTitle",
+	},
+	{
+		name:         "skill-update-retitle",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "When the scope moves, retitle",
+		testName:     "TestDocClaim_Update_TitleSetsTitle",
+	},
+	{
+		// act-3e21b8 criterion 3: MCP parity is normative, not incidental —
+		// a fold-merged field with no write path on one surface is the gap
+		// this ticket closed. TestDocClaim_MCP_UpdateTitleTypeParent
+		// asserts both the advertised schema and the handler.
+		name:         "spec-update-mcp-parity",
+		docFile:      "docs/spec.md",
+		claimPattern: "MUST have a write path on both the CLI and MCP surfaces",
+		testName:     "TestDocClaim_MCP_UpdateTitleTypeParent",
+	},
+	{
+		name:         "help-update-retitle",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "Retitling an issue whose scope moved",
+		testName:     "TestDocClaim_Update_TitleSetsTitle",
+	},
+	{
+		// act-3e21b8: --type takes the same closed enum as create, and
+		// anything else is exit 2 rather than an op the type filter misses.
+		name:         "spec-update-type",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--type T` (enum task|bug|epic|chore). Any other value → exit 2",
+		testName:     "TestDocClaim_Update_TypeSetsType",
+	},
+	{
+		// act-3e21b8: --parent sets the hierarchy parent, "" detaches, and
+		// a cycle is refused at the write path because act doctor's cycle
+		// check covers the blocks subgraph only.
+		name:         "spec-update-parent",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--parent \"\"` detaches the issue from its parent",
+		testName:     "TestDocClaim_Update_ParentSetsAndClears",
+	},
+	{
+		// act-3e21b8 criterion 4: a retitle leaves commit-marker
+		// correlation and doctor orphan-close untouched, because both key
+		// on the id and never the title.
+		name:         "spec-retitle-commit-correlation",
+		docFile:      "docs/spec.md",
+		claimPattern: "A retitle does not disturb commit-marker correlation",
+		testName:     "TestDocClaim_Update_RetitleKeepsCommitCorrelation",
+	},
+	{
 		// act-57e743: the canonical loop's work commit names explicit
 		// paths, and both surfaces say why — in a checkout several
 		// sessions share, `-a` commits a sibling session's dirty files.

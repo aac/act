@@ -148,6 +148,13 @@ whole body. For a note too long or too quote-hostile for one shell argument, use
 `act update <id> --description-append-file <path>` (or `-` to read stdin). `act log` is a
 read-only op viewer and takes no message.
 
+**When the scope moves, retitle — don't just append a correction.** `act update <id> --title
+"<new title>"` replaces the title. A listing shows the title and nothing else of the body, so
+a correction buried in the description is invisible to the next dispatcher, who reads the
+stale title and re-derives the same conclusion. Retitling is id-safe: commit markers and
+`act doctor` key on the `Act-Id:` trailer, never the title. `--type` and `--parent` are on the
+same command (`--parent ""` detaches from an epic).
+
 **Counting ready work: `act ready` caps at 50 rows.** A capped ready set prints a WARNING to
 stderr and, under `--json`, carries `total` (the pre-limit ready count) and `truncated`. Test
 `truncated` rather than comparing `count` to the limit, and pass `act ready --limit 0` when

@@ -36,6 +36,39 @@ type UpdateOptions struct {
 	Assignee    *string
 	Description *string
 
+	// Title, Type and Parent complete the six LWW-per-field updatable
+	// fields the spec's §3 fold table names (title, description,
+	// priority, type, assignee, parent). The fold and the op-layer
+	// `validUpdateFields` set have always accepted all six; only the
+	// write path was short three of them (act-3e21b8, act-3e2986), so
+	// `act update` could not fix a title that had gone stale — the
+	// field every `act list` / `act ready` row shows and every
+	// dispatcher reads first.
+	//
+	// Title is required non-empty when supplied: unlike Assignee and
+	// Description, "" is not a meaningful title, and `act create`
+	// rejects it too. Cap is 256 bytes, matching `act create`.
+	Title *string
+
+	// Type accepts the same enum as `act create --type`
+	// (task|bug|epic|chore). A mistyped value is rejected up front
+	// rather than written as an op the fold would happily store and
+	// every type filter would then miss.
+	Type *string
+
+	// Parent sets the hierarchy parent (NOT a dep edge — see
+	// `act dep add` for blocking). The value is id-resolved like any
+	// other id argument, so a prefix works. The empty string clears the
+	// parent, which is the only way to detach a child that was created
+	// under the wrong epic.
+	//
+	// Guarded against self-parenting and against closing a cycle in the
+	// parent chain: `act delete --cascade`'s descendant walk is
+	// cycle-safe, but a parent cycle is nonsense state that no reader
+	// can render, so it is rejected at the write path the same way
+	// `act dep add` rejects a cycle in the blocks subgraph.
+	Parent *string
+
 	// DescriptionAppend, when non-nil, appends its text to the issue's
 	// CURRENT description rather than replacing it (act-a79d66). act
 	// resolves the existing description server-side and writes a single
@@ -286,6 +319,15 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		if opts.DescriptionAppend != nil {
 			conflicts = append(conflicts, "--description-append")
 		}
+		if opts.Title != nil {
+			conflicts = append(conflicts, "--title")
+		}
+		if opts.Type != nil {
+			conflicts = append(conflicts, "--type")
+		}
+		if opts.Parent != nil {
+			conflicts = append(conflicts, "--parent")
+		}
 		if opts.AcceptSet {
 			conflicts = append(conflicts, "--accept")
 		}
@@ -315,6 +357,36 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			return UpdateErrorOutput{
 				Error:   "bad_flag",
 				Message: fmt.Sprintf("act update: --priority %d out of range [0,3]", *opts.Priority),
+			}, 2
+		}
+	}
+
+	// Step 2f: --title is non-empty and length-capped. Both mirror
+	// `act create`, whose title argument carries the same rules — a
+	// retitle should not be able to reach a state create could not.
+	if opts.Title != nil {
+		if *opts.Title == "" {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: "act update: --title: title is empty (a title cannot be cleared; supply replacement text)",
+			}, 2
+		}
+		if len(*opts.Title) > 256 {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --title: length %d > 256 bytes", len(*opts.Title)),
+			}, 2
+		}
+	}
+
+	// Step 2g: --type is the same closed enum `act create --type` takes.
+	if opts.Type != nil {
+		switch *opts.Type {
+		case "task", "bug", "epic", "chore":
+		default:
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --type %q: not one of task, bug, epic, chore", *opts.Type),
 			}, 2
 		}
 	}
@@ -369,10 +441,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: non-claim mutation. We must have at least one mutating flag.
-	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && opts.DescriptionAppend == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
+	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && opts.DescriptionAppend == nil && opts.Title == nil && opts.Type == nil && opts.Parent == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
-			Message: "act update: at least one of --status, --priority, --assignee, --description, --description-append, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
+			Message: "act update: at least one of --title, --status, --priority, --type, --parent, --assignee, --description, --description-append, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
 		}, 2
 	}
 
@@ -473,8 +545,11 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
+	// The folded view is needed by --dep-rm (to verify the edge exists)
+	// and by a non-clearing --parent (to walk the existing parent chain
+	// for a cycle). One rebuild serves both.
 	var rows []index.Row
-	if len(opts.DepRm) > 0 {
+	if len(opts.DepRm) > 0 || (opts.Parent != nil && *opts.Parent != "") {
 		idx, ierr := index.Open(paths.IndexDB)
 		if ierr != nil {
 			return UpdateErrorOutput{
@@ -498,6 +573,63 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}, 1
 		}
 		rows = all
+	}
+
+	// Step 6c2: resolve and guard --parent. The empty string clears the
+	// parent and needs no resolution. A non-empty value is id-resolved
+	// (so a prefix works, like every other id argument), then checked
+	// for the two states no reader can make sense of: an issue that is
+	// its own parent, and a cycle in the parent chain.
+	//
+	// The cycle walk climbs from the PROPOSED parent upward through the
+	// existing hierarchy; if it reaches this issue, adding the edge
+	// would close the loop. `act dep add` rejects a cycle in the blocks
+	// subgraph for the same reason, and `act doctor`'s cycle check only
+	// covers blocks — nothing downstream would report a parent cycle.
+	parentValue := ""
+	if opts.Parent != nil && *opts.Parent != "" {
+		resolved, rerr := ids.Resolve(*opts.Parent, knownIDs)
+		if rerr != nil {
+			if errors.Is(rerr, ids.ErrNotFound) {
+				return UpdateErrorOutput{
+					Error:   "issue_not_found",
+					Message: fmt.Sprintf("act update: --parent %q: no matching id", *opts.Parent),
+					Details: map[string]any{"query": *opts.Parent},
+				}, 3
+			}
+			var amb *ids.ErrAmbiguousID
+			if errors.As(rerr, &amb) {
+				candidates := amb.Candidates()
+				return UpdateErrorOutput{
+					Error:   "id_ambiguous",
+					Message: fmt.Sprintf("act update: --parent %q matches %d issues", *opts.Parent, len(candidates)),
+					Details: map[string]any{
+						"prefix":     *opts.Parent,
+						"candidates": candidates,
+					},
+					Candidates: candidates,
+				}, 2
+			}
+			return UpdateErrorOutput{
+				Error:   "issue_not_found",
+				Message: rerr.Error(),
+				Details: map[string]any{"query": *opts.Parent},
+			}, 3
+		}
+		if resolved == full {
+			return UpdateErrorOutput{
+				Error:   "cycle_detected",
+				Message: fmt.Sprintf("act update: --parent: %s cannot be its own parent", ShortIssueID(full)),
+			}, 2
+		}
+		if path, cyclic := parentChainReaches(rows, resolved, full); cyclic {
+			return UpdateErrorOutput{
+				Error:   "cycle_detected",
+				Message: fmt.Sprintf("act update: --parent: cycle detected in the parent hierarchy: %s", strings.Join(path, " -> ")),
+				Details: map[string]any{"path": path},
+			}, 2
+		}
+		parentValue = resolved
 	}
 
 	// Step 6d: resolve --description-append against the CURRENT description
@@ -613,9 +745,29 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}
 		}
 	}
+	if opts.Title != nil {
+		val, _ := json.Marshal(*opts.Title)
+		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "title", Value: val}); code != 0 {
+			return errOut, code
+		}
+	}
 	if opts.Priority != nil {
 		val, _ := json.Marshal(*opts.Priority)
 		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "priority", Value: val}); code != 0 {
+			return errOut, code
+		}
+	}
+	if opts.Type != nil {
+		val, _ := json.Marshal(*opts.Type)
+		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "type", Value: val}); code != 0 {
+			return errOut, code
+		}
+	}
+	// parentValue is the RESOLVED id (or "" for the clearing form), set
+	// and cycle-checked in Step 6c2.
+	if opts.Parent != nil {
+		val, _ := json.Marshal(parentValue)
+		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "parent", Value: val}); code != 0 {
 			return errOut, code
 		}
 	}
@@ -986,6 +1138,37 @@ func resolveDepIDForUpdate(arg string, knownIDs []string) (string, int, any) {
 		Message: rerr.Error(),
 		Details: map[string]any{"query": arg},
 	}
+}
+
+// parentChainReaches climbs the parent hierarchy from `start` and reports
+// whether it reaches `target`. Used to reject `act update --parent` edges
+// that would close a cycle: if the proposed parent already has `target`
+// somewhere above it, making `target`'s parent the proposed one loops.
+//
+// The returned path is the chain walked (target first, so it reads
+// child -> parent -> ... -> back to child) for the error message. The
+// walk carries a visited set, so a pre-existing cycle in the store
+// terminates rather than spinning.
+func parentChainReaches(rows []index.Row, start, target string) ([]string, bool) {
+	parentOf := make(map[string]string, len(rows))
+	for _, r := range rows {
+		if r.Parent != "" {
+			parentOf[r.ID] = r.Parent
+		}
+	}
+	path := []string{ShortIssueID(target)}
+	seen := map[string]bool{}
+	for cur := start; cur != ""; cur = parentOf[cur] {
+		if seen[cur] {
+			return nil, false
+		}
+		seen[cur] = true
+		path = append(path, ShortIssueID(cur))
+		if cur == target {
+			return path, true
+		}
+	}
+	return nil, false
 }
 
 // depEdgeExists reports whether (childID --[edgeType]--> parentID) is a

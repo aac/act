@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`act update` reaches all six spec-updatable fields (act-3e21b8, act-3e2986).**
+  The spec's fold table lists `title`, `description`, `priority`, `type`,
+  `assignee`, `parent` as LWW-per-field updatable and the fold implements all
+  six — but the write path exposed only three. `act update` now takes
+  `--title`, `--type` and `--parent`, and MCP `act_update` gains the matching
+  `title` / `type` / `parent` params.
+  - **`--title`** is the one that bit: a listing renders the title and nothing
+    else of the body, so a ticket whose scope moved could only carry a
+    correction that `act list` never shows. ≤256 bytes, matching `act create`;
+    `--title ""` is exit 2 rather than a clear, because an empty title is not
+    a state `act create` can reach either.
+  - **`--type`** takes the same closed enum as `act create --type`; anything
+    else is exit 2 rather than an op the fold stores and every type filter
+    then misses.
+  - **`--parent`** is id-resolved (prefixes work) and `--parent ""` detaches.
+    Self-parenting and any value that would close a cycle in the parent chain
+    are refused with `cycle_detected` (exit 2) — `act doctor`'s `cycle` check
+    walks the *blocks* subgraph only, so a parent cycle has no downstream
+    detector.
+  - **Retitling is id-safe.** Commit-marker correlation and `act doctor
+    --check orphan-close` key on the `Act-Id: act-XXXX` trailer and the id
+    column, never the title; both return identical results across a retitle
+    (pinned by `TestDocClaim_Update_RetitleKeepsCommitCorrelation`).
+
 ### Changed
 - **A failed push is no longer a failed write (act-89a595).** An `act` write
   whose op was durably committed still exited non-zero when the push to origin

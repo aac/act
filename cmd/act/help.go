@@ -385,6 +385,14 @@ THE LOOP IN DETAIL
     ticket mid-flight — what you found, what you verified, what the
     next session needs to know.
 
+  Retitling an issue whose scope moved
+    $ act update <id> --title "<new title>"
+    A listing shows the title and nothing else of the body, so a
+    title that has gone stale misleads every reader before they
+    reach the correction. Retitle instead of appending a note that
+    says the title is wrong. Retitling is id-safe: commit markers
+    and 'act doctor' key on the 'Act-Id:' trailer, never the title.
+
     'act log' is a read-only op-log viewer, NOT a place to write a
     note: 'act log <id> "message"' is rejected (exit 2) rather than
     silently dropping the message. The same rejection applies to a
