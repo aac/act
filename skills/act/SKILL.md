@@ -40,7 +40,18 @@ unavailable.
 | Get the commit marker | `commit_marker` field on `act_next` (no separate call) | `act show <id> --commit-marker` |
 | Close | `act_finish` (closes; pushes the close op to the `.act/` tracker remote, not your host commit) | `act finish <id>` (same) or `act close <id> --reason "<one-liner>"` |
 | File a follow-up | `act_create` | `act create "<title>" --type <t> --description ... --accept ...` |
-| Attach/clear external blocker | `external` on `act_dep_add` / `ext_rm` on `act_update` | `act dep add <id> --external "<ref>"` / `act update <id> --ext-rm "<ref>"` |
+| Attach/clear external blocker | CLI-only for the add; `ext_rm` on `act_update` clears | `act dep add <id> --external "<ref>"` / `act update <id> --ext-rm "<ref>"` |
+
+**Eight tools are advertised over MCP** — `act_next`, `act_finish`, `act_block`,
+`act_file_blocker`, `act_list`, `act_show`, `act_create`, `act_update`. The setup and
+diagnostic verbs — `act init`, `act version`, `act doctor`, `act log`, `act search`,
+`act ready`, `act close`, `act dep add` — are **CLI-only**: run them as commands. Every
+one of them exists as a CLI verb of the same name, so nothing is unreachable; they are
+just not worth the schema an MCP session re-reads every turn.
+
+**Reading ids out of a response:** `short_id` is emitted only when it differs from `id`.
+Ids are already the shortest unique prefix in the normal case, so **an absent `short_id`
+means it equals `id`** — read it as "short_id, else id", not as a missing field.
 
 Drive the loop with `act next`/`act finish` (`act_next`/`act_finish` are their MCP names);
 use `act ready`/`act_ready` to *survey* the ready set without claiming (e.g. an orchestrator

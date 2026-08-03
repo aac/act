@@ -89,12 +89,15 @@ addition, not a requirement for anything above.
 
 ## How agents use it
 
-`act` exposes its command set as an [MCP](https://modelcontextprotocol.io) server
-(`act mcp`, stdio transport) so any MCP-aware agent can drive the loop without shelling
-out. Most MCP tools mirror a CLI command (`act_ready`, `act_create`, `act_close`, `act_next`,
-`act_finish`, …), so either interface drives the loop identically — `act_next`
-(ready + claim + show) and `act_finish` (close + push) have matching `act next` /
-`act finish` verbs like the rest.
+`act` exposes its work loop as an [MCP](https://modelcontextprotocol.io) server
+(`act mcp`, stdio transport) so any MCP-aware agent can drive it without shelling out.
+Eight tools are advertised — `act_next` (ready + claim + show), `act_finish`
+(close + push), `act_block`, `act_file_blocker`, `act_list`, `act_show`, `act_create`,
+`act_update` — each mirroring a CLI verb of the same name, so either interface drives the
+loop identically. Setup and diagnostic verbs (`act init`, `act doctor`, `act search`,
+`act ready`, `act close`, `act dep add`, `act log`, `act version`) are CLI-only: every
+advertised tool's schema is re-read on each agent turn, so the MCP surface carries only
+what the loop runs.
 
 ## If a write is interrupted
 

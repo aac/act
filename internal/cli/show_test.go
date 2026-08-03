@@ -282,8 +282,11 @@ func TestRunShow_HappyPath(t *testing.T) {
 	if got := res.Fields["id"]; got != "act-abcd" {
 		t.Errorf("id = %v, want act-abcd", got)
 	}
-	if _, ok := res.Fields["short_id"].(string); !ok {
-		t.Errorf("short_id missing or wrong type: %v", res.Fields["short_id"])
+	// act-8a6536: the fixture id is unextended, so its shortest unique prefix
+	// equals the id and short_id is not emitted at all. Consumers read an
+	// absent short_id as "short_id == id".
+	if got, ok := res.Fields["short_id"]; ok {
+		t.Errorf("short_id present (%v) but identical to id", got)
 	}
 }
 

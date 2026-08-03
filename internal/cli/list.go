@@ -52,7 +52,7 @@ type ListOptions struct {
 // `assignee`, `created_at`).
 type ListedIssue struct {
 	ID        string `json:"id"`
-	ShortID   string `json:"short_id"`
+	ShortID   string `json:"short_id,omitempty"`
 	Title     string `json:"title"`
 	Status    string `json:"status"`
 	Priority  int    `json:"priority"`

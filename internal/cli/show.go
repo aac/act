@@ -180,14 +180,16 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 		rendered = map[string]any{}
 	}
 
-	// Step 6: enrich with id + short_id (the spec emits the full id only,
-	// but short_id mirrors `act list` and aids stable test assertions).
+	// Step 6: enrich with id, and with short_id ONLY when the shortest
+	// unique prefix actually differs from the full id (act-8a6536). Ids are
+	// generated at the prefix floor, so for an unextended id the two are
+	// byte-identical and emitting both was shipping the same string twice.
+	// Consumers read an absent short_id as "short_id == id"; see
+	// omitShortIDWhenSameAsID for the contract.
 	rendered["id"] = full
 	prefixes := ids.ShortestUniquePrefixes(allIDs)
-	if short := prefixes[full]; short != "" {
+	if short := prefixes[full]; short != "" && short != full {
 		rendered["short_id"] = short
-	} else {
-		rendered["short_id"] = full
 	}
 
 	// Step 6b: compute blocked_by and blocks arrays.

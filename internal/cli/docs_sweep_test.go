@@ -174,9 +174,11 @@ var docClaimRegistry = []docClaim{
 		// matching CLI verbs (act-2645c7), replacing the stale "act_next/
 		// act_finish are MCP-only" carve-out. Guarded by the act next
 		// behavior test. Drift shape: someone reinstates the carve-out.
+		// (act-8a6536 rephrased the same claim when the README was updated
+		// for the eight-tool advertised surface; the guarantee is unchanged.)
 		name:         "readme-mcp-cli-mirror",
 		docFile:      "README.md",
-		claimPattern: "have matching `act next` /",
+		claimPattern: "each mirroring a CLI verb of the same name",
 		testName:     "TestDocClaim_Next_ClaimsAndShowsTopReady",
 	},
 	// skill-cli-composed-verbs (act-46b704): the shipped act skill +
@@ -916,6 +918,41 @@ var docClaimRegistry = []docClaim{
 		docFile:      "internal/mcp/server.go",
 		claimPattern: "Existing ids the NEW issue blocks",
 		testName:     "TestDocClaim_MCP_CreateBlockedByAndBlocks",
+	},
+	{
+		// act-8a6536: short_id was duplicating id on every row of every
+		// listing (ids are generated at the prefix floor, so the two are
+		// byte-identical unless an id was extended). The spec now states
+		// the emit-only-when-different rule AND the consumer-side reading
+		// of an absent key; the test pins both directions at the JSON
+		// boundary. Drift shape: the omit rule swallows the informative
+		// case too, leaving an extended id with no short handle anywhere.
+		name:         "shortid-omitted-when-same-as-id",
+		docFile:      "docs/spec.md",
+		claimPattern: "emits `short_id` **only when it differs from `id`**",
+		testName:     "TestDocClaim_ShortID_OmittedWhenSameAsID",
+	},
+	{
+		// act-8a6536, skill side: the loop-facing statement of the same
+		// rule, which is where an agent reads it. Its asserting test is the
+		// end-to-end one — an extended id still renders its prefix through
+		// `act show`, so "absent means identical" never costs a caller the
+		// handle it needs.
+		name:         "skill-shortid-only-when-different",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "`short_id` is emitted only when it differs from `id`",
+		testName:     "TestDocClaim_ShortID_ShowEmitsPrefixForExtendedID",
+	},
+	{
+		// act-8a6536: the MCP surface advertises eight tools; the rest stay
+		// reachable as identically-named CLI verbs and still dispatch over
+		// MCP for clients holding a cached list. Drift shape: a tool is
+		// dropped from exposedTools AND from invoke(), which would break a
+		// live session mid-flight rather than just slimming what it reads.
+		name:         "mcp-unadvertised-tools-still-reachable",
+		docFile:      "docs/spec.md",
+		claimPattern: "remain dispatchable over MCP for clients holding a cached tool list",
+		testName:     "TestDocClaim_MCP_UnadvertisedToolsStillDispatch",
 	},
 	{
 		// act-ca659d: read_only left every tool schema (2,048 B of the

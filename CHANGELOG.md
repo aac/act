@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`short_id` is emitted only when it differs from `id`.** Ids are
+  generated at the shortest-unique-prefix floor, so unless an id was
+  extended to break a collision the two fields carried byte-identical
+  strings — duplicated on every row of every listing. Applies to every
+  payload that carried both (`act list`, `act ready`, `act search`,
+  `act show`, `act close`, `act delete`, `act reopen`, and their MCP
+  equivalents), CLI `--json` and MCP alike, so the field means one thing
+  everywhere.
+  - **Consumers must read an absent `short_id` as `short_id == id`** —
+    "short_id, else id" — not as a missing field. It reappears whenever it
+    carries information, i.e. for an extended id.
+  - Human output is unchanged: `act list` and `act ready` still print the
+    short handle as the row id.
+  - Measured on a live tracker (17 open issues): `act_list` 3,991 → 3,583 B,
+    `act_ready` 2,661 → 2,301 B — 24 B per row.
+- **The MCP server advertises eight tools instead of sixteen.** `tools/list`
+  now carries only what the work loop runs: `act_next`, `act_finish`,
+  `act_block`, `act_file_blocker`, `act_list`, `act_show`, `act_create`,
+  `act_update`. Combined with the schema trim below, the advertised surface
+  goes 14,320 B → 6,281 B (-56%).
+  - The setup and diagnostic verbs — `act init`, `act version`, `act doctor`,
+    `act log`, `act search`, `act ready`, `act close`, `act dep add` — are
+    **CLI-only**, each reachable as a command of the same name. They also
+    still dispatch over MCP if named directly, so a client holding a cached
+    older tool list keeps working.
 - **MCP tool schemas are ~34% smaller (14,320 B → 9,420 B across the 16
   tools).** The schema text is re-read on every turn of every session that
   wires the server, so it is a recurring cost rather than a one-off.

@@ -348,8 +348,9 @@ func (s *Server) handleInitialize(enc *json.Encoder, req jsonRPCRequest) {
 	s.writeResult(enc, req.ID, res)
 }
 
-// handleToolsList returns the static tool registry. The list shape and
-// schemas are stable; clients are expected to cache them per-session.
+// handleToolsList returns the ADVERTISED tool registry (see exposedTools).
+// The list shape and schemas are stable; clients are expected to cache them
+// per-session.
 func (s *Server) handleToolsList(enc *json.Encoder, req jsonRPCRequest) {
 	tools := s.tools()
 	s.writeResult(enc, req.ID, map[string]any{"tools": tools})
@@ -527,9 +528,40 @@ func isWriteTool(name string) bool {
 	return false
 }
 
-// tools returns the registered tool descriptors in a deterministic order.
-// Schemas mirror the cli flag sets (kebab-case → snake_case), minus the
-// per-call plumbing params trimmed in act-ca659d.
+// exposedTools is the set of tools ADVERTISED via tools/list (act-8a6536).
+//
+// Every tool schema is re-read on every turn of every session that wires
+// this server, so an advertised tool an agent never calls is a recurring
+// tax. The eight kept here are the ones the work loop actually runs: the
+// composed verbs (act_next / act_finish / act_block / act_file_blocker),
+// the two reads it drives from (act_list / act_show), and the two escape
+// hatches those compose over (act_create / act_update).
+//
+// The rest — act_init, act_version, act_doctor, act_log, act_search,
+// act_ready, act_close, act_dep_add — are setup, diagnostic, or
+// rarely-reached-for verbs. They are NOT gone: every one has a CLI verb of
+// the same name (`act init`, `act doctor`, `act dep add`, …) documented in
+// the act skill's MCP-vs-CLI table, and invoke() still dispatches them, so
+// a client holding a cached older tool list keeps working. What changed is
+// only what a fresh session pays to read.
+//
+// Re-exposing one is a one-line edit here — deliberately, so the decision
+// stays reversible if a tool turns out to be load-bearing over MCP.
+var exposedTools = map[string]bool{
+	"act_next":         true,
+	"act_finish":       true,
+	"act_block":        true,
+	"act_file_blocker": true,
+	"act_list":         true,
+	"act_show":         true,
+	"act_create":       true,
+	"act_update":       true,
+}
+
+// tools returns the advertised tool descriptors in a deterministic order:
+// allTools filtered by exposedTools. Schemas mirror the cli flag sets
+// (kebab-case → snake_case), minus the per-call plumbing params trimmed in
+// act-ca659d.
 //
 // What was dropped from the ADVERTISED schemas and why (the schema text is
 // re-read on every turn of every session that wires this server, so bytes
@@ -551,6 +583,20 @@ func isWriteTool(name string) bool {
 // dep-add direction worked example, accept-vs-accept_add contrasts) moved to
 // skills/act/SKILL.md, which an agent reads once instead of every turn.
 func (s *Server) tools() []toolDescriptor {
+	all := allTools()
+	out := make([]toolDescriptor, 0, len(exposedTools))
+	for _, td := range all {
+		if exposedTools[td.Name] {
+			out = append(out, td)
+		}
+	}
+	return out
+}
+
+// allTools is the full descriptor registry, including the tools that are
+// dispatchable but no longer advertised (see exposedTools). Keeping the
+// descriptors intact is what makes re-exposing a tool a one-line change.
+func allTools() []toolDescriptor {
 	return []toolDescriptor{
 		{
 			Name:        "act_init",

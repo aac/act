@@ -94,7 +94,7 @@ type CloseOptions struct {
 // only when --no-commit was set (op file written but not staged).
 type CloseResult struct {
 	ID           string `json:"id"`
-	ShortID      string `json:"short_id"`
+	ShortID      string `json:"short_id,omitempty"`
 	OpsWritten   int    `json:"ops_written"`
 	Committed    bool   `json:"committed"`
 	CommitMarker string `json:"commit_marker,omitempty"`

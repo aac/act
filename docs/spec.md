@@ -936,6 +936,10 @@ The server exposes one tool per CLI command, named `act_<verb>` (`act_init`, `ac
 
 **Per-command tools.** Each `act_<verb>` accepts an object whose fields mirror the CLI flags (kebab-case becomes snake_case). Output is the command's `--json` body. Errors surface as MCP tool errors carrying `{code, kind, message}`.
 
+**Advertised surface.** `tools/list` advertises the eight tools the work loop runs — `act_next`, `act_finish`, `act_block`, `act_file_blocker`, `act_list`, `act_show`, `act_create`, `act_update` (act-8a6536). The setup/diagnostic verbs (`act_init`, `act_version`, `act_doctor`, `act_log`, `act_search`, `act_ready`, `act_close`, `act_dep_add`) are **reachable through the identically-named CLI verbs** and remain dispatchable over MCP for clients holding a cached tool list; they are simply not advertised, because every advertised schema is re-read on every turn.
+
+**`short_id` in responses.** Every payload that carries both `id` and `short_id` emits `short_id` **only when it differs from `id`** (act-8a6536). Ids are generated at the shortest-unique-prefix floor, so for an unextended id the two are byte-identical and emitting both duplicated the string on every row of every listing. Consumers MUST read an absent `short_id` as `short_id == id`, never as "no short handle".
+
 **Composed tool: `act_next`**
 
 Input:

@@ -37,7 +37,7 @@ type SearchOptions struct {
 // SearchMatch is one row in the search results.
 type SearchMatch struct {
 	ID      string `json:"id"`
-	ShortID string `json:"short_id"`
+	ShortID string `json:"short_id,omitempty"`
 	Title   string `json:"title"`
 	Status  string `json:"status"`
 	Snippet string `json:"snippet"`
