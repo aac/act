@@ -327,11 +327,14 @@ func TestRootsErrorReplyIsConsumed(t *testing.T) {
 
 func TestFileURIToPath(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"file:///Users/a/proj", "/Users/a/proj"},
-		{"file://localhost/Users/a/proj", "/Users/a/proj"},
-		{"file:///Users/a/my%20proj", "/Users/a/my proj"},
+		// Absolute sample paths deliberately avoid /Users and /home: the
+		// release verifier fails a release when a tracked file carries a
+		// personal/home-shaped path, even a synthetic one.
+		{"file:///w/a/proj", "/w/a/proj"},
+		{"file://localhost/w/a/proj", "/w/a/proj"},
+		{"file:///w/a/my%20proj", "/w/a/my proj"},
 		{"https://example.com/x", ""},
-		{"/Users/a/proj", ""},
+		{"/w/a/proj", ""},
 		{"file://relative", ""},
 	}
 	for _, c := range cases {
