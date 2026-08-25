@@ -98,6 +98,16 @@ you've read it.
    it itself** — there is no separate `git push` for the close op — so concurrent agents
    see it immediately and session-death can't lose finished work. (No remote configured,
    e.g. a local-only repo → it commits locally and skips the push; close still succeeds.)
+   - **Close on a check you ran, not on the merge.** "merged + CI green" is not
+     acceptance: a merge is a claim about intent, and a green CI run is evidence only for
+     the workflows that run in it. The close reason names the command and what its output
+     said, and — where the ticket has several criteria — which of them that output
+     actually covers. A ticket that was filed with empty accept criteria gets no pass:
+     say what you checked instead. (Provenance: a 2026-08-09 sweep of 11 closed tickets found eight
+     closed on merge-plus-green with empty criteria, and one asserting "all three criteria
+     verified" off a clean `ci.yml` run — the criterion it was covering lived in
+     `auth-smoke.yml`, which `ci.yml` never runs, and that workflow was still unbumped at
+     the ticket's own merge commit.)
    - **A failed push is not a failed write.** If origin is unreachable, act still exits 0:
      the op is committed locally, queued in `.act/.pending-pushes`, and an
      `act: WARNING:` block on stderr says so (`push_deferred: true` in `--json`). Do
