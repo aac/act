@@ -136,8 +136,17 @@ Bugs and gaps you hit *while working a different issue* can go straight into the
 follow-ups instead of derailing the current task:
 
 ```
-act create "<title>" --type bug --description "<repro + when discovered>" --accept "<resolution criterion>"
+act create "<title>" --type bug --description-file - --accept '<resolution criterion>' <<'EOF'
+<repro + when discovered>
+EOF
 ```
+
+Quote ticket text so the shell cannot run it. Acceptance criteria and repro notes
+routinely contain commands — `` `make check` ``, `$(...)`, pipes — and inside a
+double-quoted argument the shell executes those before `act` ever sees them. Use
+single quotes for `--accept`, and a quoted heredoc (`<<'EOF'`, quotes included) or a
+file for the description. Via the MCP tools there is no shell in the path, so this
+only applies to the CLI.
 
 File it, keep working. If the discovery actually blocks the current issue, that's the
 "cross-issue block" state above.
