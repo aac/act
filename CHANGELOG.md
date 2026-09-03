@@ -114,6 +114,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than silently picking one; they ask for opposite things.
 
 ### Fixed
+- **A hook `act` killed no longer reports as a hook that refused, and the
+  limit is now the host's to set (act-8ee085 follow-through).** The hook
+  timeout was a 300s constant and every hook failure rendered as
+  `hook exited 1`, so on a machine where this repo's own close gate takes
+  15m36s, `act close` refused every close with a message describing a test
+  failure that had not happened. Measured with a 320s no-op hook: killed at
+  exactly 300s, reported as `{"error":"hook_failed","message":"hook exited 1"}`
+  with an empty stderr excerpt as the only clue.
+  - `ACT_HOOK_TIMEOUT` (a Go duration — `20m`, `90s`) overrides the 300s
+    default. An unparseable or non-positive value falls back to the default:
+    a malformed environment variable must not be why a close cannot be
+    recorded. It is an environment variable rather than tracker config
+    because the same gate on the same commit was ~140s on one machine and
+    15m36s on another — that is a property of the host, not the project.
+  - A timeout now says it timed out, names the limit it hit, and names the
+    variable that changes it.
+
+### Fixed
 - **Closing a ticket can no longer race a sweep into a phantom close
   (act-8ee085, act-cb55ee).** A close op used to be written into `ops/` and
   staged *before* the close gate ran, and a refused close was rolled back by

@@ -349,6 +349,30 @@ func HookFailureDetails(err error) (message string, details map[string]any, isHo
 		details["hook_stderr"] = tail
 	}
 	excerpt := lastLines(tail, hookStderrExcerptLines)
+
+	// A hook act KILLED is not a hook that refused (act-8ee085
+	// follow-through). hooks.Run already distinguishes the two — it sets
+	// Cause="timeout" and says so in its own Error() — but this function
+	// dropped that and rendered every failure as `hook exited 1`. The
+	// effect on a real gate: a close hook that outran the limit reported
+	// the same thing a failing test suite reports, with an empty stderr
+	// excerpt as the only clue, so the operator's next move was to hunt
+	// for a test failure that did not exist. Say which happened, name the
+	// limit that was hit, and name the knob that changes it.
+	if herr.Cause == "timeout" {
+		limit := resolveHookTimeout()
+		details["hook_cause"] = "timeout"
+		details["hook_timeout"] = limit.String()
+		msg := fmt.Sprintf("hook timed out after %s (act killed it; nothing was recorded). "+
+			"If the hook is legitimately this slow, raise the limit with %s (e.g. %s=20m)",
+			limit, hookTimeoutEnv, hookTimeoutEnv)
+		if excerpt != "" {
+			msg = fmt.Sprintf("%s:\n%s", msg, excerpt)
+		}
+		return msg, details, true
+	}
+
+	details["hook_cause"] = "exit"
 	if excerpt == "" {
 		return fmt.Sprintf("hook exited %d", herr.Code), details, true
 	}

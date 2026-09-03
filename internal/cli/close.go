@@ -414,7 +414,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 				HostRepoRoot: filepath.Dir(paths.Root),
 				ActStatePath: paths.Root,
 			}
-			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
+			if err := hooks.Run(hctx, hookPath, resolveHookTimeout()); err != nil {
 				msg, details, _ := HookFailureDetails(err)
 				return CloseErrorOutput{
 					Error:   "hook_failed",

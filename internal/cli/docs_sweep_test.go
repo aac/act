@@ -1035,6 +1035,25 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "round-trips a scratch tracker",
 		testName:     "TestDocClaim_InstallRunsRoundTripSmoke",
 	},
+	// hook-timeout-* (act-8ee085 follow-through): the hook limit is a host
+	// property, settable with ACT_HOOK_TIMEOUT, and a hook act KILLED is
+	// reported as a timeout rather than borrowing the wording of a non-zero
+	// exit. Drift shape: the timeout goes back to a constant, or the cause
+	// gets dropped again on the way to the error envelope — either way a
+	// killed gate starts reading like a failing one, which is how this was
+	// found.
+	{
+		name:         "hook-timeout-configurable",
+		docFile:      "docs/spec.md",
+		claimPattern: "`ACT_HOOK_TIMEOUT` environment variable",
+		testName:     "TestDocClaim_HookTimeoutIsConfigurable",
+	},
+	{
+		name:         "hook-timeout-reported-as-timeout",
+		docFile:      "docs/spec.md",
+		claimPattern: "reported as a TIMEOUT, not as a non-zero exit",
+		testName:     "TestDocClaim_HookTimeoutReportedAsTimeout",
+	},
 	// pre-commit-hook-permits-deletions (act-4094c6): the host
 	// pre-commit hook installed by `act init` permits staged deletions
 	// of `.act/*` paths so a normal `git commit` works for the untrack
