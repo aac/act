@@ -178,7 +178,49 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		return fmt.Errorf("cli: gitops is required unless --no-commit is set")
 	}
 
-	// Step 2: write the op file.
+	// Step 2a: run the matching hook (if any) BEFORE the op file is
+	// written. Hooks fire pre-commit per spec §"Hooks contract"; a
+	// non-zero exit refuses the write and the HookFailedError bubbles up
+	// unchanged.
+	//
+	// act-8ee085: the hook used to run with the op file already written
+	// and staged, and a failing hook rolled that back by deleting it.
+	// Nothing makes that delete atomic against a concurrent reader of the
+	// working tree — the act-sync sweep commits whatever it finds under
+	// ops/ — so a sweep landing mid-hook committed an op the hook was
+	// refusing, leaving it in HEAD and absent from the tree. Writing only
+	// after the hook passes removes the window instead of policing it:
+	// there is no file for anyone to capture while the hook runs. The
+	// hook's own contract is unchanged (same op JSON on stdin, same ACT_*
+	// env, same refusal semantics); it never had access to the op file.
+	//
+	// Skipped under NoCommit, matching the pre-existing behavior that a
+	// write with no commit fires no hook.
+	if !opts.NoCommit {
+		if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
+			opID, herr := env.Hash()
+			if herr != nil {
+				return fmt.Errorf("cli: hash op for hook: %w", herr)
+			}
+			hctx := hooks.HookContext{
+				OpID:    opID,
+				OpType:  env.OpType,
+				IssueID: env.IssueID,
+				Phase:   hooks.PhasePreCommitOp,
+				OpJSON:  body,
+				// Phase 1 contract: cwd=host repo root, $ACT_STATE_PATH=
+				// nested .act/ dir. paths.Root is "<hostRoot>/.act"; its
+				// parent is the host repo root.
+				HostRepoRoot: filepath.Dir(paths.Root),
+				ActStatePath: paths.Root,
+			}
+			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Step 2b: write the op file.
 	fsLock := func() (func(), error) { return func() {}, nil }
 	opPath, _, err := op.ProbeAndWrite(paths.Ops, env, body, fsLock)
 	if err != nil {
@@ -208,34 +250,6 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	if err := gops.StageOpFile(opPath); err != nil {
 		return fmt.Errorf("cli: stage: %w", err)
 	}
-	// Step 3a: run the matching hook (if any). Hooks fire pre-commit
-	// per spec §"Hooks contract"; on failure we unstage and delete the
-	// op file so the working tree returns to its pre-attempt state and
-	// bubble up the HookFailedError unchanged.
-	if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
-		opID, herr := env.Hash()
-		if herr != nil {
-			_ = unstage(gops, opPath)
-			return fmt.Errorf("cli: hash op for hook: %w", herr)
-		}
-		hctx := hooks.HookContext{
-			OpID:    opID,
-			OpType:  env.OpType,
-			IssueID: env.IssueID,
-			Phase:   hooks.PhasePreCommitOp,
-			OpJSON:  body,
-			// Phase 1 contract: cwd=host repo root, $ACT_STATE_PATH=
-			// nested .act/ dir. paths.Root is "<hostRoot>/.act"; its
-			// parent is the host repo root.
-			HostRepoRoot: filepath.Dir(paths.Root),
-			ActStatePath: paths.Root,
-		}
-		if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
-			_ = unstage(gops, opPath)
-			_ = os.Remove(opPath)
-			return err
-		}
-	}
 	// Auto-commit subject is built by BuildOpCommitMessage; the canonical
 	// format is `act-op: (act-XXXX) <op_type>`. Doctor's orphan-close
 	// check greps for the literal parenthesized marker, so every write op
@@ -262,7 +276,7 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		// path named in the error, so a retry still does not have to
 		// rebuild it.
 		_ = unstage(gops, opPath)
-		q, _ := quarantineFailedOp(paths.Root, opPath)
+		q := withdrawOpFile(gops, paths.Root, opPath, env)
 		return fmt.Errorf("cli: commit: %w%s", err, quarantineSuffix(q))
 	}
 

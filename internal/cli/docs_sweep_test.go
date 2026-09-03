@@ -990,6 +990,51 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "does NOT write `.ask/`",
 		testName:     "TestDocClaim_Init_GitignoreNoAskEntry",
 	},
+	// hook-runs-before-op-write / refused-close-* (act-8ee085): the
+	// hooks contract now says the hook runs BEFORE the op file is
+	// written, and that a refused op leaves nothing behind. Both are
+	// user-visible: a hook author reading the spec is told the op file
+	// is not on disk while their hook runs, and the fleet's act-sync
+	// sweep depends on it (a sweep that commits an in-flight op file
+	// produced a close present in HEAD and absent from the working
+	// tree). Drift shape: someone re-orders the write ahead of the hook
+	// for convenience and the race silently returns — the spec still
+	// reads correctly, and only an assertion on where the file is
+	// while the hook runs catches it.
+	{
+		name:         "hook-runs-before-op-write",
+		docFile:      "docs/spec.md",
+		claimPattern: "before the op file is written",
+		testName:     "TestDocClaim_HookRunsBeforeOpFileIsWritten",
+	},
+	{
+		name:         "refused-op-writes-nothing",
+		docFile:      "docs/spec.md",
+		claimPattern: "writes no op file at all",
+		testName:     "TestDocClaim_RefusedCloseSurvivesConcurrentSweep",
+	},
+	// withdrawn-op-retracted (act-8ee085 / act-cb55ee): where a rollback
+	// is still possible (op written, commit failed), act guarantees the
+	// working tree and HEAD do not disagree — if HEAD already tracks the
+	// file, act commits the removal itself instead of leaving a dirty
+	// deletion for a blind sweep to publish anonymously.
+	{
+		name:         "withdrawn-op-retracted",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act` commits the removal itself",
+		testName:     "TestDocClaim_WithdrawnOpCommittedBySweepIsRetracted",
+	},
+	// install-smoke (act-8ee085 follow-through): install.sh verifies the
+	// binary it installed by round-tripping a scratch tracker, not just by
+	// running `act version`. Drift shape: the smoke call is dropped for
+	// speed and the installer silently goes back to proving only that the
+	// binary starts.
+	{
+		name:         "install-runs-roundtrip-smoke",
+		docFile:      "install.sh",
+		claimPattern: "round-trips a scratch tracker",
+		testName:     "TestDocClaim_InstallRunsRoundTripSmoke",
+	},
 	// pre-commit-hook-permits-deletions (act-4094c6): the host
 	// pre-commit hook installed by `act init` permits staged deletions
 	// of `.act/*` paths so a normal `git commit` works for the untrack

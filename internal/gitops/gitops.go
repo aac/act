@@ -447,6 +447,61 @@ func (g *GitOps) UnstageOpFile(opPath string) error {
 	return nil
 }
 
+// HeadTracksOpFile reports whether HEAD already contains opPath. It is
+// the question a rollback has to ask before it deletes an op file:
+// removing a path HEAD tracks leaves the working tree and HEAD disagreeing
+// about whether the op happened, which is the act-8ee085 phantom-close
+// signature. An unborn HEAD (no commits yet) answers false, not an error —
+// nothing can be tracked in a history that does not exist.
+//
+// opPath may be absolute or relative to RepoRoot.
+func (g *GitOps) HeadTracksOpFile(opPath string) (bool, error) {
+	if opPath == "" {
+		return false, fmt.Errorf("gitops: empty op path")
+	}
+	if _, err := g.run("rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
+		return false, nil
+	}
+	out, err := g.run("ls-tree", "-r", "--name-only", "HEAD", "--", opPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// CommitOpFileRemoval commits the removal of a single op file that HEAD
+// still tracks, so the working tree and HEAD agree again.
+//
+// WHY THIS EXISTS (act-8ee085). act's rollback paths withdraw an op file
+// whose write did not land. When something else has already committed
+// that file — the act-sync sweep runs `git add -- ops` on its own cadence
+// and commits whatever it finds — deleting the file locally is only half
+// the correction: HEAD keeps advertising an op that act refused, and a
+// clone or another machine reads it as real. Committing the removal
+// finishes the correction under act's own message, rather than leaving a
+// dirty deletion for the next blind sweep to publish as an anonymous
+// "sweep N uncommitted op file(s)".
+//
+// The commit is pathspec-scoped (`git commit -- <path>`) so it can never
+// carry unrelated staged changes from another process sharing the repo.
+func (g *GitOps) CommitOpFileRemoval(opPath, message string) error {
+	if opPath == "" {
+		return fmt.Errorf("gitops: empty op path")
+	}
+	if message == "" {
+		return fmt.Errorf("gitops: empty commit message")
+	}
+	args := []string{"commit", "-m", message}
+	if !g.Verify {
+		args = append(args, "--no-verify")
+	}
+	args = append(args, "--", opPath)
+	if _, err := g.run(args...); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Commit creates a single commit with the given message. By default the
 // commit uses --no-verify (spec §5.B); set GitOps.Verify=true to run host
 // pre-commit hooks. Cross-platform safe: no shell, no /dev/null redirect.

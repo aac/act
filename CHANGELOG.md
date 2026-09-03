@@ -114,6 +114,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than silently picking one; they ask for opposite things.
 
 ### Fixed
+- **Closing a ticket can no longer race a sweep into a phantom close
+  (act-8ee085, act-cb55ee).** A close op used to be written into `ops/` and
+  staged *before* the close gate ran, and a refused close was rolled back by
+  deleting the file. Nothing makes that delete atomic against another process
+  reading the working tree, and one such process runs on a timer: a sweep that
+  commits uncommitted op files (`git add -- ops`) landing inside the gate's
+  window committed a close the gate was in the middle of refusing. The close
+  then sat in HEAD with no such file in the working tree — `act show` read the
+  issue open, a clone or another machine read it closed, and nothing announced
+  the disagreement. A gate that runs a test suite makes that window minutes
+  wide.
+  - The gate now runs **before** the op file is written, for `close` and for
+    every hook-bearing write. While a gate runs there is no file under `ops/`
+    for a sweep, a second `act`, or a stray `git add` to capture, so there is
+    nothing to roll back and no rollback to race. The hook contract itself is
+    unchanged — same op JSON on stdin, same `ACT_*` environment, same refusal
+    semantics — because it never had access to the op file.
+  - Where a rollback is still possible (the op is written and the commit then
+    fails), `act` now guarantees the working tree and HEAD do not disagree: the
+    envelope is still preserved under `.act/.failed-ops/`, and if HEAD already
+    tracks the file `act` commits the removal itself rather than leaving a
+    dirty deletion for a blind sweep to publish as an anonymous
+    "sweep N uncommitted op file(s)" — the shape that silently reverted a
+    closed ticket to `in_progress` in act-cb55ee.
+
 - **`act ready --limit 0` returns every ready issue, and a capped ready set
   now says so.** `--limit 0` meant "no limit" on `act list` and "fall back to
   the default 50" on `act ready`, so on one real store `act ready --json
