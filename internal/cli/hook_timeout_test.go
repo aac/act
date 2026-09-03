@@ -25,6 +25,17 @@ import (
 // the limit defaults to 300s and ACT_HOOK_TIMEOUT overrides it, with a bad
 // value falling back rather than failing the write.
 func TestDocClaim_HookTimeoutIsConfigurable(t *testing.T) {
+	// The unset case has to be MADE unset, not assumed: this repo's own
+	// close gate is run with ACT_HOOK_TIMEOUT exported (that is the point
+	// of the variable), so a test that reads the ambient environment fails
+	// on the very machine the feature exists for. t.Setenv cannot unset, so
+	// save and restore by hand.
+	if prev, had := os.LookupEnv(hookTimeoutEnv); had {
+		t.Cleanup(func() { os.Setenv(hookTimeoutEnv, prev) })
+	}
+	if err := os.Unsetenv(hookTimeoutEnv); err != nil {
+		t.Fatalf("unset %s: %v", hookTimeoutEnv, err)
+	}
 	if got := resolveHookTimeout(); got != defaultHookTimeout {
 		t.Errorf("with no env set: %v; want the %v default", got, defaultHookTimeout)
 	}
