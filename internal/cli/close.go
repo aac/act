@@ -368,6 +368,63 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	// produces, so the JSON shape and the commit subject stay aligned.
 	short := ShortIssueID(full)
 
+	// Step 5a: run the close gate BEFORE the op file exists in ops/.
+	//
+	// act-8ee085. The gate used to run with the op file already written
+	// and staged, and a failing gate rolled that back by deleting it.
+	// That rollback is not atomic with respect to anything else touching
+	// the tracker: the launchd act-sync sweep commits whatever it finds
+	// uncommitted under ops/ (`git add -- ops`), so a sweep landing
+	// inside the gate's window committed a close the gate was in the
+	// middle of refusing. The result was a close present in HEAD and
+	// absent from the working tree — `act show` read open, every consumer
+	// of committed state read closed, and neither was obviously wrong.
+	// A gate that runs a full test suite makes that window minutes wide.
+	//
+	// Running the gate first removes the window rather than policing it:
+	// during the gate there is no file under ops/ for any sweep, any
+	// second act process, or any stray `git add` to capture, so there is
+	// nothing to roll back and no rollback to race. The hook's own
+	// contract is unchanged — it is handed the same op JSON on stdin and
+	// the same ACT_* environment, and a non-zero exit still refuses the
+	// close with `hook_failed` — because the contract never exposed the
+	// op file to the hook in the first place; only act's write ordering
+	// did. See docs/spec.md §"Hooks contract".
+	//
+	// Gated on !opts.NoCommit to preserve the pre-existing behavior that
+	// --no-commit writes the op without firing the hook.
+	if !opts.NoCommit {
+		if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
+			opID, herr := env.Hash()
+			if herr != nil {
+				return CloseErrorOutput{
+					Error:   "hash_failed",
+					Message: herr.Error(),
+				}, 1
+			}
+			hctx := hooks.HookContext{
+				OpID:    opID,
+				OpType:  env.OpType,
+				IssueID: env.IssueID,
+				Phase:   hooks.PhasePreCommitOp,
+				OpJSON:  body,
+				// Phase 1 contract: cwd=host repo root, $ACT_STATE_PATH=
+				// nested .act/ dir. paths.Root is "<hostRoot>/.act"; its
+				// parent is the host repo root.
+				HostRepoRoot: filepath.Dir(paths.Root),
+				ActStatePath: paths.Root,
+			}
+			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
+				msg, details, _ := HookFailureDetails(err)
+				return CloseErrorOutput{
+					Error:   "hook_failed",
+					Message: msg,
+					Details: details,
+				}, 1
+			}
+		}
+	}
+
 	// Step 5: write op file + (optionally) commit. The close path stays
 	// out of WriteOpAndAutoCommit because it threads a custom hook
 	// invocation; the commit subject itself is the canonical
@@ -415,40 +472,6 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}, 1
 		}
 
-		// Pre-commit hook: post-close per spec §Hooks contract.
-		if hookPath, ok := hooks.ResolveHook(paths.Hooks, env.OpType); ok {
-			opID, herr := env.Hash()
-			if herr != nil {
-				_ = runUnstage(gops.RepoRoot, opPath)
-				return CloseErrorOutput{
-					Error:   "hash_failed",
-					Message: herr.Error(),
-				}, 1
-			}
-			hctx := hooks.HookContext{
-				OpID:    opID,
-				OpType:  env.OpType,
-				IssueID: env.IssueID,
-				Phase:   hooks.PhasePreCommitOp,
-				OpJSON:  body,
-				// Phase 1 contract: cwd=host repo root, $ACT_STATE_PATH=
-				// nested .act/ dir. paths.Root is "<hostRoot>/.act"; its
-				// parent is the host repo root.
-				HostRepoRoot: filepath.Dir(paths.Root),
-				ActStatePath: paths.Root,
-			}
-			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
-				_ = runUnstage(gops.RepoRoot, opPath)
-				_ = os.Remove(opPath)
-				msg, details, _ := HookFailureDetails(err)
-				return CloseErrorOutput{
-					Error:   "hook_failed",
-					Message: msg,
-					Details: details,
-				}, 1
-			}
-		}
-
 		// Commit standalone in the nested .act/ repo. The bundle-into-
 		// host-work-commit machinery (formerly per_session, act-a659) no
 		// longer applies under Phase 1 because the close commit lives in
@@ -469,7 +492,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			// happen — move the envelope out of the op log so the fold
 			// cannot report this issue closed. The envelope is kept
 			// (path in details.quarantined_op), not destroyed.
-			q, _ := quarantineFailedOp(paths.Root, opPath)
+			q := withdrawOpFile(gops, paths.Root, opPath, env)
 			return CloseErrorOutput{
 				Error:   "commit_failed",
 				Message: err.Error(),

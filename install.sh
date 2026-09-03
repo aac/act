@@ -16,7 +16,8 @@
 #   5. Registers the act MCP server in the agent's config:
 #        Claude: claude mcp add --scope user act -- act mcp
 #        Codex : codex mcp add act -- act mcp
-#   6. Verifies the binary and prints confirmation.
+#   6. Verifies the binary, round-trips a scratch tracker (scripts/smoke-roundtrip.sh),
+#      and prints confirmation.
 #
 # Idempotent — safe to re-run. Existing binary is replaced. MCP registration
 # is skipped if the entry already exists with the same command.
@@ -259,6 +260,22 @@ esac
 
 say ""
 "$BIN_PATH" version 2>/dev/null || "$BIN_PATH" --help 2>/dev/null | head -3 || warn "could not verify binary (check ${BIN_PATH})"
+
+# Running is not the same as working: round-trip a throwaway tracker through
+# init/create/claim/close/sync with the binary just installed, so a build that
+# would break the tracker is caught here rather than on the first real ticket.
+# Skipped (with a warning) when the checkout's script is absent, e.g. an
+# install from a partial copy.
+SMOKE="${REPO_DIR}/scripts/smoke-roundtrip.sh"
+if [ -x "$SMOKE" ]; then
+  say ""
+  say "Smoke-testing the installed binary on a scratch tracker..."
+  if ! "$SMOKE" "$BIN_PATH"; then
+    die "installed binary failed the round-trip smoke test (${BIN_PATH}); the tracker loop is broken with this build"
+  fi
+else
+  warn "smoke test not found at ${SMOKE}; installed binary was not round-trip verified"
+fi
 
 say ""
 say "act installed for ${TARGET}."

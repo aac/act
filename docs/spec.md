@@ -1054,14 +1054,17 @@ Discovery: only three filenames are loaded.
 Any other filename in `.act/hooks/` is ignored. Future phases (`pre-commit-op`, `post-fold`, `post-compact`) are reserved names — `act` MUST refuse to load them in v1 with no warning, so a future binary can adopt them without breaking older repos.
 
 Execution:
-1. Op file is written and `git add`-staged.
-2. `act` resolves the hook by op-type (`create`/`close`/`claim`) and stats it. If absent or not executable, the hook is skipped silently.
-3. Hook is spawned synchronously with cwd = repo root.
-4. Stdin: the op JSON, exactly one line, no trailing newline. Closing stdin signals EOF.
-5. Env vars set: `ACT_OP_ID`, `ACT_OP_TYPE`, `ACT_ISSUE_ID`, `ACT_HOOK_PHASE=pre-commit-op`. No other `ACT_*` vars are set; future vars are additive.
-6. Stdout and stderr are fully captured (bounded to 64KB each; overflow truncates and tags `details.truncated=true`). On success they are discarded; on failure stderr_tail (last 4KB) is included in the `hook_failed` error.
-7. Timeout: 5s wall-clock. On timeout `act` sends SIGTERM, waits 1s grace, then SIGKILL. Either way the hook is treated as failed.
-8. Non-zero exit: `act` runs `git restore --staged <op-path>`, deletes the op file, and emits `hook_failed`. No commit is created. Caller exits with code 7.
+1. `act` resolves the hook by op-type (`create`/`close`/`claim`) and stats it. If absent or not executable, the hook is skipped silently. The hook runs **before the op file is written**: nothing exists under `ops/` while the hook is running, so a hook that refuses the op has nothing to roll back.
+2. Hook is spawned synchronously with cwd = repo root.
+3. Stdin: the op JSON, exactly one line, no trailing newline. Closing stdin signals EOF.
+4. Env vars set: `ACT_OP_ID`, `ACT_OP_TYPE`, `ACT_ISSUE_ID`, `ACT_HOOK_PHASE=pre-commit-op`. No other `ACT_*` vars are set; future vars are additive.
+5. Stdout and stderr are fully captured (bounded to 64KB each; overflow truncates and tags `details.truncated=true`). On success they are discarded; on failure stderr_tail (last 4KB) is included in the `hook_failed` error.
+6. Timeout: 5s wall-clock. On timeout `act` sends SIGTERM, waits 1s grace, then SIGKILL. Either way the hook is treated as failed.
+7. Non-zero exit: `act` emits `hook_failed` and writes no op file at all. No commit is created. Caller exits with code 7.
+
+Why the hook runs before the write (act-8ee085): it used to run with the op file written and `git add`-staged, and a failing hook rolled that back by deleting the file. That rollback is not atomic with respect to anything else reading the working tree — a sweep that commits uncommitted op files (`git add -- ops`, as the fleet's act-sync job does) landing inside the hook's window committed an op the hook was in the middle of refusing, leaving it in HEAD and absent from the working tree, so `act show` and every consumer of committed state disagreed silently. A hook that runs a test suite makes that window minutes wide. Writing after the hook passes removes the window rather than policing it. The hook's own contract is unchanged: it never had access to the op file, only to the op JSON on stdin and the `ACT_*` environment.
+
+Where a rollback is still possible — the op file is written and a later step (the commit) fails — `act` guarantees the working tree and HEAD do not disagree about it: the op file is withdrawn to `.act/.failed-ops/`, and if HEAD already tracks it (something committed it in the interval) `act` commits the removal itself (subject `act: withdraw <type> op for act-XXXX (commit failed)` — deliberately not the `act-op:` form, since it retracts an op rather than recording one) rather than leaving a dirty deletion for a blind sweep to publish.
 
 Hooks NEVER run on: `act fold` (read-only), replay/recovery, `act import`, fresh `git clone` (the ops already exist in history; the writer that produced them already ran their hook). The invariant is "hooks fire exactly once per logical op, on the writer that originated it".
 

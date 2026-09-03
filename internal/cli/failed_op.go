@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aac/act/internal/gitops"
+	"github.com/aac/act/internal/op"
 )
 
 // failedOpQuarantineDir is the sibling-of-ops directory under the act
@@ -92,6 +95,53 @@ func quarantineFailedOp(stateRoot, opPath string) (string, error) {
 		return "", fmt.Errorf("cli: quarantine failed op: move: %w", err)
 	}
 	return dst, nil
+}
+
+// withdrawOpFile takes an op file out of the op log after a write that
+// did not land, and guarantees that the working tree and HEAD agree about
+// it afterwards. It returns the quarantine path (empty when nothing was
+// moved) for the caller to report.
+//
+// WHY THIS IS NOT JUST quarantineFailedOp (act-8ee085). Moving the file
+// out of ops/ is correct only while the file is act's private business.
+// It stops being private the moment anything commits it, and something
+// does: the act-sync sweep runs `git add -- ops` on its own cadence and
+// commits whatever it finds uncommitted. If a sweep committed this op
+// while act was still deciding whether to keep it, a bare quarantine
+// leaves HEAD advertising an op act refused — the working tree says the
+// issue is open, every consumer of committed state says it is closed, and
+// the disagreement is silent (act-8ee085). The mirror image was observed
+// too (act-cb55ee): a later sweep picks up the dirty deletion and commits
+// it as an anonymous "sweep N uncommitted op file(s)", so an op the sweep
+// itself had published a moment earlier gets un-published by a commit
+// whose message explains nothing.
+//
+// So when HEAD tracks the path, act commits the removal itself, under a
+// message that says what happened. Both halves are best-effort by
+// construction: the caller is already on an error path and the original
+// error must not be masked. A failure to commit the removal leaves the
+// deletion uncommitted — no worse than the old behavior, and visible in
+// `git status`.
+func withdrawOpFile(gops *gitops.ActGitOps, stateRoot, opPath string, env op.Envelope) string {
+	tracked := false
+	if gops != nil {
+		if t, err := gops.HeadTracksOpFile(opPath); err == nil {
+			tracked = t
+		}
+	}
+	q, _ := quarantineFailedOp(stateRoot, opPath)
+	if tracked && gops != nil {
+		// Deliberately NOT the `act-op: (act-XXXX) <type>` subject every
+		// real op commit carries: this commit retracts an op rather than
+		// recording one. Doctor's orphan-close check treats a `(act-XXXX`
+		// marker as evidence that work exists for an issue, and the
+		// compaction pass groups contiguous `act-op:` commits — a
+		// retraction belongs in neither.
+		msg := fmt.Sprintf("act: withdraw %s op for %s (commit failed)",
+			env.OpType, ShortIssueID(env.IssueID))
+		_ = gops.CommitOpFileRemoval(opPath, msg)
+	}
+	return q
 }
 
 // quarantineSuffix renders the quarantine path as a trailing clause for
