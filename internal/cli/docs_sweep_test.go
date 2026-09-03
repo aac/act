@@ -1054,6 +1054,16 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "reported as a TIMEOUT, not as a non-zero exit",
 		testName:     "TestDocClaim_HookTimeoutReportedAsTimeout",
 	},
+	// The end-to-end half of the same claim: a hook that outlives the limit
+	// is killed, and the SAME hook passes when the environment raises it.
+	// The unit tests above can both pass while a constant stays wired in
+	// somewhere they do not reach; this one runs the real close path.
+	{
+		name:         "hook-timeout-raised-lets-slow-hook-pass",
+		docFile:      "docs/spec.md",
+		claimPattern: "an unparseable or non-positive value falls back to the default",
+		testName:     "TestDocClaim_SlowHookSurvivesRaisedTimeout",
+	},
 	// pre-commit-hook-permits-deletions (act-4094c6): the host
 	// pre-commit hook installed by `act init` permits staged deletions
 	// of `.act/*` paths so a normal `git commit` works for the untrack
