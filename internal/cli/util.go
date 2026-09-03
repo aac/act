@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aac/act/internal/config"
@@ -91,18 +92,44 @@ func BuildBatchCommitMessage(env op.Envelope, count int) string {
 	return fmt.Sprintf("%s +%d", base, count-1)
 }
 
-// hookTimeout is the wall-clock limit applied to a single hook
-// invocation. Set to 300s: the dogfood close hook for this repo runs
-// gofmt + vet + go test ./..., which after Phase 2's additions lands
-// around 140s on a cold cache. The earlier 120s ceiling (act-8277)
-// became the limiting factor for every close after the Phase 2 work
-// landed (act-492b5b). 300s keeps closes inside a single human-scale
-// wait while leaving headroom as the suite grows.
+// defaultHookTimeout is the wall-clock limit applied to a single hook
+// invocation when nothing overrides it. 300s: the dogfood close hook for
+// this repo runs gofmt + vet + go test ./..., which after Phase 2's
+// additions lands around 140s on a cold cache. The earlier 120s ceiling
+// (act-8277) became the limiting factor for every close after the Phase 2
+// work landed (act-492b5b).
+const defaultHookTimeout = 300 * time.Second
+
+// hookTimeoutEnv names the environment variable that overrides the hook
+// timeout, as a Go duration ("20m", "90s").
+const hookTimeoutEnv = "ACT_HOOK_TIMEOUT"
+
+// resolveHookTimeout returns the wall-clock limit for one hook run.
 //
-// Repos with test suites that legitimately exceed 300s should split
-// quick-gate work into the hook and the long tail into CI rather
-// than pushing this number further.
-const hookTimeout = 300 * time.Second
+// WHY THIS IS NOT A CONSTANT ANY MORE (act-8ee085 follow-through). The
+// advice that used to sit here — repos whose suites exceed 300s should
+// split the quick gate into the hook and the long tail into CI — assumed
+// the number means the same thing everywhere. It does not: the same gate
+// on the same commit took 15m36s on one machine that a busy agent fleet
+// shares, against ~140s when the ceiling was chosen. On that machine act
+// killed its own dogfood gate at 300s on every close, and the gate had
+// nothing wrong with it. A ceiling that depends on the host cannot be
+// decided by the binary, so the host may say.
+//
+// An unparseable or non-positive value falls back to the default rather
+// than failing the write: a malformed env var must not be the reason a
+// close cannot be recorded.
+func resolveHookTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(hookTimeoutEnv))
+	if raw == "" {
+		return defaultHookTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return defaultHookTimeout
+	}
+	return d
+}
 
 // WriteOpts encodes the universal-flag knobs that apply to every write
 // command (per spec §4 + the act-5ca9 acceptance criteria). Its fields are
@@ -214,7 +241,7 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 				HostRepoRoot: filepath.Dir(paths.Root),
 				ActStatePath: paths.Root,
 			}
-			if err := hooks.Run(hctx, hookPath, hookTimeout); err != nil {
+			if err := hooks.Run(hctx, hookPath, resolveHookTimeout()); err != nil {
 				return err
 			}
 		}
