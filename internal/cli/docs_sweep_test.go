@@ -128,6 +128,30 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Update_RetitleKeepsCommitCorrelation",
 	},
 	{
+		// act-4ffd57: `act next --peek` is the read-only survey path —
+		// it shows what next WOULD claim and writes nothing. The
+		// asserting test re-reads the ticket after the peek and checks
+		// BOTH that it is still open and that its assignee is empty;
+		// asserting only on the peek's own output would pass against a
+		// path that reported no claim while writing one.
+		name:         "spec-next-peek-readonly",
+		docFile:      "docs/spec.md",
+		claimPattern: "left with `status == open` and no assignee",
+		testName:     "TestDocClaim_NextPeek_DoesNotClaim",
+	},
+	{
+		name:         "skill-next-peek-readonly",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "leaves the issue open and\nunassigned",
+		testName:     "TestDocClaim_NextPeek_DoesNotClaim",
+	},
+	{
+		name:         "help-next-peek-readonly",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "shows the same\n  issue and claims nothing",
+		testName:     "TestDocClaim_NextPeek_DoesNotClaim",
+	},
+	{
 		// act-57e743: the canonical loop's work commit names explicit
 		// paths, and both surfaces say why — in a checkout several
 		// sessions share, `-a` commits a sibling session's dirty files.

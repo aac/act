@@ -62,6 +62,19 @@ func showField(t *testing.T, dir, id, field string) string {
 	return s
 }
 
+// shortOrID returns the issue's short id, falling back to its full id.
+// `act show --json` omits short_id when it is byte-identical to id (spec
+// §"short_id in responses"), so a bare showField(..., "short_id") yields
+// "" for an unextended id — and an assertion built on that empty string
+// passes against any output at all.
+func shortOrID(t *testing.T, dir, id string) string {
+	t.Helper()
+	if s := showField(t, dir, id, "short_id"); s != "" {
+		return s
+	}
+	return id
+}
+
 // TestDocClaim_Next_ClaimsAndShowsTopReady pins the `act next` composed-flow
 // claim documented in cmd/act/help.go ("'act next' bundles steps 1-2 (ready +
 // claim + show)") and the README example. `act next` must pick the TOP
@@ -122,8 +135,8 @@ func TestNext_HumanOutputShowsClaim(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("act next: exit %d; stderr=%s", code, stderr)
 	}
-	short := showField(t, dir, id, "short_id")
-	if !strings.Contains(out, "Claimed "+short) {
+	short := shortOrID(t, dir, id)
+	if !strings.Contains(out, "CLAIMED "+short) {
 		t.Errorf("act next human output should name the claimed id %q; got:\n%s", short, out)
 	}
 	if !strings.Contains(out, "commit marker: Act-Id: "+short) {
@@ -281,5 +294,127 @@ func TestNextFinish_NoStateGuard(t *testing.T) {
 		if !strings.Contains(stderr, "no act state") {
 			t.Errorf("act %v: stderr should mention no-state guard; got %q", args, stderr)
 		}
+	}
+}
+
+// TestDocClaim_NextPeek_DoesNotClaim pins the read-only survey path
+// documented in docs/spec.md §`act next` and in the `act next --peek`
+// flag help: `act next --peek` shows the issue `act next` WOULD claim
+// and claims nothing.
+//
+// This exists because `act next` claims what it displays, and the name
+// reads like a query — sessions surveying a queue across repos claimed
+// work they never intended to take, and a claim that outlives the
+// surveying session hides ready work from every later reader.
+//
+// Asserted at the user-visible boundary: `act next --peek --json`
+// reports the issue it would claim with claimed=false, and a follow-up
+// `act show --json` confirms the ticket is STILL open with NO assignee —
+// i.e. the read-only path really was read-only, not merely reported as
+// such.
+func TestDocClaim_NextPeek_DoesNotClaim(t *testing.T) {
+	dir := bootstrapLoopRepo(t)
+	createIssue(t, dir, "low prio", "--priority", "3")
+	highID := createIssue(t, dir, "high prio", "--priority", "0")
+
+	out, stderr, code := runActIn(t, dir, "next", "--peek", "--json")
+	if code != 0 {
+		t.Fatalf("act next --peek --json: exit %d; stderr=%s", code, stderr)
+	}
+	var got struct {
+		Claimed    bool           `json:"claimed"`
+		Peek       bool           `json:"peek"`
+		WouldClaim map[string]any `json:"would_claim"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("parse next --peek json %q: %v", out, err)
+	}
+	if got.Claimed {
+		t.Errorf("act next --peek: claimed=true, want false; out=%s", out)
+	}
+	if !got.Peek {
+		t.Errorf("act next --peek: peek=false, want true; out=%s", out)
+	}
+	if id, _ := got.WouldClaim["id"].(string); id != highID {
+		t.Errorf("act next --peek would_claim id = %q, want the top-priority issue %q; out=%s", id, highID, out)
+	}
+
+	// The load-bearing half: re-read the ticket at the user-visible
+	// boundary and confirm the peek left it untouched. BOTH must hold —
+	// a status left at open with an assignee written, or an assignee
+	// left empty with the status advanced, would each be the bug.
+	if st := showField(t, dir, highID, "status"); st != "open" {
+		t.Errorf("after act next --peek, show status = %q, want open — the peek claimed the ticket", st)
+	}
+	if as := showField(t, dir, highID, "assignee"); as != "" {
+		t.Errorf("after act next --peek, assignee = %q, want empty — the peek assigned the ticket", as)
+	}
+}
+
+// TestNextPeek_HumanOutputSaysNothingClaimed covers the human render of
+// the read-only path: it must name the id it WOULD claim and say plainly
+// that nothing was claimed, so a caller who reaches for --peek is not
+// left guessing whether it took the work.
+func TestNextPeek_HumanOutputSaysNothingClaimed(t *testing.T) {
+	dir := bootstrapLoopRepo(t)
+	id := createIssue(t, dir, "only issue")
+
+	out, stderr, code := runActIn(t, dir, "next", "--peek")
+	if code != 0 {
+		t.Fatalf("act next --peek: exit %d; stderr=%s", code, stderr)
+	}
+	short := shortOrID(t, dir, id)
+	if !strings.Contains(out, short) {
+		t.Errorf("act next --peek human output should name %q; got:\n%s", short, out)
+	}
+	if !strings.Contains(out, "nothing claimed") {
+		t.Errorf("act next --peek human output should say nothing was claimed; got:\n%s", out)
+	}
+}
+
+// TestNextPeek_NoReadyWork covers the empty-frontier case under --peek:
+// exit 0 with claimed=false and an empty candidate list, same as a bare
+// `act next` on an empty queue.
+func TestNextPeek_NoReadyWork(t *testing.T) {
+	dir := bootstrapLoopRepo(t)
+	out, stderr, code := runActIn(t, dir, "next", "--peek", "--json")
+	if code != 0 {
+		t.Fatalf("act next --peek (empty): exit %d; stderr=%s", code, stderr)
+	}
+	var got struct {
+		Claimed    bool             `json:"claimed"`
+		Candidates []map[string]any `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("parse next --peek json %q: %v", out, err)
+	}
+	if got.Claimed {
+		t.Errorf("act next --peek on empty queue: claimed=true, want false; out=%s", out)
+	}
+	if len(got.Candidates) != 0 {
+		t.Errorf("act next --peek on empty queue: candidates=%v, want empty; out=%s", got.Candidates, out)
+	}
+}
+
+// TestNext_ClaimOutputLeadsWithTheClaim pins the other half of the
+// surveying fix: a caller who runs the CLAIMING form by mistake must see
+// that it claimed, and how to undo it, in the first line — not three
+// commands later. The old output led with "Claimed X — now showing:" and
+// then a full ticket render, which is easy to skim past mid-survey.
+func TestNext_ClaimOutputLeadsWithTheClaim(t *testing.T) {
+	dir := bootstrapLoopRepo(t)
+	id := createIssue(t, dir, "only issue")
+
+	out, stderr, code := runActIn(t, dir, "next")
+	if code != 0 {
+		t.Fatalf("act next: exit %d; stderr=%s", code, stderr)
+	}
+	short := shortOrID(t, dir, id)
+	first := strings.SplitN(out, "\n", 2)[0]
+	if !strings.Contains(first, "CLAIMED "+short) {
+		t.Errorf("act next first line should lead with the claim of %q; got first line:\n%s", short, first)
+	}
+	if !strings.Contains(out, "act update "+short+" --unclaim") {
+		t.Errorf("act next output should name the release command for %q; got:\n%s", short, out)
 	}
 }

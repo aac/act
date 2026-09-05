@@ -831,6 +831,59 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 ---
 
+### `act next`
+
+**Synopsis:** `act next [--under <id>] [--limit N] [--peek] [--isolated] [--json]`
+
+The composed `ready` → claim → `show` step of the work loop: it picks the top
+claimable issue from the ready frontier, **claims it**, and shows it.
+
+**Flags:**
+- `--under <id>` (string, optional). Restrict the ready frontier to descendants of this id.
+- `--limit N` (int, default 50). How many ready candidates to consider.
+- `--peek` (bool). **Read-only survey.** Show the issue `act next` would claim and claim nothing.
+- `--isolated` (bool). Offline mode for the claim: commit but no network ops.
+- `--json` (bool).
+
+**`--peek` is the read-only path (act-4ffd57).** It runs the same ready → pick →
+show flow and stops before the claim: no op is written, and the issue it names is
+left with `status == open` and no assignee. Use it whenever you are **surveying**
+what is available rather than taking it — screening a pool, sweeping several repos,
+deciding where to send a worker. Peeking is advisory, not a reservation: the issue
+it names can be claimed by anyone between your peek and your claim, which is exactly
+why a claim is a separate step.
+
+The flag exists because `next` reads like a query. Sessions surveying queues across
+several repos claimed work they never meant to take, and a spurious claim is not
+cosmetic — the claim is the mechanism that stops two sessions working one ticket, so
+for as long as it stands a session that legitimately wants that work is told it is
+taken. A surveying session that dies before releasing leaves the claim standing with
+nobody to release it, and the ticket reads as in-progress to every later reader.
+
+**A bare `act next` still claims, and always will.** The claim is `next`'s contract:
+orchestrator drains depend on it, and a `next` that stopped claiming would hand one
+ticket to several workers at once. `--peek` is purely additive. The claiming form
+leads its human output with `CLAIMED <id>` and the `act update <id> --unclaim`
+release command, so a caller who reaches for the wrong one sees it on line one.
+
+**JSON output** — claiming form:
+```json
+{"claimed": true, "issue": {...}, "commit_marker": "Act-Id: act-XXXX"}
+```
+**JSON output** — `--peek`:
+```json
+{"claimed": false, "peek": true, "would_claim": {...}}
+```
+The peek shape deliberately does not reuse the `issue` key: a consumer reading
+`issue` out of a peek response would be one field name away from believing it holds
+a claim. An empty or fully-contended frontier returns `{"claimed": false,
+"candidates": [...]}` in both forms, exit 0.
+
+**Exit codes:** 0 (including "nothing claimable"); 2 bad flags; 3 not in a git repo
+or missing `.act/`; otherwise the underlying claim/show envelope's code.
+
+---
+
 ### `act search <query>`
 
 **Synopsis:** `act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]`
