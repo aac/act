@@ -48,6 +48,11 @@ func TestRunClose_HappyPath(t *testing.T) {
 	if !res.Committed {
 		t.Errorf("Committed = false, want true (auto-commit by default)")
 	}
+	// Guard before the prefix check: strings.HasPrefix(id, "") is true for
+	// any id, so an empty ShortID would make the assertion below vacuous.
+	if res.ShortID == "" {
+		t.Fatalf("short_id empty; close must carry the issue's short handle")
+	}
 	if !strings.HasPrefix(id, res.ShortID) {
 		t.Errorf("short_id %q is not a prefix of id %q", res.ShortID, id)
 	}
