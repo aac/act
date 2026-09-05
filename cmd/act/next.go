@@ -27,6 +27,18 @@ import (
 //     attempts: a one-shot CLI invocation immediately tries the next
 //     candidate rather than waiting for a distributed writer to settle.
 //
+// --peek is the read-only survey path (act-4ffd57). It runs the same
+// ready → pick → show flow and STOPS before the claim: the issue is
+// displayed, nothing is written, and the ticket stays open and
+// unassigned. It exists because "next" reads like a query and the
+// claiming output looked like a display, so sessions surveying queues
+// across several repos claimed work they never meant to take — and a
+// claim outliving its surveying session hides ready work from every
+// later reader. The claiming default is UNCHANGED: every orchestrate
+// drain in the fleet depends on a bare `act next` taking the ticket,
+// and making the claim opt-in would hand one ticket to several workers
+// at once.
+//
 // The function lives in its own file so concurrent edits to main.go's
 // dispatch table do not collide with `act next` wiring (mirrors ready.go).
 func runNext(args []string) int {
@@ -34,6 +46,7 @@ func runNext(args []string) int {
 	under := fs.String("under", "", "restrict the ready frontier to descendants of the given issue id (prefix ok)")
 	limit := fs.Int("limit", 50, "maximum number of ready candidates to consider")
 	isolated := fs.Bool("isolated", false, "offline mode for the claim: commit but no network ops")
+	peek := fs.Bool("peek", false, "read-only: show the issue `act next` would claim, and claim nothing")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -70,6 +83,13 @@ func runNext(args []string) int {
 	}
 	if len(res.Ready) == 0 {
 		return emitNextNoClaim(*asJSON, []cli.ReadyIssue{})
+	}
+
+	// --peek: show the top candidate and stop. No claim is attempted, so
+	// there is no claim-loss loop to run — a peek has nothing to lose a
+	// race over, and reporting the frontier's head is the whole job.
+	if *peek {
+		return emitNextPeek(*asJSON, root, res.Ready[0])
 	}
 
 	// Tracks ids that lost their claim race this run; excluded from the
@@ -152,11 +172,65 @@ func runNext(args []string) int {
 			return 0
 		}
 
-		fmt.Printf("Claimed %s — now showing:\n\n", short)
+		// Lead with the fact that this WROTE, and with the undo, so a
+		// caller who reached for the claiming verb while surveying sees
+		// it on line one rather than several commands later
+		// (act-4ffd57). The ticket render follows.
+		fmt.Printf("CLAIMED %s — this session now owns it.\n", short)
+		fmt.Printf("Not what you wanted? Release it: act update %s --unclaim   (or use `act next --peek` to survey without claiming)\n\n", short)
 		fmt.Print(cli.FormatShowHuman(showOut))
 		fmt.Printf("\ncommit marker: %s\n", commitMarker)
 		return 0
 	}
+}
+
+// emitNextPeek renders the read-only survey result: the issue a bare
+// `act next` would have claimed, with nothing written (act-4ffd57).
+//
+// The JSON key is `would_claim`, not `issue`: `issue` is the claiming
+// shape's key, and a consumer that reads `issue` out of a peek response
+// would be one field-name away from believing it holds a claim. `peek:
+// true` and `claimed: false` both appear so neither a schema check nor a
+// naive truthiness check on the response can mistake this for a claim.
+func emitNextPeek(asJSON bool, root string, pick cli.ReadyIssue) int {
+	showOut, showCode := cli.RunShow(root, cli.ShowOptions{
+		ID:     pick.ID,
+		AsJSON: true,
+	})
+	if showCode != 0 {
+		m, _ := toMap(showOut)
+		emitNext(asJSON, m)
+		return showCode
+	}
+
+	short := pick.ID
+	var issueJSON any = showOut
+	if sr, ok := showOut.(cli.ShowResult); ok {
+		m := sr.ShowJSON()
+		issueJSON = m
+		if s, ok := m["short_id"].(string); ok && s != "" {
+			short = s
+		}
+	}
+
+	if asJSON {
+		data, jerr := json.Marshal(map[string]any{
+			"claimed":     false,
+			"peek":        true,
+			"would_claim": issueJSON,
+		})
+		if jerr != nil {
+			fmt.Fprintf(os.Stderr, "act next: json marshal: %v\n", jerr)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	fmt.Printf("PEEK: %s is what `act next` would claim — nothing claimed, nothing written.\n", short)
+	fmt.Printf("Take it with: act update %s --claim   (or `act next`)\n\n", short)
+	fmt.Print(cli.FormatShowHuman(showOut))
+	return 0
 }
 
 // emitNextNoClaim renders the "nothing claimed" result: {"claimed": false,

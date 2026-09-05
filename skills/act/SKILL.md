@@ -35,6 +35,7 @@ unavailable.
 | Loop step | MCP | CLI |
 |---|---|---|
 | See the ready set (without claiming) | CLI-only | `act ready` |
+| See the one issue `next` would claim, without claiming | CLI-only | `act next --peek` |
 | Claim the next issue | `act_next` (picks highest-priority unblocked issue, claims it, returns `id` + `commit_marker`; adds bounded backoff retry if a claim is lost to a racing writer) | `act next` (same composed pick + claim + show, but walks the ready candidates once with no sleep/backoff) or `act update --claim <id>` |
 | Release a claim (can't finish it) | `unclaim` on `act_update` | `act update --unclaim <id>` |
 | Get the commit marker | `commit_marker` field on `act_next` (no separate call) | `act show <id> --commit-marker` |
@@ -53,10 +54,20 @@ just not worth the schema an MCP session re-reads every turn.
 Ids are already the shortest unique prefix in the normal case, so **an absent `short_id`
 means it equals `id`** — read it as "short_id, else id", not as a missing field.
 
-Drive the loop with `act next`/`act finish` (`act_next`/`act_finish` are their MCP names);
-use `act ready` (CLI) to *survey* the ready set without claiming (e.g. an orchestrator
-deciding what to dispatch). The two forms differ only in claim-loss handling: MCP `act_next`
-retries with bounded backoff, CLI `act next` walks the ready candidates once and returns.
+Drive the loop with `act next`/`act finish` (`act_next`/`act_finish` are their MCP names).
+The two forms differ only in claim-loss handling: MCP `act_next` retries with bounded
+backoff, CLI `act next` walks the ready candidates once and returns.
+
+**Surveying is a different verb from taking.** `act next` **claims** the issue it shows —
+that is the contract the orchestrator drains depend on. When you are only *looking* at
+what is available (screening a pool, sweeping several repos, deciding where to send a
+worker), use a read-only view: `act ready` for the frontier, or `act next --peek` for the
+single issue `next` would have taken. A peek writes no op and leaves the issue open and
+unassigned; it is advisory, not a reservation, so anyone can claim that issue between your
+peek and your claim. Never survey with a bare `act next`: a spurious claim is not
+cosmetic — for as long as it stands, a session that actually wants that work is told it is
+taken, and a surveying session that exits before releasing leaves it standing with nobody
+to release it. If you claimed by accident, `act update <id> --unclaim` releases it.
 
 Run `act help` once at the start of any session to absorb the mechanics; this skill assumes
 you've read it.

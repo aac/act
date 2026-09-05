@@ -373,6 +373,8 @@ var writeNoStateCommands = map[string]bool{
 	"import": true,
 	// next claims an issue; finish closes one — both are writes that must
 	// hard-exit 3 (not silently no-op) on a repo with no .act/ state.
+	// `act next --peek` reads rather than writes, but a repo with no
+	// state has no answer for it either, so it takes the same exit 3.
 	"next":   true,
 	"finish": true,
 }

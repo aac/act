@@ -118,6 +118,19 @@ THE CANONICAL WORK LOOP (use this in every session)
   In an MCP context, prefer act_next + act_finish — they compose the
   steps above into single tool calls and return commit_marker for free.
 
+SURVEYING WITHOUT CLAIMING
+  'act next' CLAIMS the issue it shows — that is the point of the verb,
+  and orchestrator drains depend on it. When you are only looking at
+  what is available — screening a pool, sweeping several repos, deciding
+  where to send a worker — use 'act next --peek', which shows the same
+  issue and claims nothing: it writes no op and leaves the issue open
+  and unassigned. 'act ready' and 'act list --status open' are the other
+  read-only views. A spurious claim is not cosmetic: for as long as it
+  stands, a session that actually wants that work is told it is taken,
+  and a surveying session that exits before releasing leaves it standing
+  with nobody to release it. If you claimed by accident, release it with
+  'act update <id> --unclaim'.
+
 WHEN TO FILE FOLLOW-UPS
   Mid-task discovery of a real bug or surface gap → 'act create' with
   type=bug or task; do NOT halt the current task on it. File it, keep
