@@ -114,6 +114,11 @@ func TestRunCreate_HappyPath(t *testing.T) {
 	if res.Title != "fix bug" {
 		t.Errorf("title = %q", res.Title)
 	}
+	// Guard before the prefix check: strings.HasPrefix(res.ID, "") is true
+	// for any id, so an empty Prefix would make the assertion below vacuous.
+	if res.Prefix == "" {
+		t.Fatalf("prefix empty; create must carry the issue's short handle")
+	}
 	if !strings.HasPrefix(res.ID, res.Prefix) {
 		t.Errorf("prefix %q is not a prefix of id %q", res.Prefix, res.ID)
 	}
