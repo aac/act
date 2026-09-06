@@ -185,7 +185,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 			Message: err.Error(),
 		}, 1
 	}
-	if err := idx.Rebuild(paths.Ops); err != nil {
+	if _, err := idx.EnsureCurrent(paths.Ops); err != nil {
 		_ = idx.Close()
 		return ReopenErrorOutput{
 			Error:   "index_rebuild_failed",

@@ -620,7 +620,7 @@ func parentIsClosed(paths config.LayoutPaths, parentID string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = idx.Close() }()
-	if err := idx.Rebuild(paths.Ops); err != nil {
+	if _, err := idx.EnsureCurrent(paths.Ops); err != nil {
 		return false, err
 	}
 	row, err := idx.Get(parentID)
