@@ -86,6 +86,14 @@ func runDoctor(args []string) int {
 			// remediation literal `'act doctor --fix-index'` without
 			// parsing the bracketed human-text output.
 			fmt.Fprintln(os.Stderr, f.Message)
+		case cli.CheckStatusVsOplog:
+			// act-fec192: emit the bare message to stderr so a session
+			// that just read a status sees "this status is not durable
+			// yet" / "an op was retracted" without parsing the bracketed
+			// human-text output. Three sessions handed each other a
+			// close that the committed op log never kept; nothing said
+			// so on any surface.
+			fmt.Fprintln(os.Stderr, f.Message)
 		case "stale-git-lock":
 			// act-8fe6eb: emit the bare message to stderr so a wedged agent
 			// tailing stderr sees the lock path and the recovery sequence

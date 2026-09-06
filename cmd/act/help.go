@@ -662,6 +662,30 @@ DOCTOR
   what doctor greps for; including the trailer in work-commit
   messages is what makes this check work.
 
+  A STATUS THE OP LOG DOES NOT SUPPORT
+  The 'status-vs-oplog' check compares, for every issue, the status
+  the index answers with against the status the op log supports —
+  both the op files on disk and the committed history of the nested
+  .act/ repo. The committed history is the view that survives a
+  sweep, a rollback, or another machine, and nothing else in act
+  compares against it.
+
+  Two shapes, and they mean opposite things:
+
+    - 'this status is not durable yet' (warn): an op file is in
+      .act/ops/ but is not committed. Normal for the instant a write
+      takes; not normal for the minutes a slow pre-close gate runs,
+      and during that window every reader sees a status that a
+      rollback can still take back.
+    - 'an op was retracted with no record of the retraction' (error):
+      HEAD carries an op file the working tree no longer has. That is
+      loss. The finding names the file and the 'git -C .act show'
+      command that recovers it.
+
+  Both messages are echoed bare to stderr, like the other
+  load-bearing doctor findings, so a session can see them without
+  parsing the bracketed human output.
+
 CWD ROBUSTNESS
   All act commands resolve the host repo root from any working
   directory inside the project tree, including from inside .act/
