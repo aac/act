@@ -686,6 +686,25 @@ DOCTOR
   load-bearing doctor findings, so a session can see them without
   parsing the bracketed human output.
 
+  'act show' CARRIES THE SAME WARNING
+  You should not have to think to run doctor. 'act show' folds the op
+  FILES under .act/ops/, so it can answer with a status that exists on
+  disk and nowhere durable — normally for the milliseconds between
+  writing an op and committing it, but for the whole run of a
+  pre-close gate that runs a test suite. When this issue's op files
+  and the nested repo's HEAD disagree, show prints to stderr, in both
+  human and --json modes:
+
+    WARNING: this status (closed) is NOT DURABLE yet: 1 op file in
+    .act/ops/ (<name>) is not committed. It is invisible to every
+    other machine, and a failed gate or rollback can still take it
+    back — do not report it as verified.
+
+  and the mirror image, 'is BEHIND the committed op log', when HEAD
+  tracks an op file .act/ops/ no longer has. Under --json the same
+  facts appear as a 'durability' object; the key is absent when there
+  is nothing to say, so a clean read is byte-identical to before.
+
 CWD ROBUSTNESS
   All act commands resolve the host repo root from any working
   directory inside the project tree, including from inside .act/

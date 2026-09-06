@@ -83,6 +83,11 @@ type ShowResult struct {
 	// answer was produced (act-3803ac). ShowJSON emits it under
 	// `refresh`; nil when there is nothing to say.
 	Refresh *RefreshInfo
+	// Durability is non-nil only when this issue's op files and the
+	// nested repo's HEAD disagree, i.e. when the status above is not
+	// (yet) the one the committed op log supports (act-fec192).
+	// ShowJSON emits it under `durability`; cmd/act echoes a WARNING.
+	Durability *DurabilityInfo
 }
 
 // ShowTombstoned is the success-shape returned by RunShow when the resolved
@@ -225,6 +230,12 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	rendered["blocks"] = blocksReverseFromIndex(paths, full)
 
 	res := ShowResult{Fields: rendered, IncludeOps: opts.IncludeOps, Full: opts.Full, Refresh: refresh}
+
+	// Step 6c: is the status we are about to report actually in the
+	// committed op log? Best-effort and scoped to this one issue
+	// (act-fec192); nil whenever the question cannot be answered, so a
+	// repo without a nested git repo behaves exactly as before.
+	res.Durability = issueDurability(paths, full)
 
 	// Step 6a: list work commits attributed to this issue via the
 	// `(act-XXXX)` marker. Read-side, no caching, single git invocation;
@@ -540,6 +551,9 @@ func (r ShowResult) ShowJSON() map[string]any {
 	}
 	if r.Refresh != nil {
 		out["refresh"] = r.Refresh
+	}
+	if !r.Durability.Clean() {
+		out["durability"] = r.Durability
 	}
 	return out
 }
