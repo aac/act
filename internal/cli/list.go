@@ -126,9 +126,8 @@ type sortKey struct {
 }
 
 // RunList implements `act list`. It opens the SQLite index (refolding the
-// op log into it only when the op tree has changed), filters by the
-// supplied options,
-// applies the requested sort, truncates by Limit, and returns a
+// op log into it only when the op tree has changed), filters by the supplied
+// options, applies the requested sort, truncates by Limit, and returns a
 // ListResult. The output is shape-agnostic: main.go renders JSON or the
 // human-friendly form.
 //
