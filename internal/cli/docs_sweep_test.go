@@ -1910,6 +1910,25 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "this status is not durable yet",
 		testName:     "TestDocClaim_StatusVsOplogReportsUncommittedOp",
 	},
+	// act-fec192, the other half: doctor is a diagnostic someone has to
+	// think to run, and the readers who got this wrong were running
+	// `act show`. Show now warns on stderr, in both modes, when the
+	// status it is about to report is not the one the committed op log
+	// supports. Drift shape: the warning is made --json-only or
+	// human-only, or quietly dropped as noise, and the surface that
+	// misled three sessions goes back to saying nothing.
+	{
+		name:         "help-show-durability-warning",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act show' CARRIES THE SAME WARNING",
+		testName:     "TestDocClaim_ShowWarnsStatusNotDurable",
+	},
+	{
+		name:         "help-show-durability-behind",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "is BEHIND the committed op log",
+		testName:     "TestDocClaim_ShowWarnsStatusBehindOplog",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

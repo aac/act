@@ -980,6 +980,15 @@ func runShow(args []string) int {
 	// (act-3803ac). Tombstoned results carry no refresh info.
 	if sr, ok := out.(cli.ShowResult); ok {
 		defer fmt.Fprint(os.Stderr, cli.FormatRefreshWarning(sr.Refresh))
+		// act-fec192: a status the committed op log does not support is
+		// never reported silently. Emitted in both modes, for the same
+		// reason as the refresh warning — and specifically for the agent
+		// reading --json, which is the reader that hands a close on to
+		// another session as verification.
+		if !sr.Durability.Clean() {
+			status, _ := sr.Fields["status"].(string)
+			defer fmt.Fprint(os.Stderr, cli.FormatDurabilityWarning(status, sr.Durability))
+		}
 	}
 
 	if *asJSON {
