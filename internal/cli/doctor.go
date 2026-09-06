@@ -26,7 +26,7 @@ import (
 // DoctorOptions captures the flag knobs for `act doctor`.
 type DoctorOptions struct {
 	// Check restricts the run to a single named check; empty runs all
-	// eight in spec order.
+	// every check in spec order.
 	Check string
 	// Fix enables auto-remediation for the two index checks.
 	Fix bool
@@ -93,6 +93,11 @@ var allChecks = []string{
 	"index-malformed",
 	"index-divergence",
 	"index-schema",
+	// act-fec192: the index-vs-ops checks above compare the index only
+	// against the op files on disk. status-vs-oplog adds the third view
+	// — the committed history of the nested .act/ repo — because that is
+	// the only one that survives a sweep, a rollback, or another machine.
+	"status-vs-oplog",
 	"gitignore-effective",
 	// Phase 2 ticket 9 (act-aa4f19): cases (a'), (c'), (f), (g), (h)
 	// share one walk (single git-config read + nested-repo stat) and
@@ -191,6 +196,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			findings = append(findings, checkIndexDivergence(paths, opts.Fix)...)
 		case "index-schema":
 			findings = append(findings, checkIndexSchema(paths, opts.Fix)...)
+		case CheckStatusVsOplog:
+			findings = append(findings, checkStatusVsOplog(paths, foldRes)...)
 		case "gitignore-effective":
 			findings = append(findings, checkGitignoreEffective(repoRoot)...)
 		case "phase2-reconciliation":
@@ -241,7 +248,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 func foldNeeded(run []string) bool {
 	for _, n := range run {
 		switch n {
-		case "orphan-close", "orphan-ops", "dangling-deps", "cycle":
+		case "orphan-close", "orphan-ops", "dangling-deps", "cycle",
+			CheckStatusVsOplog:
 			return true
 		}
 	}

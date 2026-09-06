@@ -1889,6 +1889,27 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "details.quarantined_op",
 		testName:     "TestDocClaim_FailedCommitCreateStaysInvisible",
 	},
+	// act-fec192: `act show` can report a status that only the working
+	// tree supports, because the fold reads ops/ and nothing compares
+	// ops/ against the nested repo's committed history. Three sessions
+	// passed such a close between them and the store later disagreed
+	// with all three. `act help` now documents the two shapes doctor's
+	// status-vs-oplog check reports. Drift shape: the check is narrowed
+	// back to "index vs ops on disk" (which index-divergence already
+	// does, and which was silent through the whole incident), and the
+	// help text keeps promising a comparison nothing performs.
+	{
+		name:         "help-doctor-status-vs-oplog-retracted",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "A STATUS THE OP LOG DOES NOT SUPPORT",
+		testName:     "TestDocClaim_StatusVsOplogReportsRetractedOp",
+	},
+	{
+		name:         "help-doctor-status-vs-oplog-not-durable",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "this status is not durable yet",
+		testName:     "TestDocClaim_StatusVsOplogReportsUncommittedOp",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
