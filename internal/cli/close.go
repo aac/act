@@ -273,7 +273,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		}, 1
 	}
 	defer func() { _ = idx.Close() }()
-	if err := idx.Rebuild(paths.Ops); err != nil {
+	if _, err := idx.EnsureCurrent(paths.Ops); err != nil {
 		return CloseErrorOutput{
 			Error:   "index_rebuild_failed",
 			Message: err.Error(),

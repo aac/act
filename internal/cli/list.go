@@ -125,8 +125,9 @@ type sortKey struct {
 	Desc  bool
 }
 
-// RunList implements `act list`. It opens the SQLite index (rebuilding it
-// from the op log for v0.1 simplicity), filters by the supplied options,
+// RunList implements `act list`. It opens the SQLite index (refolding the
+// op log into it only when the op tree has changed), filters by the
+// supplied options,
 // applies the requested sort, truncates by Limit, and returns a
 // ListResult. The output is shape-agnostic: main.go renders JSON or the
 // human-friendly form.
@@ -203,8 +204,13 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 	refreshRes, refreshErr := MaybeRefresh(repoRoot, MaybeRefreshOptions{Fresh: opts.Fresh, NoFetch: opts.NoFetch})
 	refresh := NewRefreshInfo(refreshRes, refreshErr)
 
-	// Step 3: open + rebuild the index. v0.1 unconditionally rebuilds; the
-	// fold-checkpoint short-circuit is a future optimisation (see act-a1f6).
+	// Step 3: open the index and bring it up to date with the op log.
+	// EnsureCurrent refolds only when `.act/ops/` has changed since the
+	// rows were written, so a read on an unchanged store costs a metadata
+	// walk instead of a full fold-and-rebuild (act-43d11f). The staleness
+	// decision is re-derived from the op tree itself, never from a marker
+	// a writer had to maintain, so a read still cannot answer from an
+	// index the op log no longer supports.
 	idx, err := index.Open(paths.IndexDB)
 	if err != nil {
 		return ListErrorOutput{
@@ -213,7 +219,7 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 		}, 1
 	}
 	defer func() { _ = idx.Close() }()
-	if err := idx.Rebuild(paths.Ops); err != nil {
+	if _, err := idx.EnsureCurrent(paths.Ops); err != nil {
 		return ListErrorOutput{
 			Error:   "index_rebuild_failed",
 			Message: err.Error(),

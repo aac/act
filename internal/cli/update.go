@@ -472,7 +472,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 				Message: ierr.Error(),
 			}, 1
 		}
-		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+		if _, rerr := idx.EnsureCurrent(paths.Ops); rerr != nil {
 			_ = idx.Close()
 			return UpdateErrorOutput{
 				Error:   "index_rebuild_failed",
@@ -522,7 +522,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 				Message: ierr.Error(),
 			}, 1
 		}
-		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+		if _, rerr := idx.EnsureCurrent(paths.Ops); rerr != nil {
 			_ = idx.Close()
 			return UpdateErrorOutput{
 				Error:   "index_rebuild_failed",
@@ -557,7 +557,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 				Message: ierr.Error(),
 			}, 1
 		}
-		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+		if _, rerr := idx.EnsureCurrent(paths.Ops); rerr != nil {
 			_ = idx.Close()
 			return UpdateErrorOutput{
 				Error:   "index_rebuild_failed",
@@ -652,7 +652,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 				Message: ierr.Error(),
 			}, 1
 		}
-		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+		if _, rerr := idx.EnsureCurrent(paths.Ops); rerr != nil {
 			_ = idx.Close()
 			return UpdateErrorOutput{
 				Error:   "index_rebuild_failed",
@@ -978,7 +978,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 				Message: ierr.Error(),
 			}, 1
 		}
-		if rerr := idx.Rebuild(paths.Ops); rerr != nil {
+		if _, rerr := idx.EnsureCurrent(paths.Ops); rerr != nil {
 			_ = idx.Close()
 			return UpdateErrorOutput{
 				Error:   "index_rebuild_failed",

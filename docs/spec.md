@@ -243,10 +243,10 @@ issues(
 issue_deps(issue_id TEXT, parent_id TEXT, edge_type TEXT, PRIMARY KEY(issue_id, parent_id, edge_type))
 accept(issue TEXT, idx INT, text TEXT, done INT, PRIMARY KEY(issue, idx))
 fts USING fts5(id UNINDEXED, title, description, content='')
-meta(key TEXT PRIMARY KEY, value TEXT)        -- 'schema_version', 'tree_hash'
+index_state(key TEXT PRIMARY KEY, value TEXT)  -- 'ops_build_key'
 ```
 
-Indices: `idx_issues_status_priority`, `idx_issues_parent`, `idx_deps_parent`, `idx_deps_child`. `meta.tree_hash` mirrors `fold-checkpoint.json` for fast staleness check.
+Indices: `idx_issues_status_priority`, `idx_issues_parent`, `idx_deps_parent`, `idx_deps_child`. `index_state.ops_build_key` records what `.act/ops/` looked like when these rows were built — a signature over every op file's path, size and mtime, qualified by the writing binary's version — so a reader can tell a current index from a stale one without refolding. It lives in `index.db` rather than beside it so the key and the rows it describes commit or roll back together; a key in a separate file could outlive a failed rebuild and vouch for rows that were never written.
 
 ### Op file naming
 
@@ -669,7 +669,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 **Ordering:** closed issues sort after every non-closed issue. This grouping is applied ahead of `--sort` and is not overridable — a listing that mixes statuses must not bury live work under finished work. `--sort` orders the rows within each group.
 
-**Behavior:** Reads from `.act/index.db` after a fold-checkpoint validation. Index is rebuilt automatically if the tree-hash mismatches.
+**Behavior:** Reads from `.act/index.db`. The index is refolded from `.act/ops/` only when the op tree has changed since the rows were written; an unchanged op tree is answered from the index without a refold. The comparison is re-derived from the op tree on every read rather than from a marker a writer maintains, so an op appended by another process, or one removed by a rolled-back write, forces the refold and no read can answer from an index the op log no longer supports.
 
 **JSON output:**
 ```json

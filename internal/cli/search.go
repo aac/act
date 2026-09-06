@@ -173,7 +173,7 @@ func RunSearch(repoRoot, query string, opts SearchOptions) (output any, exitCode
 	}
 	defer idx.Close()
 
-	if err := idx.Rebuild(paths.Ops); err != nil {
+	if _, err := idx.EnsureCurrent(paths.Ops); err != nil {
 		return SearchErrorOutput{
 			Error:   "index_rebuild_failed",
 			Kind:    "index_rebuild",

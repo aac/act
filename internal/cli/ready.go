@@ -171,7 +171,7 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		}, 1
 	}
 	defer func() { _ = idx.Close() }()
-	if err := idx.Rebuild(paths.Ops); err != nil {
+	if _, err := idx.EnsureCurrent(paths.Ops); err != nil {
 		return ReadyErrorOutput{
 			Error:   "index_rebuild_failed",
 			Message: err.Error(),

@@ -33,6 +33,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (pinned by `TestDocClaim_Update_RetitleKeepsCommitCorrelation`).
 
 ### Changed
+- **Reads no longer refold the whole op log before answering (act-43d11f).**
+  Every `act list` / `ready` / `search` / `blocks` — and every pre-write status
+  check inside `create`, `close`, `reopen`, `update` and `dep add` — used to
+  drop every row from `index.db` and rebuild it from a fresh fold of
+  `.act/ops/`, so a read cost time proportional to the whole store rather than
+  to the rows returned. On a 4,300-op tracker that was ~0.8s of pure work
+  warm, and 14-20s when the page cache was cold or the disk contended — past
+  the point where callers with a timeout gave up and silently skipped the
+  store.
+  - `index.db` now carries an `ops_build_key`: a signature over every op
+    file's (path, size, mtime), qualified by the writing binary's version and
+    written inside the same transaction as the rows, so the key and the rows
+    it describes commit or roll back together.
+  - A read recomputes the signature and refolds only on a mismatch. Measured
+    on a 4,300-op store: 0.71-0.75s before, 0.09s after, and the hot path now
+    does stat calls where it used to open and read 4,317 files.
+  - The staleness decision is re-derived from the op tree on every read, never
+    from a marker a writer maintains, and the signature is taken *before* the
+    fold — so an op appended by another process, a close removed by a rolled
+    back write, or an act-sync rebase all force the refold, and a write racing
+    a rebuild can only cause a redundant one, never a skipped one. A read
+    still cannot answer from an index the op log no longer supports.
+  - `act doctor`'s divergence and fix-index paths keep folding unconditionally:
+    they exist to check the index against a fresh fold.
+
 - **A failed push is no longer a failed write (act-89a595).** An `act` write
   whose op was durably committed still exited non-zero when the push to origin
   failed — envelope `push_exhausted` (exit 4) or `push_failed` (exit 1) on a

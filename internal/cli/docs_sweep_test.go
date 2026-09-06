@@ -71,6 +71,18 @@ type docClaim struct {
 // depend on it.
 var docClaimRegistry = []docClaim{
 	{
+		// act-43d11f: the read path no longer refolds the whole op log
+		// before every answer. The claim that matters is the pair —
+		// unchanged tree is served from the index, and any change to the
+		// tree forces the refold — so the asserting test tampers with
+		// index.db to prove the skip and mutates `.act/ops/` to prove the
+		// refold still fires.
+		name:         "spec-list-skips-refold-on-unchanged-ops",
+		docFile:      "docs/spec.md",
+		claimPattern: "an unchanged op tree is answered from the index without a refold",
+		testName:     "TestDocClaim_List_SkipsRefoldOnUnchangedOpTree",
+	},
+	{
 		// act-3e21b8: `act update --title` exists and replaces the title.
 		// The listing is the surface that matters — TestDocClaim_Update_
 		// TitleSetsTitle asserts through `act list`, not just `act show`.
