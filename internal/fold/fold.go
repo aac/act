@@ -243,3 +243,51 @@ func StubDispatch(opType string) ApplyFunc {
 		return nil
 	}
 }
+
+// ErrForeignOp reports an op file whose envelope names an issue other than
+// the directory it lives in. It is the one shape that makes a per-issue
+// refold unsound: the op contributes to an issue whose subtree signature did
+// not move, so refolding only the changed directory would drop or misplace
+// it.
+//
+// Nothing act writes produces this — op.ShardDir derives the directory from
+// env.IssueID — so callers treat it as "fall back to a whole-tree rebuild",
+// not as corruption.
+var ErrForeignOp = errors.New("fold: op file names an issue other than its directory")
+
+// FoldIssueStrict folds a single issue subtree like FoldIssue, but refuses to
+// answer when the subtree contains an op belonging to another issue,
+// returning ErrForeignOp.
+//
+// The difference matters only to the incremental read path
+// (index.EnsureCurrent, act-50d2e2). FoldIssue silently discards a foreign
+// op's state, which is the right shape for a caller that only wants this
+// issue; an incremental index rebuild instead needs to know that its
+// per-issue partition of the op tree does not hold, so it can rebuild the
+// whole thing rather than write rows that omit the foreign op.
+func FoldIssueStrict(rootOps, issueID string, applyDispatch func(string) ApplyFunc) (state *IssueState, found bool, err error) {
+	ops, err := discoverAndParse(rootOps, issueID)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, so := range ops {
+		if so.env.IssueID != issueID {
+			return nil, false, fmt.Errorf("%w: %s names %s", ErrForeignOp, so.path, so.env.IssueID)
+		}
+	}
+	sortOps(ops)
+	res, err := applyAll(ops, applyDispatch)
+	if err != nil {
+		return nil, false, err
+	}
+	st, ok := res.Issues[issueID]
+	if !ok {
+		// No ops at all under this directory. A whole-tree Fold would not
+		// have produced an entry for this id either, so report absence
+		// rather than an empty state — the caller writes rows from what a
+		// full fold would have contained, and an empty-state row is one a
+		// full rebuild would not write.
+		return nil, false, nil
+	}
+	return st, true, nil
+}

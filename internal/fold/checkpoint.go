@@ -293,10 +293,16 @@ func computeIssueFoldHash(state *IssueState) (string, error) {
 //  4. Miss: refold every issue and rebuild the checkpoint from scratch.
 //
 // v0.1 simplification: per-issue cache reuse (skipping refold for issues
-// whose SubtreeHash is unchanged) is not yet wired in. The checkpoint
+// whose SubtreeHash is unchanged) is not yet wired in HERE. The checkpoint
 // already records per-issue SubtreeHash + FoldHash so a future change
 // (act-9b55 / act-2e8d) can flip on partial reuse without touching
 // callers. See spec §5.B.5 for the partial-reuse rule.
+//
+// The read path does not wait on that: index.EnsureCurrent gained per-issue
+// reuse in act-50d2e2 on its own key (fold.OpsSignatures — file metadata, no
+// contents read) rather than on this checkpoint's content hashes, because a
+// staleness check that has to hash every op file costs most of what the fold
+// it is trying to skip costs. Nothing production reads this checkpoint today.
 func FoldWithCheckpoint(opsRoot, checkpointPath string, applyDispatch func(string) ApplyFunc) (*FoldResult, *Checkpoint, error) {
 	cp, err := ReadCheckpoint(checkpointPath)
 	if err != nil {
