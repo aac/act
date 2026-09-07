@@ -133,3 +133,101 @@ func TestOpsSignature_SameContentDifferentCreationOrder(t *testing.T) {
 		t.Fatalf("identical trees built in different order hashed differently:\n%s\n%s", a, b)
 	}
 }
+
+// TestOpsSignatures_PerIssueTracksOnlyItsOwnSubtree pins the property the
+// incremental index rebuild rests on (act-50d2e2): writing an op for one
+// issue moves that issue's key and no other's, while the whole-tree key moves
+// for any change at all.
+func TestOpsSignatures_PerIssueTracksOnlyItsOwnSubtree(t *testing.T) {
+	root := t.TempDir()
+	ops := filepath.Join(root, "ops")
+	writeSigFile(t, ops, "act-aaaa/2026-04/one.json", "a")
+	writeSigFile(t, ops, "act-bbbb/2026-04/one.json", "b")
+
+	before, err := OpsSignatures(ops)
+	if err != nil {
+		t.Fatalf("OpsSignatures: %v", err)
+	}
+	if !before.Decomposable {
+		t.Fatal("a tree of issue directories reported as not decomposable")
+	}
+	if len(before.PerIssue) != 2 {
+		t.Fatalf("per-issue keys = %d, want 2: %v", len(before.PerIssue), before.PerIssue)
+	}
+	if before.Tree != mustOpsSignature(t, ops) {
+		t.Fatal("Signatures.Tree disagrees with OpsSignature on the same tree")
+	}
+
+	writeSigFile(t, ops, "act-bbbb/2026-04/two.json", "bb")
+
+	after, err := OpsSignatures(ops)
+	if err != nil {
+		t.Fatalf("OpsSignatures: %v", err)
+	}
+	if after.Tree == before.Tree {
+		t.Fatal("whole-tree key unchanged after an op was appended")
+	}
+	if after.PerIssue["act-bbbb"] == before.PerIssue["act-bbbb"] {
+		t.Fatal("act-bbbb's key unchanged after an op landed in its subtree")
+	}
+	if after.PerIssue["act-aaaa"] != before.PerIssue["act-aaaa"] {
+		t.Fatal("act-aaaa's key moved because another issue was written — the refold would not be scoped")
+	}
+}
+
+// TestOpsSignatures_LooseFileIsNotDecomposable: a regular file sitting
+// directly under the ops root belongs to no issue, so the per-issue map does
+// not account for the whole tree and callers must not partition it.
+func TestOpsSignatures_LooseFileIsNotDecomposable(t *testing.T) {
+	root := t.TempDir()
+	ops := filepath.Join(root, "ops")
+	writeSigFile(t, ops, "act-aaaa/2026-04/one.json", "a")
+	writeSigFile(t, ops, "stray.json", "x")
+
+	sigs, err := OpsSignatures(ops)
+	if err != nil {
+		t.Fatalf("OpsSignatures: %v", err)
+	}
+	if sigs.Decomposable {
+		t.Fatal("a tree with a file directly under the ops root reported as decomposable")
+	}
+}
+
+// TestOpsSignatures_EmptyIssueDirIsRecorded: an issue directory holding no
+// files is a state the index has to agree with (no row), and it must be
+// distinguishable from the directory having been deleted.
+func TestOpsSignatures_EmptyIssueDirIsRecorded(t *testing.T) {
+	root := t.TempDir()
+	ops := filepath.Join(root, "ops")
+	writeSigFile(t, ops, "act-aaaa/2026-04/one.json", "a")
+	if err := os.MkdirAll(filepath.Join(ops, "act-bbbb"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sigs, err := OpsSignatures(ops)
+	if err != nil {
+		t.Fatalf("OpsSignatures: %v", err)
+	}
+	if _, ok := sigs.PerIssue["act-bbbb"]; !ok {
+		t.Fatal("an empty issue directory got no per-issue key, so it would read as a deletion")
+	}
+}
+
+func writeSigFile(t *testing.T, opsRoot, rel, body string) {
+	t.Helper()
+	p := filepath.Join(opsRoot, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", p, err)
+	}
+}
+
+func mustOpsSignature(t *testing.T, opsRoot string) string {
+	t.Helper()
+	s, err := OpsSignature(opsRoot)
+	if err != nil {
+		t.Fatalf("OpsSignature: %v", err)
+	}
+	return s
+}

@@ -74,6 +74,16 @@ CREATE TABLE IF NOT EXISTS index_state (
     value TEXT
 );
 
+-- index_issue_sig records, per issue, what that issue's ops subtree looked
+-- like when its rows were written. index_state's ops_build_key answers "did
+-- anything change?"; this table answers "which issues changed?", which is
+-- what lets the read after a write refold one issue instead of the whole log.
+-- See Index.rebuildIncremental.
+CREATE TABLE IF NOT EXISTS index_issue_sig (
+    issue_id TEXT PRIMARY KEY,
+    sig      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_status   ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_priority ON issues(priority);
 CREATE INDEX IF NOT EXISTS idx_parent   ON issues(parent);
@@ -377,7 +387,16 @@ const opsBuildKeyRow = "ops_build_key"
 // indexFormatVersion covers the same hazard between two builds that report
 // the same version (any unreleased build reports "dev").
 func buildKey(sig string) string {
-	return fmt.Sprintf("%s|%d|%s", version.Binary, indexFormatVersion, sig)
+	return buildKeyPrefix() + sig
+}
+
+// buildKeyPrefix is the part of a build key that describes the WRITING BINARY
+// rather than the op tree. A stored key carrying a different prefix was
+// written by a build whose fold output may differ from ours, so its rows —
+// and the per-issue signatures beside them — cannot be reused incrementally
+// either; that case takes the full rebuild.
+func buildKeyPrefix() string {
+	return fmt.Sprintf("%s|%d|", version.Binary, indexFormatVersion)
 }
 
 // readBuildKey returns the build key stored by the last Rebuild, or "" when
@@ -393,9 +412,8 @@ func (i *Index) readBuildKey() string {
 	return v
 }
 
-// EnsureCurrent makes the index reflect rootOps, skipping the fold-and-
-// rebuild when the op tree has not changed since the rows were written. It
-// reports whether a rebuild actually ran.
+// EnsureCurrent makes the index reflect rootOps, doing the least work the op
+// tree allows. It reports whether any rebuild — full or incremental — ran.
 //
 // This is the read path's entry point. Every reader used to call Rebuild
 // unconditionally, which folded the entire op log and rewrote every row
@@ -403,29 +421,53 @@ func (i *Index) readBuildKey() string {
 // rather than to the rows returned — 14-20s on a 4,300-op store, past the
 // point where callers with a timeout gave up on it (act-43d11f).
 //
-// The safety property, which matters more than the speed: the decision is
-// re-derived from the op tree on every call, never from a marker a writer
-// was supposed to maintain. Anything that changes `.act/ops/` — another
-// process appending an op, a rolled-back close removing one, act-sync
-// rebasing the nested repo — changes the signature and forces the rebuild.
-// A reader can therefore never answer from an index the op log no longer
-// supports, which is the failure act-fec192 closed on the write path.
+// There are three outcomes, in the order they are tried:
 //
-// Ordering matters and is deliberate: the signature is taken BEFORE the
-// fold, inside Rebuild. An op landing in the gap is included in the fold but
-// not in the stored key, so the next read sees a mismatch and rebuilds
-// again. The race costs a redundant rebuild; it cannot skip a needed one.
+//   - Nothing changed: the whole-tree key matches what the rows were built
+//     from, and the metadata walk is the entire cost (act-43d11f).
+//   - Some issues changed: only those are refolded and their rows rewritten,
+//     and an issue whose subtree disappeared is dropped. The cost tracks what
+//     moved, not the size of the log (act-50d2e2) — which is what the read
+//     after a write pays, over and over, on a store under active writes.
+//   - Anything the incremental path cannot account for: a full rebuild.
+//
+// The safety property matters more than the speed: every decision is
+// re-derived from the op tree on each call, never from a marker a writer was
+// supposed to maintain. Anything that changes `.act/ops/` — another process
+// appending an op, a rolled-back close removing one, act-sync rebasing the
+// nested repo — changes the signature of the issue it touched and forces that
+// issue's refold. A reader can therefore never answer from rows the op log no
+// longer supports, which is the failure act-fec192 closed on the write path.
+//
+// Ordering matters and is deliberate: signatures are taken BEFORE the fold, in
+// both rebuild paths. An op landing in the gap is included in the fold but not
+// in the stored key, so the next read sees a mismatch and refolds that issue
+// again. The race costs redundant work; it cannot skip needed work.
 func (i *Index) EnsureCurrent(rootOps string) (rebuilt bool, err error) {
 	if err := i.ApplySchema(); err != nil {
 		return false, err
 	}
 	stored := i.readBuildKey()
 	if stored != "" {
-		sig, sigErr := fold.OpsSignature(rootOps)
-		// A signature we could not compute is not evidence the index is
-		// current — fall through to the rebuild rather than guess.
-		if sigErr == nil && buildKey(sig) == stored {
-			return false, nil
+		// Signatures we could not compute are not evidence about the index —
+		// fall through to the full rebuild rather than guess.
+		if sigs, sigErr := fold.OpsSignatures(rootOps); sigErr == nil {
+			if buildKey(sigs.Tree) == stored {
+				return false, nil
+			}
+			// The incremental path reuses rows this binary wrote in this
+			// format; a key from any other build describes rows whose shape
+			// we cannot assume, and Decomposable false means the per-issue
+			// map does not account for the whole tree.
+			if sigs.Decomposable && strings.HasPrefix(stored, buildKeyPrefix()) {
+				done, incErr := i.rebuildIncremental(rootOps, sigs)
+				if incErr != nil {
+					return false, incErr
+				}
+				if done {
+					return true, nil
+				}
+			}
 		}
 	}
 	if err := i.Rebuild(rootOps); err != nil {
@@ -435,13 +477,14 @@ func (i *Index) EnsureCurrent(rootOps string) (rebuilt bool, err error) {
 }
 
 // Rebuild drops every row from the index and re-populates it from a fresh
-// fold of rootOps, and records the build key the reuse check in
-// EnsureCurrent compares against.
+// fold of rootOps, and records the signatures the reuse checks in
+// EnsureCurrent compare against — the whole-tree build key, and the per-issue
+// key for every issue directory.
 //
 // The rebuild runs in a single transaction. On any error the transaction is
-// rolled back and the database is left untouched — including the build key,
-// so a failed rebuild leaves the index bearing whatever key its last
-// successful build wrote, never one that overstates what the rows contain.
+// rolled back and the database is left untouched — including the signatures,
+// so a failed rebuild leaves the index bearing whatever keys its last
+// successful build wrote, never ones that overstate what the rows contain.
 //
 // Callers that must not reuse cached rows (doctor's divergence and
 // fix-index paths, which exist precisely to check the index against a fresh
@@ -451,21 +494,20 @@ func (i *Index) Rebuild(rootOps string) error {
 		return err
 	}
 
-	// Signature first, fold second. See EnsureCurrent for why the order is
+	// Signatures first, fold second. See EnsureCurrent for why the order is
 	// load-bearing.
 	//
-	// A signature we cannot compute is not fatal: the rebuild still runs and
-	// we store no key, so every later read rebuilds. That degradation is not
+	// Signatures we cannot compute are not fatal: the rebuild still runs and
+	// we store no keys, so every later read rebuilds. That degradation is not
 	// silent in practice — the walk below reads every file this one only
 	// stats, so anything that breaks the signature (an unreadable subtree,
 	// a root that is not a directory) fails the fold a few lines later with
 	// a real error.
-	sig, sigErr := fold.OpsSignature(rootOps)
+	sigs, sigErr := fold.OpsSignatures(rootOps)
 
-	// Always do a full fold here — the FoldWithCheckpoint short-circuit
-	// returns nil FoldResult on a checkpoint hit, which would zero-out the
-	// index. Per-issue reuse, which would let a rebuild refold only the
-	// subtrees that moved, is act-50d2e2; this rebuild is all-or-nothing.
+	// Always do a full fold here — per-issue reuse is EnsureCurrent's job
+	// (rebuildIncremental); this rebuild is the all-or-nothing one every
+	// other path falls back to.
 	res, err := fold.Fold(rootOps, fold.ApplyDispatch)
 	if err != nil {
 		return fmt.Errorf("index: fold for rebuild: %w", err)
@@ -484,16 +526,27 @@ func (i *Index) Rebuild(rootOps string) error {
 		"DELETE FROM issue_external_deps",
 		"DELETE FROM issue_meta",
 		"DELETE FROM fts",
+		"DELETE FROM index_issue_sig",
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("index: rebuild clear (%s): %w", stmt, err)
 		}
 	}
 
+	// An issue the fold produced that has no directory of its own is an id
+	// the per-issue map cannot describe, so the per-issue signatures would
+	// not cover every row. Recording none disables the incremental path for
+	// this index until a rebuild sees a tree it can partition — the same
+	// posture as a signature we could not compute.
+	partitionable := sigs.Decomposable
+
 	if res != nil {
 		for _, st := range res.Issues {
 			if err := upsertTx(tx, st); err != nil {
 				return fmt.Errorf("index: rebuild upsert %s: %w", st.ID, err)
+			}
+			if _, ok := sigs.PerIssue[st.ID]; !ok {
+				partitionable = false
 			}
 		}
 	}
@@ -502,9 +555,16 @@ func (i *Index) Rebuild(rootOps string) error {
 		if _, err := tx.Exec(
 			`INSERT INTO index_state (key, value) VALUES (?, ?)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-			opsBuildKeyRow, buildKey(sig),
+			opsBuildKeyRow, buildKey(sigs.Tree),
 		); err != nil {
 			return fmt.Errorf("index: record build key: %w", err)
+		}
+		if partitionable {
+			for id, sig := range sigs.PerIssue {
+				if err := putIssueSigTx(tx, id, sig); err != nil {
+					return err
+				}
+			}
 		}
 	} else {
 		// No usable key: make sure a previous one cannot outlive the rows
@@ -538,23 +598,35 @@ func (i *Index) Upsert(state *fold.IssueState) error {
 	return tx.Commit()
 }
 
+// deleteIssueRowsTx removes every row this package writes for one issue, in
+// every table. It is the shared half of two operations: an upsert clears
+// before it writes, and an incremental rebuild uses it alone to drop an issue
+// whose ops subtree disappeared — the rolled-back-close shape that must not
+// survive in the index (act-fec192).
+func deleteIssueRowsTx(tx *sql.Tx, id string) error {
+	for _, q := range []string{
+		"DELETE FROM issues              WHERE id       = ?",
+		"DELETE FROM issue_accept        WHERE issue_id = ?",
+		"DELETE FROM issue_deps          WHERE issue_id = ?",
+		"DELETE FROM issue_external_deps WHERE issue_id = ?",
+		"DELETE FROM issue_meta          WHERE issue_id = ?",
+		"DELETE FROM fts                 WHERE issue_id = ?",
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return fmt.Errorf("index: clear rows for %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // upsertTx performs the per-issue insert/replace within an open transaction.
 // Tombstoned issues are deleted from every table (they are invisible from
 // the public render).
 func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 	id := state.ID
 	// Always clear prior rows for this issue, so re-runs are idempotent.
-	for _, stmt := range []struct{ q, arg string }{
-		{"DELETE FROM issues              WHERE id       = ?", id},
-		{"DELETE FROM issue_accept        WHERE issue_id = ?", id},
-		{"DELETE FROM issue_deps          WHERE issue_id = ?", id},
-		{"DELETE FROM issue_external_deps WHERE issue_id = ?", id},
-		{"DELETE FROM issue_meta          WHERE issue_id = ?", id},
-		{"DELETE FROM fts                 WHERE issue_id = ?", id},
-	} {
-		if _, err := tx.Exec(stmt.q, stmt.arg); err != nil {
-			return fmt.Errorf("index: clear rows for %s: %w", id, err)
-		}
+	if err := deleteIssueRowsTx(tx, id); err != nil {
+		return err
 	}
 
 	if state.Tombstoned {

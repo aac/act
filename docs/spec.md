@@ -669,7 +669,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 **Ordering:** closed issues sort after every non-closed issue. This grouping is applied ahead of `--sort` and is not overridable — a listing that mixes statuses must not bury live work under finished work. `--sort` orders the rows within each group.
 
-**Behavior:** Reads from `.act/index.db`. The index is refolded from `.act/ops/` only when the op tree has changed since the rows were written; an unchanged op tree is answered from the index without a refold. The comparison is re-derived from the op tree on every read rather than from a marker a writer maintains, so an op appended by another process, or one removed by a rolled-back write, forces the refold and no read can answer from an index the op log no longer supports.
+**Behavior:** Reads from `.act/index.db`. The index is refolded from `.act/ops/` only when the op tree has changed since the rows were written; an unchanged op tree is answered from the index without a refold. The comparison is re-derived from the op tree on every read rather than from a marker a writer maintains, so an op appended by another process, or one removed by a rolled-back write, forces the refold and no read can answer from an index the op log no longer supports. The refold is scoped to what moved: a read taken after a write refolds only the issues whose ops subtree changed, and drops an issue whose subtree disappeared, so the cost of the read after a write tracks the change rather than the size of the op log.
 
 **JSON output:**
 ```json
