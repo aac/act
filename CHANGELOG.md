@@ -58,6 +58,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `act doctor`'s divergence and fix-index paths keep folding unconditionally:
     they exist to check the index against a fresh fold.
 
+- **The read after a write refolds one issue, not the whole log (act-50d2e2).**
+  act-43d11f made an *unchanged* store cheap, but any change at all
+  invalidated the whole-tree key, so the first read after every write still
+  folded every op and rewrote every row. A store under active writes — a drain
+  claiming and closing tickets — therefore paid the full cost on every read
+  interleaved with a write, and that cost grew with the size of the op log
+  rather than with what changed.
+  - `index.db` now also carries a per-issue signature (`index_issue_sig`)
+    beside the whole-tree key, from the same single metadata walk. A read
+    whose tree key has moved refolds only the issues whose own signature
+    moved, upserts just those rows, and drops any issue whose ops subtree
+    disappeared.
+  - Measured on a copy of a 4,317-op store, one op appended between two reads:
+    **0.84-1.02s before, 0.12s after** — the same cost as a read on an
+    unchanged store, because the walk is now the whole price. A full cold
+    rebuild is unchanged at ~1.4-1.7s.
+  - The safety properties carry over unchanged, and are the reason for the
+    specific shape: signatures are still taken *before* the fold, so a racing
+    write can only cause a redundant refold; an issue whose subtree
+    disappeared is *deleted*, not retained from cache (the rolled-back-close
+    shape act-fec192 cost us); and anything the per-issue partition cannot
+    account for — an index written by another binary, a file loose in the ops
+    root, or an op naming an issue other than its own directory — falls back
+    to the full rebuild rather than guessing.
+  - `scripts/bench-read-after-write.sh` reproduces the measurement against a
+    *copy* of any real store.
+
 - **A failed push is no longer a failed write (act-89a595).** An `act` write
   whose op was durably committed still exited non-zero when the push to origin
   failed — envelope `push_exhausted` (exit 4) or `push_failed` (exit 1) on a

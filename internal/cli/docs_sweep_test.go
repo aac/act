@@ -83,6 +83,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_List_SkipsRefoldOnUnchangedOpTree",
 	},
 	{
+		// act-50d2e2: the refold that a change does force is scoped to the
+		// issues that changed, so a store under active writes stops paying
+		// a whole-log fold on every read. Asserted as behaviour, not as a
+		// stopwatch: a row nobody's ops touched keeps a value written
+		// straight into index.db across a read taken after another issue's
+		// op landed, which only a scoped fold can do.
+		name:         "spec-list-refolds-only-changed-issues",
+		docFile:      "docs/spec.md",
+		claimPattern: "refolds only the issues whose ops subtree changed",
+		testName:     "TestDocClaim_List_RefoldsOnlyTheIssueWhoseOpsChanged",
+	},
+	{
 		// act-3e21b8: `act update --title` exists and replaces the title.
 		// The listing is the surface that matters — TestDocClaim_Update_
 		// TitleSetsTitle asserts through `act list`, not just `act show`.
