@@ -1,4 +1,10 @@
-# Host affinity: a ticket says which machine it can run on
+# Machine affinity: a ticket says which machine it can run on
+
+> **Read §6 first if you are looking at this after 2026-09-12.** Design
+> review changed five things — the field is `machine`, not `host`, and the
+> filter FAILS OPEN. The body below is the brief as reviewed; §6 records
+> what the gate changed and why. `docs/reviews/` is gitignored in this
+> repo, so §6 is the durable record of that pass.
 
 Design brief, 2026-09-12, mini. Arc id: `arc-host-affinity`. Mode at filing:
 autonomous. Right-sizing: **subset (refactor-no-plan-review)** — design +
@@ -293,3 +299,91 @@ Author-proposed here: the scalar field and its rejected alternatives, XDG host
 resolution with `act host [--set]`, default-on exclusion, the stderr note's
 contents, `elsewhere` as the JSON contract and its absent-vs-zero rule,
 `--all-hosts`, and the ordering constraint on stripping title prefixes.
+
+
+---
+
+## 6. What design review changed (2026-09-12)
+
+Two reviewers ran in parallel on the brief above — an architect pass over
+act's internals and a cold-eye pass over whether this should be built at
+all. Verdict: **iterate**; the shape held, five contract edges did not.
+The full synthesis is at `docs/reviews/host-affinity-synthesis-2026-09-12.md`,
+which is gitignored, so this section carries what a future reader needs.
+
+**1. The field is `machine`, not `host`.** In act, `host` already means the
+enclosing git repo — `act init --commit-host`, `docs/spec.md` §"Host-repo
+resolution", ~1,100 occurrences in the source. Shipping `act host` and
+`--host` meaning *machine* would have put two senses of one word in one
+`--help`. Both reviewers reached this independently, from opposite ends:
+the architect from act's vocabulary, the cold-eye from the fleet's
+(`this_machine()`, `[LAPTOP-ONLY]`, "machine-local"). It cost a `sed` on
+the day and would have cost a migrate op plus 208 doc-claim tuples a week
+later.
+
+**2. The filter fails OPEN.** §3.2 above resolves a label from the
+hostname when nothing else is set, and §3.3 let that drive exclusion. The
+cold-eye reviewer walked that to its end state: a label matching nothing
+(an OS rename, a lost config file) excludes every pinned issue on that
+machine; its stores' runnable counts drop; quota-floor ranks them lower or
+skips them; **so no drain is ever launched there, so nothing ever runs
+`act ready` in them, so nobody ever sees the stderr notice that was the
+entire safety case.** The exclusion suppresses its own alarm, and the
+ledger line is indistinguishable from "that repo is finished". Detection
+latency: weeks, by someone noticing a repo went quiet.
+
+  As shipped, **only an explicit label filters** — `$ACT_MACHINE` or
+  `$XDG_CONFIG_HOME/act/machine`. A hostname-derived label is printed and
+  never acted on. An unconfigured machine behaves exactly as act did
+  before this existed, which is a failure the system already survives, and
+  the rollout-ordering hazard in §3.4 disappears entirely.
+
+**3. `--all-machines` cannot reach the claiming path.** `act next
+--all-machines` would claim the head of an unfiltered frontier — often the
+pinned-elsewhere row — and the claim sets `in_progress`, which `ready`
+excludes everywhere. One keystroke would hide a ticket from the machine
+that cannot do it *and* from the machine that can. It now requires
+`--peek`.
+
+**4. One nested `machine` object, not flat keys.** A present `elsewhere:
+0` meant both "the filter ran and found nothing" and "the filter did not
+run" — the same differentiate-on-cause failure the brief correctly caught
+one level up. Shipped shape: `{"machine": {"label", "source", "filtered",
+"pinned_elsewhere"}}`, always emitted, with `pinned_elsewhere` honest in
+both modes.
+
+**5. MCP has no stderr,** so the notice could not live only there. The
+`machine` object rides `ReadyResult` (so `act_ready` carries it) and
+`act_next`'s empty-frontier payload.
+
+**Scope, stated honestly** (the cold-eye reviewer's finding 2, and the
+brief should have said this itself): `mac-mini-setup/docs/queue-placement.md`
+triages that queue into five buckets. This field covers **`laptop-only`
+(6 of 18 open rows)** and does nothing for `live-machine`, `needs-andrew`
+or `watch-item`. Two existing mechanisms — dependency edges and moving a
+ticket to the repo that owns it — took that queue from 21 ready rows to 7,
+and the 7 are the residue. **Do not pin a `live-machine` ticket to the
+machine it runs on**: a pin to THIS machine *includes* it here. A pin only
+ever subtracts.
+
+**And it parks rather than routes.** Every one of the 123 ticks in
+`planning/pacing/ledger.jsonl` carries `"host": "mini"`; nothing launches
+drains on the laptop. Excluding the six laptop rows does not send them
+anywhere — it stops them being counted as work the mini can do, which they
+were not. That is honest bookkeeping, not routing, and the real gap it
+exposes (the laptop owns no drained tracker) is filed separately.
+
+**One review claim rejected, because it is load-bearing and wrong.** The
+cold-eye verdict rests on "an act-side filter cannot reclaim those 11
+session boots, because by the time `act ready` runs inside a drain the
+session has already booted." The `act ready` that matters is not the one
+inside the drain: it is quota-floor's own, at `bin/quota-floor:474` inside
+`ready_count()`, called from `rank_candidates()` and reached from
+`decide()` *before* `launch()`. Verified by reading that call chain. The
+exclusion feeds the pre-launch decision, which is why the cutover deletes
+the title regex instead of layering on it.
+
+  The residual of that finding is accepted: commit `7136fcd` already
+  closed the measured gap on 2026-09-11, so this work buys a stable
+  contract instead of a regex over prose, coverage of every other caller,
+  and legibility for a human — not 11 session boots.
