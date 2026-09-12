@@ -371,3 +371,76 @@ func mustRunActEnv(t *testing.T, site string, extraEnv []string, want int, args 
 	}
 	return so, se
 }
+
+// TestDocClaim_Machine_ReadyHelpNamesShippedContract pins `act ready
+// --help` to the contract that actually shipped (act-58947a).
+//
+// The first implementation commit wrote this flag's help against the
+// design brief rather than against the code that landed on top of it:
+// it named a `--host` flag and a top-level JSON `elsewhere` key, and
+// design review had already replaced both — the flag is `--machine`,
+// and the count lives at `machine.pinned_elsewhere` inside an object
+// whose ABSENCE is the feature-detection signal. A consumer written
+// against the old sentence does not get a warning; it gets a KeyError
+// on a key act never emits.
+//
+// So the assertion is two-sided. The forbidden strings matter as much
+// as the required ones: a help text that merely gains the right words
+// while keeping the wrong ones still tells the reader to look for a
+// key that is not there.
+func TestDocClaim_Machine_ReadyHelpNamesShippedContract(t *testing.T) {
+	site := t.TempDir()
+	env := []string{"ACT_MACHINE=", "XDG_CONFIG_HOME=" + t.TempDir()}
+	// flag.ContinueOnError renders usage to stderr and exits 2; read
+	// both streams so this test does not also pin which one carries it.
+	so, se, _ := runActEnv(t, site, env, "ready", "--help")
+	help := so + se
+
+	for _, bad := range []string{"--host", "`elsewhere` key"} {
+		if strings.Contains(help, bad) {
+			t.Errorf("act ready --help still names %q, which never shipped\n%s", bad, help)
+		}
+	}
+	for _, want := range []string{"--machine", "machine.pinned_elsewhere", "act machine"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("act ready --help does not name %q\n%s", want, help)
+		}
+	}
+}
+
+// TestDocClaim_Machine_UnlabelledMachineSaysItIsNotFiltering pins the
+// accepted design-synth nit (act-71708d): `act machine` says when its
+// label came from the hostname and is therefore NOT filtering.
+//
+// Naming the source is not the same as naming the consequence. A reader
+// who sees `this machine: "mini" (from hostname)` has been told where
+// the label came from and nothing about what it does — and what it does
+// is nothing: act fails open on a guessed label, so every issue pinned
+// to another machine is still returned by `act ready`. `act machine` is
+// the command you run while SETTING A MACHINE UP, before any pin exists
+// for `act ready`'s stderr notice to fire on, so it is the only place
+// the fact can reach that reader in time.
+func TestDocClaim_Machine_UnlabelledMachineSaysItIsNotFiltering(t *testing.T) {
+	site := t.TempDir()
+	cfg := t.TempDir()
+
+	// No ACT_MACHINE, no config file: the label is a hostname guess.
+	out, _ := mustRunActEnv(t, site, []string{"ACT_MACHINE=", "XDG_CONFIG_HOME=" + cfg}, 0, "machine")
+	if !strings.Contains(out, "from hostname") {
+		t.Fatalf("precondition: expected a hostname-sourced label\n%s", out)
+	}
+	if !strings.Contains(out, "not filtering") {
+		t.Errorf("act machine on an unlabelled machine does not say it is not filtering\n%s", out)
+	}
+	if !strings.Contains(out, "act machine --set") {
+		t.Errorf("act machine does not name the command that fixes it\n%s", out)
+	}
+
+	// Once the machine is named, the warning must go away — otherwise it
+	// is noise on every correctly configured machine in the fleet.
+	mustRunActEnv(t, site, []string{"ACT_MACHINE=", "XDG_CONFIG_HOME=" + cfg}, 0, "machine", "--set", "testbox")
+	out, _ = mustRunActEnv(t, site, []string{"ACT_MACHINE=", "XDG_CONFIG_HOME=" + cfg}, 0, "machine")
+	if strings.Contains(out, "not filtering") {
+		t.Errorf("act machine still warns after --set named the machine\n%s", out)
+	}
+}

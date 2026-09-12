@@ -20,7 +20,7 @@ func runReady(args []string) int {
 	under := fs.String("under", "", "restrict to descendants of the given issue id (prefix ok)")
 	limit := fs.Int("limit", cli.DefaultReadyLimit, "maximum number of issues to return; --limit 0 means no limit (return every ready issue). A capped ready set prints a WARNING to stderr naming how many issues were hidden.")
 	mine := fs.Bool("mine", false, "filter to issues already assigned to the calling node")
-	allHosts := fs.Bool("all-machines", false, "include issues pinned to OTHER machines. By default `act ready` returns only what this machine can run: an issue whose --host names a different machine is excluded and the count is reported on stderr and as the JSON `elsewhere` key. Pinned rows render as `@<label>` before the title under this flag. See `act machine` for this machine's label.")
+	allMachines := fs.Bool("all-machines", false, "include issues pinned to OTHER machines. By default `act ready` returns only what this machine can run: an issue pinned with `--machine` to a different machine is excluded, the count goes to stderr, and --json reports it as `machine.pinned_elsewhere`. Pinned rows render as `@<label>` before the title wherever they appear. See `act machine` for this machine's label and whether it is filtering at all — an unlabelled machine excludes nothing.")
 	as := fs.String("as", "", "override identity for --mine; defaults to .act/config.json node_id")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	// Phase 2 ticket 5: --fresh forces a fetch+rebase of .act/.git
@@ -86,7 +86,7 @@ func runReady(args []string) int {
 		Under:          *under,
 		Limit:          *limit,
 		AssigneeFilter: assigneeFilter,
-		AllMachines:    *allHosts,
+		AllMachines:    *allMachines,
 		AsJSON:         *asJSON,
 		Fresh:          *fresh || *noCache,
 		NoFetch:        *noFetch,

@@ -364,12 +364,13 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		ready = filtered
 	}
 
-	// Step 4c: the host filter. Runs LAST of the filters so `elsewhere`
-	// describes exactly the set the caller asked about — "of the rows
-	// matching your --under/--mine, N need another machine" — rather
-	// than a number about issues the caller never asked to see.
+	// Step 4c: the machine filter. Runs LAST of the filters so the
+	// pinned_elsewhere count describes exactly the set the caller asked
+	// about — "of the rows matching your --under/--mine, N need another
+	// machine" — rather than a number about issues the caller never
+	// asked to see.
 	//
-	// An issue with no host runs anywhere and is never dropped: the
+	// An issue with no machine runs anywhere and is never dropped: the
 	// field only ever SUBTRACTS from where work can run, so adding it
 	// cannot hide anything that was visible before someone pinned it.
 	me := ResolveMachine()
@@ -564,10 +565,13 @@ func formatReadyHumanAt(res ReadyResult, now time.Time) string {
 			claimed = relativeAge(r.ClaimedAt, now)
 		}
 		// A pinned row wears its label between the claimed-at column and
-		// the title. This only ever appears under --all-machines (the
-		// default view has no pinned rows left to mark), so the default
-		// format is byte-identical to what it has always been — which
-		// matters, because things parse it positionally.
+		// the title. It appears exactly when a pinned row survives into
+		// the listing at all: under --all-machines, or on a machine with
+		// no explicit label, where act fails open and filters nothing.
+		// On a labelled machine the default view has no pinned rows left
+		// to mark, so the format there is byte-identical to what it has
+		// always been — which matters, because things parse it
+		// positionally.
 		title := r.Title
 		if r.Machine != "" {
 			title = "@" + r.Machine + " " + title

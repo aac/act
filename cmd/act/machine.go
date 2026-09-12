@@ -75,8 +75,15 @@ func runMachine(args []string) int {
 		return emitMachineJSON(info, info.Path)
 	}
 	fmt.Printf("this machine: %s\n", info.Describe())
+	// A hostname-derived label is printed and never acted on, so saying
+	// only where it came from leaves out the part that bites: NOTHING is
+	// being excluded here. This is the command you run while setting a
+	// machine up -- before any pin exists for `act ready`'s stderr notice
+	// to fire on -- so it is the last place the fact can reach you in
+	// time. See MachineInfo.Explicit for why act fails open on a guess.
 	if info.Source == cli.MachineSourceHostname {
-		fmt.Printf("set a different label with: act machine --set <label>   (writes %s)\n", info.Path)
+		fmt.Printf("not filtering: this label is a guess from the hostname, so pins are NOT enforced here — `act ready` still returns issues pinned to other machines.\n")
+		fmt.Printf("name this machine to enforce pins: act machine --set <label>   (writes %s)\n", info.Path)
 	}
 	return 0
 }
