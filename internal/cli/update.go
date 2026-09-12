@@ -69,6 +69,13 @@ type UpdateOptions struct {
 	// `act dep add` rejects a cycle in the blocks subgraph.
 	Parent *string
 
+	// Host pins the issue to one machine, or un-pins it. nil means not
+	// supplied; a pointer to "" is the explicit CLEARING form
+	// (`act update <id> --host ""`), which returns the issue to "runs
+	// anywhere". A pointer to a label restricts `act ready`/`act next`
+	// to the machine carrying that label (act-2c7be3).
+	Host *string
+
 	// DescriptionAppend, when non-nil, appends its text to the issue's
 	// CURRENT description rather than replacing it (act-a79d66). act
 	// resolves the existing description server-side and writes a single
@@ -247,6 +254,19 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			Error:   "bad_flag",
 			Message: "act update: --offline and --push are mutually exclusive",
 		}, 2
+	}
+
+	// A host label is rejected here, at the flag boundary, so a typo
+	// surfaces as bad_flag with the offending value rather than as a
+	// written op (act-2c7be3). The empty string is the legitimate
+	// un-pinning form and passes.
+	if opts.Host != nil {
+		if herr := op.ValidateHostLabel("--host", *opts.Host); herr != nil {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: %v", herr),
+			}, 2
+		}
 	}
 
 	// Step 2a.2: --description and --description-append are contradictory
@@ -774,6 +794,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	if opts.Assignee != nil {
 		val, _ := json.Marshal(*opts.Assignee)
 		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "assignee", Value: val}); code != 0 {
+			return errOut, code
+		}
+	}
+	if opts.Host != nil {
+		val, _ := json.Marshal(*opts.Host)
+		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "host", Value: val}); code != 0 {
 			return errOut, code
 		}
 	}

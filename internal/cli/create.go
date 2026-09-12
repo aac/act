@@ -36,6 +36,11 @@ type CreateOptions struct {
 	Description string
 	// Accept is the (in-order) list of acceptance criteria.
 	Accept []string
+	// Host pins the new issue to one machine: `act ready`/`act next`
+	// on any other host exclude it. Empty (the default) means "runs
+	// anywhere". Set it at FILING time — the person filing is the one
+	// who knows (act-2c7be3).
+	Host string
 	// AsJSON toggles JSON envelope output. The closed-parent warning is
 	// suppressed from stderr when AsJSON is true (per §5.C.4).
 	AsJSON bool
@@ -182,6 +187,16 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Message: fmt.Sprintf("act create: --priority %d out of range [0,3]", priority),
 		}, 2
 	}
+	// A host label is rejected at the CLI boundary rather than deep in
+	// payload validation, so a typo surfaces as "bad_flag" with the
+	// offending value, not as a written op nobody can un-write
+	// (act-2c7be3).
+	if herr := op.ValidateHostLabel("--host", opts.Host); herr != nil {
+		return CreateErrorOutput{
+			Error:   "bad_flag",
+			Message: fmt.Sprintf("act create: %v", herr),
+		}, 2
+	}
 	// Universal write-flag conflict combinations exit 2 per spec §4.
 	if opts.NoCommit && opts.Push {
 		return CreateErrorOutput{
@@ -289,6 +304,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Type:        typ,
 			Parent:      parentFull,
 			Accept:      append([]string(nil), opts.Accept...),
+			Host:        opts.Host,
 			Nonce:       nonce,
 		}
 		id, perr := ids.PickUnique(payload, exists)

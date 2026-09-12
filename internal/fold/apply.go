@@ -137,6 +137,13 @@ func applyCreate(state *IssueState, env op.Envelope, payload []byte, fullHash st
 		state.Fields["parent"] = p.Parent
 		state.LastHLC["parent"] = stamp
 	}
+	// host is set only when the create pinned one. An absent field folds
+	// to "runs anywhere", which is exactly what every op written before
+	// the field existed means (act-2c7be3) — so no migration is needed.
+	if p.Host != "" {
+		state.Fields["host"] = p.Host
+		state.LastHLC["host"] = stamp
+	}
 	// Initialize accept list (may be empty).
 	accept := make([]string, len(p.Accept))
 	copy(accept, p.Accept)
@@ -177,7 +184,7 @@ func applyUpdateField(state *IssueState, env op.Envelope, payload []byte, fullHa
 
 func isAllowedUpdateField(name string) bool {
 	switch name {
-	case "title", "description", "priority", "assignee", "type", "parent":
+	case "title", "description", "priority", "assignee", "type", "parent", "host":
 		return true
 	}
 	return false

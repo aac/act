@@ -34,6 +34,7 @@ func runCreate(args []string) int {
 	fs.IntVar(priority, "p", 2, "issue priority (shorthand)")
 	parent := fs.String("parent", "", "parent issue id (full or unique prefix)")
 	typ := fs.String("type", "task", "issue type (task|bug|epic|chore)")
+	host := fs.String("host", "", "pin this issue to one machine at FILING time: `act ready` and `act next` on any OTHER host exclude it, while `act list` and `act show` still show it everywhere. Default (empty) is \"runs anywhere\" — set this only for work that genuinely cannot be done elsewhere. See `act host` for this machine's label.")
 	description := fs.String("description", "", "issue description (empty string is silently accepted as no-op-equivalent; the new issue is created without a description. Contrast 'act update --description \"\"' which explicitly clears an existing description — see act-f2c7).")
 	descriptionFile := fs.String("description-file", "", "read description from file (UTF-8); use - for stdin")
 	var accept stringSlice
@@ -120,6 +121,7 @@ func runCreate(args []string) int {
 		Parent:      *parent,
 		Description: *description,
 		Accept:      []string(accept),
+		Host:        *host,
 		AsJSON:      *asJSON,
 		NoCommit:    *noCommit,
 		Push:        *push,
