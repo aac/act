@@ -129,6 +129,25 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Machine_NextAllMachinesRequiresPeek",
 	},
 	{
+		// act-58947a: the flag's own help named a --host flag and a
+		// top-level `elsewhere` key, neither of which shipped. The
+		// claim tracked here is the JSON path a consumer actually
+		// reads, so the sweep goes red if the help drifts back off it.
+		name:         "ready-help-names-machine-pinned-elsewhere",
+		docFile:      "cmd/act/ready.go",
+		claimPattern: "--json reports it as `machine.pinned_elsewhere`",
+		testName:     "TestDocClaim_Machine_ReadyHelpNamesShippedContract",
+	},
+	{
+		// act-71708d: an accepted design-synth nit. Naming the source
+		// of the label is not naming its consequence, and on a guessed
+		// label the consequence is that nothing is excluded at all.
+		name:         "machine-unlabelled-says-not-filtering",
+		docFile:      "cmd/act/machine.go",
+		claimPattern: "not filtering: this label is a guess from the hostname",
+		testName:     "TestDocClaim_Machine_UnlabelledMachineSaysItIsNotFiltering",
+	},
+	{
 		name:         "spec-act-machine-resolution-order",
 		docFile:      "docs/spec.md",
 		claimPattern: "Layers 1 and 2 are **explicit**; only they cause",
