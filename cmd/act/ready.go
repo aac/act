@@ -20,6 +20,7 @@ func runReady(args []string) int {
 	under := fs.String("under", "", "restrict to descendants of the given issue id (prefix ok)")
 	limit := fs.Int("limit", cli.DefaultReadyLimit, "maximum number of issues to return; --limit 0 means no limit (return every ready issue). A capped ready set prints a WARNING to stderr naming how many issues were hidden.")
 	mine := fs.Bool("mine", false, "filter to issues already assigned to the calling node")
+	allHosts := fs.Bool("all-machines", false, "include issues pinned to OTHER machines. By default `act ready` returns only what this machine can run: an issue whose --host names a different machine is excluded and the count is reported on stderr and as the JSON `elsewhere` key. Pinned rows render as `@<label>` before the title under this flag. See `act machine` for this machine's label.")
 	as := fs.String("as", "", "override identity for --mine; defaults to .act/config.json node_id")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	// Phase 2 ticket 5: --fresh forces a fetch+rebase of .act/.git
@@ -85,6 +86,7 @@ func runReady(args []string) int {
 		Under:          *under,
 		Limit:          *limit,
 		AssigneeFilter: assigneeFilter,
+		AllMachines:    *allHosts,
 		AsJSON:         *asJSON,
 		Fresh:          *fresh || *noCache,
 		NoFetch:        *noFetch,
@@ -119,6 +121,12 @@ func runReady(args []string) int {
 	if notice := cli.FormatReadyTruncationNotice(res); notice != "" {
 		fmt.Fprint(os.Stderr, notice)
 	}
+	// Host exclusions go to stderr in BOTH modes for the same reason the
+	// truncation warning does: a `--json | jq '.count'` pipeline shows
+	// the human nothing else, and a count that silently omits work this
+	// machine cannot do is the bug this whole feature exists to fix
+	// (act-2c7be3).
+	fmt.Fprint(os.Stderr, cli.FormatReadyMachineNotice("act ready", res))
 	// A failed refresh is non-fatal (we served on-disk state) but must not
 	// be silent — same stderr-in-both-modes rule as the truncation notice
 	// above. act-3803ac.

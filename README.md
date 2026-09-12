@@ -79,6 +79,28 @@ $ act finish act-3c89 --reason "added --full flag; tests cover both truncation p
 The `Act-Id: act-3c89` trailer lets `act doctor` correlate work commits with closed issues
 across sessions and machines.
 
+### Work that can only happen on one machine
+
+Some tickets are pinned to a machine by their nature — a laptop's scheduled jobs, a
+credential only one box holds. Pin them at filing time and they stop being offered
+anywhere else:
+
+```sh
+$ act machine --set laptop       # once per machine; writes ~/.config/act/machine
+$ act create --machine laptop "drop ProcessType=Background from the laptop's act-sync plist"
+```
+
+`act ready` and `act next` then exclude that issue on every other machine and say so on
+stderr, while `act list` and `act show` still show it everywhere — it is hidden from the
+work queue, not from the tracker. `act ready --all-machines` shows it anyway. An issue
+with no `--machine` runs anywhere, which is the default and what every issue filed before
+this existed means.
+
+**act will not filter on a guess.** If a machine has no explicit label — no `$ACT_MACHINE`
+and no `~/.config/act/machine` — act reports the hostname it inferred, filters nothing, and
+tells you to name the machine. A label that matched nothing would hide pinned work on every
+machine at once, and would suppress its own warning by doing so.
+
 ## Installing
 
 Installing the plugin is the canonical path — it bundles the binary, the skill, and the

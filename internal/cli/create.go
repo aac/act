@@ -36,11 +36,11 @@ type CreateOptions struct {
 	Description string
 	// Accept is the (in-order) list of acceptance criteria.
 	Accept []string
-	// Host pins the new issue to one machine: `act ready`/`act next`
+	// Machine pins the new issue to one machine: `act ready`/`act next`
 	// on any other host exclude it. Empty (the default) means "runs
 	// anywhere". Set it at FILING time — the person filing is the one
 	// who knows (act-2c7be3).
-	Host string
+	Machine string
 	// AsJSON toggles JSON envelope output. The closed-parent warning is
 	// suppressed from stderr when AsJSON is true (per §5.C.4).
 	AsJSON bool
@@ -191,7 +191,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	// payload validation, so a typo surfaces as "bad_flag" with the
 	// offending value, not as a written op nobody can un-write
 	// (act-2c7be3).
-	if herr := op.ValidateHostLabel("--host", opts.Host); herr != nil {
+	if herr := op.ValidateMachineLabel("--machine", opts.Machine); herr != nil {
 		return CreateErrorOutput{
 			Error:   "bad_flag",
 			Message: fmt.Sprintf("act create: %v", herr),
@@ -304,7 +304,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Type:        typ,
 			Parent:      parentFull,
 			Accept:      append([]string(nil), opts.Accept...),
-			Host:        opts.Host,
+			Machine:     opts.Machine,
 			Nonce:       nonce,
 		}
 		id, perr := ids.PickUnique(payload, exists)

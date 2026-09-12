@@ -62,7 +62,7 @@ type CreatePayload struct {
 	Type        string   `json:"type"`
 	Parent      string   `json:"parent"`
 	Accept      []string `json:"accept"`
-	// Host rides this struct because the create OP BODY is marshalled
+	// Machine rides this struct because the create OP BODY is marshalled
 	// from it (internal/cli/create.go step 6), not because a machine
 	// label ought to shape an id. `omitempty` is what keeps that honest:
 	// an unpinned create — every create act has ever written — produces
@@ -70,8 +70,8 @@ type CreatePayload struct {
 	// golden op changes and no existing id is affected. Only a create
 	// that pins a host at filing time derives its id from a payload
 	// including one, which is a brand-new code path (act-2c7be3).
-	Host  string `json:"host,omitempty"`
-	Nonce string `json:"nonce"`
+	Machine string `json:"machine,omitempty"`
+	Nonce   string `json:"nonce"`
 }
 
 // NewNonce returns a fresh 32-character lowercase-hex nonce drawn from

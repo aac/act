@@ -43,6 +43,25 @@ type ReadyOptions struct {
 	// before reading state, regardless of FETCH_HEAD freshness. Wired by
 	// `act ready --fresh` and the `--no-cache` alias (Phase 2 ticket 5).
 	Fresh bool
+	// AllMachines, when true, turns OFF the host filter and returns issues
+	// pinned to other machines alongside local ones. Wired by
+	// `act ready --all-machines` / `act next --all-machines`.
+	//
+	// The filter is ON by default, and that is the load-bearing choice
+	// (act-2c7be3). /orchestrate is tracker-agnostic: it shells out to
+	// `act ready` with no act-specific flags, so default-on fixes it —
+	// and every future caller — with no change to the command, the
+	// skill, or anything else. Opt-in would have fixed only the callers
+	// someone remembered to update, which is the failure this exists to
+	// end: on 2026-09-11 eleven consecutive /orchestrate captains were
+	// launched into a queue whose every ready row needed the other
+	// machine.
+	AllMachines bool
+	// MachineOverride, when non-empty, answers "ready for THIS label"
+	// instead of for this machine. Set from ACT_MACHINE by ResolveMachine in
+	// normal use; exposed as a field so tests can pin a label without
+	// mutating process environment.
+	MachineOverride string
 	// NoFetch, when true, makes this a genuinely non-mutating read: the
 	// cache layer skips the fetch+rebase entirely and the command
 	// answers from on-disk state (act-3803ac). Wired by `--no-fetch`;
@@ -69,6 +88,11 @@ type ReadyIssue struct {
 	Assignee  string `json:"assignee,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 	ClaimedAt string `json:"claimed_at,omitempty"`
+	// Machine is the machine this issue is pinned to, or "" for the
+	// default "runs anywhere". Present so a caller reading
+	// --all-machines output can tell the rows apart without an
+	// `act show` per id.
+	Machine string `json:"machine,omitempty"`
 }
 
 // ReadyResult is the JSON-serialisable success envelope. The shape is
@@ -92,11 +116,51 @@ type ReadyResult struct {
 	Total int `json:"total"`
 	// Truncated reports whether Limit dropped ready issues.
 	Truncated bool `json:"truncated"`
+	// Machine carries everything a consumer needs to understand the
+	// machine filter: who this machine is, whether the filter ran, and
+	// how many rows need another machine (act-2c7be3).
+	//
+	// It is ONE always-emitted nested object rather than flat siblings,
+	// for two reasons. Feature detection is `"machine" in doc` — a
+	// genuinely absent key on a binary that predates this, not a promise
+	// that nobody ever adds `omitempty` to an int. And the facts have to
+	// be present or absent TOGETHER: a consumer that learned the count
+	// but not whether the filter ran would read a confident `0` from a
+	// caller that passed --all-machines.
+	Machine MachineFilter `json:"machine"`
 	// Refresh reports what the read-path cache layer did before this
 	// answer was produced — served from cache, freshly fetched, skipped
 	// under --no-fetch, or failed. Omitted when there is nothing to say
 	// (no .act/ at all). act-3803ac.
 	Refresh *RefreshInfo `json:"refresh,omitempty"`
+}
+
+// MachineFilter is the `machine` object on a ReadyResult.
+//
+// Filtered is the bit that stops a zero from lying. PinnedElsewhere is an
+// honest count of rows needing another machine EITHER WAY: when the filter
+// ran it counts what was dropped, and when it did not it counts what was
+// let through. So "7 rows here need another machine" is answerable without
+// knowing which mode produced the answer — the rules/09
+// differentiate-on-cause requirement applied to our own envelope.
+//
+// Filtered is false in two situations a consumer must tell apart, and
+// Source is what tells them: --all-machines was passed (Source is
+// "ACT_MACHINE" or "config"), or this machine was never named so act
+// refused to filter on a guess (Source is "hostname"). See
+// MachineInfo.Explicit for why the second fails open.
+type MachineFilter struct {
+	// Label is this machine's resolved label.
+	Label string `json:"label"`
+	// Source is one of MachineSourceEnv, MachineSourceConfig,
+	// MachineSourceHostname.
+	Source string `json:"source"`
+	// Filtered reports whether pinned-elsewhere rows were actually
+	// excluded from Ready.
+	Filtered bool `json:"filtered"`
+	// PinnedElsewhere counts ready rows pinned to a machine other than
+	// Label — dropped when Filtered, still present in Ready when not.
+	PinnedElsewhere int `json:"pinned_elsewhere"`
 }
 
 // ReadyErrorOutput is the failure envelope. Candidates is non-nil only on
@@ -300,6 +364,38 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 		ready = filtered
 	}
 
+	// Step 4c: the host filter. Runs LAST of the filters so `elsewhere`
+	// describes exactly the set the caller asked about — "of the rows
+	// matching your --under/--mine, N need another machine" — rather
+	// than a number about issues the caller never asked to see.
+	//
+	// An issue with no host runs anywhere and is never dropped: the
+	// field only ever SUBTRACTS from where work can run, so adding it
+	// cannot hide anything that was visible before someone pinned it.
+	me := ResolveMachine()
+	if opts.MachineOverride != "" {
+		me = MachineInfo{Label: opts.MachineOverride, Source: MachineSourceEnv, Path: me.Path}
+	}
+	// Fail open: filter ONLY when this machine was actually named. An
+	// unconfigured machine behaves exactly as act did before this field
+	// existed. See MachineInfo.Explicit for the failure that prevents.
+	doFilter := !opts.AllMachines && me.Explicit()
+	pinnedElsewhere := 0
+	kept := ready[:0]
+	for _, r := range ready {
+		if MachineMatches(r.Machine, me.Label) {
+			kept = append(kept, r)
+			continue
+		}
+		pinnedElsewhere++
+		if !doFilter {
+			// Counted, but let through: either the caller asked for
+			// everything, or act has no business filtering on a guess.
+			kept = append(kept, r)
+		}
+	}
+	ready = kept
+
 	// Step 5: sort by priority asc, created_at desc, id asc.
 	sort.SliceStable(ready, func(i, j int) bool {
 		a, b := ready[i], ready[j]
@@ -346,12 +442,75 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 			Assignee:  r.Assignee,
 			CreatedAt: r.CreatedAt,
 			ClaimedAt: r.ClaimedAt,
+			Machine:   r.Machine,
 		})
 	}
 	out.Count = len(out.Ready)
 	out.Total = total
 	out.Truncated = truncated
+	out.Machine = MachineFilter{
+		Label:           me.Label,
+		Source:          me.Source,
+		Filtered:        doFilter,
+		PinnedElsewhere: pinnedElsewhere,
+	}
 	return out, 0
+}
+
+// FormatReadyMachineNotice returns the stderr notice about issues pinned
+// to another machine, or "" when there is nothing to say. cmd is the
+// subcommand printing it ("act ready", "act next"), because both print
+// this and a notice that says "act ready:" during an `act next` sends the
+// reader to the wrong command.
+//
+// Two different notices, one function, because they are two different
+// facts a reader must tell apart (rules/09):
+//
+//   - Rows WERE excluded. Say how many, and NAME THE LABEL AND ITS SOURCE.
+//     The source is not decoration: it is the difference between "of
+//     course, that is laptop work" and "why does this machine think it is
+//     called andrews-mbp", and only one of those needs action.
+//   - Rows were NOT excluded because this machine was never named. This is
+//     the fail-open path, and staying silent here would be the worst of
+//     both worlds — the pins would look like they were being honoured
+//     while every one of them was being ignored.
+//
+// It goes to stderr in both human and --json mode, matching the
+// truncation and refresh notices: `act ready --json | jq` swallows
+// stdout, and anything added to the row stream corrupts the parse.
+func FormatReadyMachineNotice(cmd string, res ReadyResult) string {
+	m := res.Machine
+	if m.PinnedElsewhere <= 0 {
+		return ""
+	}
+	noun := "ready issues are"
+	verb := "were"
+	if m.PinnedElsewhere == 1 {
+		noun = "ready issue is"
+		verb = "was"
+	}
+	info := MachineInfo{Label: m.Label, Source: m.Source, Path: MachineConfigPath()}
+	if !m.Filtered && m.Source == MachineSourceHostname {
+		return fmt.Sprintf(
+			"%s: %d %s pinned to a machine, and NOTHING %s excluded — this machine has no label.\n"+
+				"  guessed: %s\n"+
+				"  name it so pins take effect: act machine --set <label>\n",
+			cmd, m.PinnedElsewhere, noun, verb, info.Describe(),
+		)
+	}
+	if !m.Filtered {
+		return fmt.Sprintf(
+			"%s: %d %s pinned to another machine and shown anyway (--all-machines).\n"+
+				"  this machine: %s\n",
+			cmd, m.PinnedElsewhere, noun, info.Describe(),
+		)
+	}
+	return fmt.Sprintf(
+		"%s: %d %s pinned to another machine and %s excluded.\n"+
+			"  this machine: %s\n"+
+			"  see them with: act ready --all-machines\n",
+		cmd, m.PinnedElsewhere, noun, verb, info.Describe(),
+	)
 }
 
 // FormatReadyTruncationNotice returns the one-line warning that must
@@ -404,7 +563,16 @@ func formatReadyHumanAt(res ReadyResult, now time.Time) string {
 		if r.ClaimedAt != "" {
 			claimed = relativeAge(r.ClaimedAt, now)
 		}
-		fmt.Fprintf(&b, "%s %d %s %s %s\n", r.ShortID, r.Priority, assignee, claimed, r.Title)
+		// A pinned row wears its label between the claimed-at column and
+		// the title. This only ever appears under --all-machines (the
+		// default view has no pinned rows left to mark), so the default
+		// format is byte-identical to what it has always been — which
+		// matters, because things parse it positionally.
+		title := r.Title
+		if r.Machine != "" {
+			title = "@" + r.Machine + " " + title
+		}
+		fmt.Fprintf(&b, "%s %d %s %s %s\n", r.ShortID, r.Priority, assignee, claimed, title)
 	}
 	return b.String()
 }

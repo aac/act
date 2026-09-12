@@ -50,7 +50,7 @@ func runUpdate(args []string) int {
 	statusFlag := fs.String("status", "", "new status: `--status open` releases a claim (returns an in_progress issue to open and clears the assignee, same as --unclaim; a closed issue needs `act reopen`, not this); 'blocked' is derived from blocked-by dep edges, not directly settable — use `act dep add --blocked-by <blocker-id>` to create the dep (issue status follows automatically); use --claim for in_progress; `act close` for closed")
 	priorityFlag := fs.Int("priority", -1, "new priority [0..3]")
 	assigneeFlag := fs.String("assignee", "", "new assignee (empty string clears)")
-	hostFlag := fs.String("host", "", "pin this issue to one machine: `act ready` and `act next` on any OTHER host exclude it, while `act list` and `act show` still show it everywhere. The empty string un-pins (back to the default, \"runs anywhere\"). The label is compared case-insensitively against this machine's own label — see `act host`.")
+	machineFlag := fs.String("machine", "", "pin this issue to one machine: `act ready` and `act next` on any OTHER machine exclude it, while `act list` and `act show` still show it everywhere. The empty string un-pins (back to the default, \"runs anywhere\"). The label is compared case-insensitively against this machine's own label — see `act machine`.")
 	descriptionFlag := fs.String("description", "", "new description (empty string explicitly clears the existing description. Contrast 'act create --description \"\"' which is silently accepted as a no-op — see act-f2c7).")
 	descriptionFileFlag := fs.String("description-file", "", "read new description from file (UTF-8); use - for stdin")
 	descriptionAppendFlag := fs.String("description-append", "", "append this text to the existing description instead of replacing it, separated by a blank line. This is the note-append path: `act update <id> --description-append \"...\"` annotates an issue in one command, with no read-modify-write of the whole body. Mutually exclusive with --description and --description-file.")
@@ -142,9 +142,9 @@ func runUpdate(args []string) int {
 		a := *assigneeFlag
 		opts.Assignee = &a
 	}
-	if visited["host"] {
-		h := *hostFlag
-		opts.Host = &h
+	if visited["machine"] {
+		m := *machineFlag
+		opts.Machine = &m
 	}
 	// --description-file is mutually exclusive with --description (per
 	// act-6bbd acceptance criterion). If both are set, exit 2 before any

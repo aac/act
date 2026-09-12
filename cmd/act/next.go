@@ -47,8 +47,27 @@ func runNext(args []string) int {
 	limit := fs.Int("limit", 50, "maximum number of ready candidates to consider")
 	isolated := fs.Bool("isolated", false, "offline mode for the claim: commit but no network ops")
 	peek := fs.Bool("peek", false, "read-only: show the issue `act next` would claim, and claim nothing")
+	allMachines := fs.Bool("all-machines", false, "survey across machines: show what would be claimed if pins were ignored. Requires --peek, because `act next` CLAIMS, and claiming an issue pinned to another machine hides it from BOTH machines at once (the claim makes it in_progress, and only open issues are ready anywhere). To take such an issue deliberately: `act ready --all-machines` to find it, then `act update <id> --claim`.")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	// --all-machines reaches the CLAIMING path, and that is a trap worth
+	// refusing rather than documenting. The head of an unfiltered
+	// frontier is often the pinned-elsewhere row — in the queue that
+	// motivated this feature the top-priority row is laptop-only — and
+	// claiming it sets status=in_progress, which removes it from the
+	// ready set on EVERY machine, because `ready` admits only open
+	// issues. One keystroke would hide a ticket from the machine that
+	// cannot do it AND from the machine that can, with nothing to undo it
+	// but a human running `act update --unclaim`. So the flag is allowed
+	// only on the read-only path.
+	if *allMachines && !*peek {
+		emitBadFlag(*asJSON, "act next: --all-machines requires --peek, because `act next` claims, "+
+			"and claiming an issue pinned to another machine hides it from both machines "+
+			"(a claim makes it in_progress, and only open issues are ready anywhere). "+
+			"Survey with `act next --peek --all-machines` or `act ready --all-machines`; "+
+			"take one deliberately with `act update <id> --claim`.")
 		return 2
 	}
 
@@ -64,9 +83,10 @@ func runNext(args []string) int {
 	// Step 1: gather the ready frontier (filtered by --under), ordered by
 	// priority — the same set `act ready` returns.
 	readyOut, code := cli.RunReady(root, cli.ReadyOptions{
-		Under:  *under,
-		Limit:  *limit,
-		AsJSON: true,
+		Under:       *under,
+		Limit:       *limit,
+		AllMachines: *allMachines,
+		AsJSON:      true,
 	})
 	if code != 0 {
 		m, _ := toMap(readyOut)
@@ -81,8 +101,13 @@ func runNext(args []string) int {
 		})
 		return 1
 	}
+	// Say why the frontier is empty when the reason is host affinity —
+	// otherwise a worker reports "no ready work" for a queue that is
+	// full of work for the other machine, which is exactly the silence
+	// that cost eleven captains on 2026-09-11 (act-2c7be3).
+	fmt.Fprint(os.Stderr, cli.FormatReadyMachineNotice("act next", res))
 	if len(res.Ready) == 0 {
-		return emitNextNoClaim(*asJSON, []cli.ReadyIssue{})
+		return emitNextNoClaim(*asJSON, []cli.ReadyIssue{}, res.Machine)
 	}
 
 	// --peek: show the top candidate and stop. No claim is attempted, so
@@ -108,7 +133,7 @@ func runNext(args []string) int {
 		if pick == nil {
 			// Every candidate lost its race; surface the frontier so the
 			// caller can re-run or pick manually.
-			return emitNextNoClaim(*asJSON, res.Ready)
+			return emitNextNoClaim(*asJSON, res.Ready, res.Machine)
 		}
 
 		// Step 2: attempt the atomic claim.
@@ -237,7 +262,7 @@ func emitNextPeek(asJSON bool, root string, pick cli.ReadyIssue) int {
 // "candidates": [...]} under --json, or a human line. candidates is the
 // (possibly empty) ready frontier the caller can fall back to. Always
 // exit 0 — an empty or fully-contended frontier is not an error.
-func emitNextNoClaim(asJSON bool, candidates []cli.ReadyIssue) int {
+func emitNextNoClaim(asJSON bool, candidates []cli.ReadyIssue, machine cli.MachineFilter) int {
 	if candidates == nil {
 		candidates = []cli.ReadyIssue{}
 	}
@@ -245,6 +270,11 @@ func emitNextNoClaim(asJSON bool, candidates []cli.ReadyIssue) int {
 		data, jerr := json.Marshal(map[string]any{
 			"claimed":    false,
 			"candidates": candidates,
+			// The machine object rides the empty answer too: a JSON
+			// consumer that sees an empty frontier must be able to tell
+			// "nothing to do" from "everything here is for the other
+			// machine" without a second call (act-2c7be3).
+			"machine": machine,
 		})
 		if jerr != nil {
 			fmt.Fprintf(os.Stderr, "act next: json marshal: %v\n", jerr)

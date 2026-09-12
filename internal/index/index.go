@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS issues (
     claimed_at    TEXT,
     closed_at     TEXT,
     closed_reason TEXT,
-    host          TEXT,
+    machine       TEXT,
     tombstoned    INTEGER DEFAULT 0
 );
 
@@ -210,7 +210,7 @@ var expectedColumns = map[string][]struct{ name, sqlType string }{
 		{"claimed_at", "TEXT"},
 		{"closed_at", "TEXT"},
 		{"closed_reason", "TEXT"},
-		{"host", "TEXT"},
+		{"machine", "TEXT"},
 		{"tombstoned", "INTEGER DEFAULT 0"},
 	},
 }
@@ -364,10 +364,10 @@ type Row struct {
 	ClaimedAt    string
 	ClosedAt     string
 	ClosedReason string
-	// Host pins the issue to one machine. Empty means "runs anywhere",
+	// Machine pins the issue to one machine. Empty means "runs anywhere",
 	// which is what every issue filed before the field existed folds to
 	// (act-2c7be3). Compared case-insensitively by every consumer.
-	Host         string
+	Machine      string
 	Accept       []string
 	Deps         []Dep
 	ExternalDeps []string
@@ -662,16 +662,16 @@ func upsertTx(tx *sql.Tx, state *fold.IssueState) error {
 	claimedAt, _ := rendered["claimed_at"].(string)
 	closedAt, _ := rendered["closed_at"].(string)
 	closedReason, _ := rendered["closed_reason"].(string)
-	host, _ := rendered["host"].(string)
+	machine, _ := rendered["machine"].(string)
 	priority := coerceInt(rendered["priority"])
 
 	if _, err := tx.Exec(`
         INSERT INTO issues (
             id, title, description, status, priority, type, parent, assignee,
-            created_at, claimed_at, closed_at, closed_reason, host, tombstoned
+            created_at, claimed_at, closed_at, closed_reason, machine, tombstoned
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `, id, title, description, status, priority, itype, parent, assignee,
-		createdAt, claimedAt, closedAt, closedReason, host); err != nil {
+		createdAt, claimedAt, closedAt, closedReason, machine); err != nil {
 		return fmt.Errorf("index: insert issues row %s: %w", id, err)
 	}
 
@@ -807,7 +807,7 @@ func (i *Index) ListAll(filter Filter) ([]Row, error) {
 	}
 	q := `
         SELECT id, title, description, status, priority, type, parent,
-               assignee, created_at, claimed_at, closed_at, closed_reason, host
+               assignee, created_at, claimed_at, closed_at, closed_reason, machine
           FROM issues
          WHERE ` + strings.Join(where, " AND ") + `
          ORDER BY priority ASC, id ASC
@@ -839,7 +839,7 @@ func (i *Index) ListAll(filter Filter) ([]Row, error) {
 func (i *Index) Get(id string) (Row, error) {
 	row := i.db.QueryRow(`
         SELECT id, title, description, status, priority, type, parent,
-               assignee, created_at, claimed_at, closed_at, closed_reason, host
+               assignee, created_at, claimed_at, closed_at, closed_reason, machine
           FROM issues
          WHERE id = ? AND tombstoned = 0
     `, id)
@@ -863,11 +863,11 @@ func scanInto(s scanner) (Row, error) {
 	var (
 		title, description, status, itype, parent, assignee sql.NullString
 		createdAt, claimedAt, closedAt, closedReason        sql.NullString
-		host                                                sql.NullString
+		machine                                             sql.NullString
 		priority                                            sql.NullInt64
 	)
 	if err := s.Scan(&r.ID, &title, &description, &status, &priority, &itype, &parent,
-		&assignee, &createdAt, &claimedAt, &closedAt, &closedReason, &host); err != nil {
+		&assignee, &createdAt, &claimedAt, &closedAt, &closedReason, &machine); err != nil {
 		return Row{}, err
 	}
 	r.Title = title.String
@@ -880,7 +880,7 @@ func scanInto(s scanner) (Row, error) {
 	r.ClaimedAt = claimedAt.String
 	r.ClosedAt = closedAt.String
 	r.ClosedReason = closedReason.String
-	r.Host = host.String
+	r.Machine = machine.String
 	r.Priority = int(priority.Int64)
 	return r, nil
 }

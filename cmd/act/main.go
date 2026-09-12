@@ -162,8 +162,8 @@ func main() {
 		os.Exit(runHarvest(args))
 	case "remote":
 		os.Exit(runRemote(args))
-	case "host":
-		os.Exit(runHost(args))
+	case "machine":
+		os.Exit(runMachine(args))
 	case "-h", "--help":
 		usage()
 		os.Exit(0)

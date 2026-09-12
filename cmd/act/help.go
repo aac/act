@@ -44,9 +44,11 @@ func runHelpTo(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprint(stdout, helpOpsModel)
 	case "errors", "error", "error-envelope":
 		fmt.Fprint(stdout, helpErrors)
+	case "machines", "machine", "hosts":
+		fmt.Fprint(stdout, helpMachines)
 	default:
 		fmt.Fprintf(stderr, "act help: unknown topic %q\n", rest[0])
-		fmt.Fprintln(stderr, "topics: workflow, ops-model, errors")
+		fmt.Fprintln(stderr, "topics: workflow, ops-model, errors, machines")
 		return 2
 	}
 	return 0
@@ -82,7 +84,7 @@ GETTING STARTED
   agent sessions. See README.md for the rationale and the tradeoffs.
 
 THE CANONICAL WORK LOOP (use this in every session)
-  1. act ready                    # what's unblocked, ordered by priority
+  1. act ready                    # what's unblocked HERE, ordered by priority
   2. act update --claim <id>      # take it (atomic; concurrent claimers
                                   #          resolve via last-write-wins)
   3. <do the work, write tests, run them>
@@ -156,6 +158,7 @@ IDENTITY
   composed tools resolve identity automatically.
 
 DEEPER DIVES
+  act help machines         # work that can only run on one machine
   act help workflow         # the loop in detail with copy-pastable examples
   act help ops-model        # how the op log folds into state
   act help errors           # error-envelope contract (--json error shape & codes)
@@ -858,4 +861,84 @@ AN OP WHOSE COMMIT FAILED IS INVISIBLE
   back under .act/ops/ and commit it to replay the write verbatim, or
   ignore it and simply re-run the command — re-running is safe here,
   precisely because nothing was recorded.
+`
+
+// helpMachines is `act help machines`: the whole machine-affinity contract
+// in one screen, for an agent that has just been told a queue is empty and
+// wants to know whether to believe it (act-2c7be3).
+const helpMachines = `WORK THAT CAN ONLY RUN ON ONE MACHINE
+
+  An issue can be PINNED to a machine. 'act ready' and 'act next' on any
+  OTHER machine exclude it; 'act list' and 'act show' still show it
+  everywhere. The point is to keep a work queue honest: a ticket that can
+  only be done on the laptop is not ready work on the mini, and offering
+  it there costs a session that surveys, finds nothing it can do, and
+  exits.
+
+  The default is "runs anywhere", and every issue filed before this
+  existed means exactly that. A pin only ever SUBTRACTS from where work
+  can run.
+
+PINNING
+
+    act create --machine laptop "..."   # at filing time — when it is known
+    act update <id> --machine laptop    # later
+    act update <id> --machine ""        # un-pin
+
+  Labels are free-form: printable ASCII, no spaces, 64 bytes or less,
+  compared case-insensitively.
+
+THIS MACHINE'S LABEL
+
+    act machine                # print it, and where it came from
+    act machine --set mini     # name this machine
+
+  Resolution order: $ACT_MACHINE, then $XDG_CONFIG_HOME/act/machine
+  (default ~/.config/act/machine), then the short hostname.
+
+  act SHIPS NO MAPPING from hostnames to labels — it cannot know your
+  fleet. It ships the mechanism; you name the machines.
+
+WHEN A MACHINE HAS NO LABEL, NOTHING IS EXCLUDED
+
+  Only an EXPLICIT label (the env var or the config file) filters. A
+  label merely inferred from the hostname is printed and never acted on,
+  because it can change underneath you — an OS rename, a lost config
+  file — and a label matching nothing would hide every pinned issue on
+  every machine at once, while suppressing the very warning that would
+  have told you: a queue whose ready count fell to zero is one nothing
+  launches into, so nobody would ever run 'act ready' there to see it.
+  So act fails open and says so.
+
+READING THE OUTPUT
+
+  Excluded rows are reported on stderr, in both human and --json mode:
+
+    act ready: 7 ready issues are pinned to another machine and were excluded.
+      this machine: "mini" (from /Users/you/.config/act/machine)
+      see them with: act ready --all-machines
+
+  --json carries a 'machine' object: {label, source, filtered,
+  pinned_elsewhere}. It is ALWAYS present, so its absence means the act
+  you are talking to predates machine affinity. 'filtered' says whether
+  rows were actually excluded; 'pinned_elsewhere' counts rows needing
+  another machine either way. Pinned rows carry their own 'machine' key
+  and render as '@label' in the human listing.
+
+SURVEYING, AND THE ONE THING NOT TO DO
+
+    act ready --all-machines          # see everything
+    act next --peek --all-machines    # what another machine would take
+
+  'act next --all-machines' WITHOUT --peek is refused. 'act next' claims,
+  and claiming an issue pinned elsewhere makes it in_progress — which
+  removes it from the ready set on EVERY machine, including the one that
+  could have done it. Take one deliberately with 'act update <id> --claim'.
+
+TWO-MACHINE WORK
+
+  A ticket needing two machines at once cannot be pinned honestly: no
+  single label is true. Split it into one ticket per machine with a
+  blocks edge. If it genuinely cannot be split, leave it unpinned and say
+  which machines it needs in the description.
 `

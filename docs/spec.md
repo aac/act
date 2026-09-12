@@ -34,6 +34,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
 | `created_at` | Yes | Derived from create-op HLC; required for compaction age threshold. |
 | `closed_at` | Yes | Derived from close-op HLC; required for `closed_by_tree` reverse index. |
 | `closed_reason` | Yes | W3 sets it; doctor uses it to distinguish abandoned vs completed. |
+| `machine` | Yes | A ticket that can only be done on one machine is not ready on the others; without this the constraint lives in prose in the title and every consumer has to parse it. Empty means "runs anywhere", which is the default and what every op written before the field folds to. |
 | labels/tags | **Dropped** | W1-W3 never need free-form tagging; `type` + `parent` cover grouping. Reintroduce only if a concrete workflow demands it. |
 | estimate / time-tracking | **Dropped** | Anti-goal in brief. |
 | comments | **Dropped** | Description edits + child issues cover the discussion need. |
@@ -56,6 +57,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
   "blocked_by": ["act-...", "..."],             // bare ids from deps where edge_type=blocks (derived)
   "blocks":     ["act-...", "..."],             // bare ids of issues that list this issue as a blocks parent (reverse scan)
   "assignee":     "string | null",             // default null; free-form (human handle or agent role)
+  "machine":      "string | null",             // default null = runs anywhere; a machine label (printable ASCII, no spaces, <=64 bytes). Compared case-insensitively against the running machine's own label; `act ready`/`act next` exclude a non-matching issue, `act list`/`act show` never do
   "acceptance_criteria": [
     { "text": "string, 1..500 chars", "done": false }
   ],
@@ -236,7 +238,7 @@ Tables (rebuilt from ops; never source of truth):
 ```
 issues(
   id TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT, priority INT,
-  type TEXT, parent TEXT, assignee TEXT,
+  type TEXT, parent TEXT, assignee TEXT, machine TEXT,
   created_at TEXT, closed_at TEXT, closed_reason TEXT,
   closed_by_tree TEXT
 )
@@ -628,7 +630,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act create <title>`
 
-**Synopsis:** `act create <title> [-p N] [--parent ID] [--blocked-by ID]... [--blocks ID]... [--accept "criteria"]... [--type T] [--description "text"] [--json]` plus universal flags.
+**Synopsis:** `act create <title> [-p N] [--parent ID] [--blocked-by ID]... [--blocks ID]... [--accept "criteria"]... [--type T] [--machine LABEL] [--description "text"] [--json]` plus universal flags.
 
 **Flags:**
 - `-p, --priority N` (int 0..3, default 2). 0 is highest.
@@ -637,7 +639,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--blocks ID` (string, repeatable). The new issue blocks each existing ID — the inverse direction; each existing ID's deps grow so it waits on the new issue. An ID appearing in both `--blocked-by` and `--blocks` is a 2-cycle → exit 2. Duplicates within a flag fold to one edge.
 - `--accept "criteria"` (string, repeatable). Each invocation appends one acceptance-criterion string.
 - `--type T` (enum task|bug|epic|chore, default task).
-- `--description "text"` (string, default "").
+- `--machine LABEL` (string, default ""). Pins the new issue to one machine: `act ready`/`act next` on any other machine exclude it, while `act list`/`act show` show it everywhere. The default, empty, means "runs anywhere". Filing time is when the constraint is known, which is why the flag lives here and not only on `act update`. Label rules: printable ASCII, no spaces or control characters, ≤64 bytes; a violation is exit 2 at the flag boundary, never a written op.
 - `--json` (bool, default false for humans, true under MCP).
 
 **Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `post-create` hook, then op-commits unless `--no-commit`.
@@ -717,9 +719,9 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act update <id>`
 
-**Synopsis:** `act update <id> [--title T] [--status X] [--priority N] [--type T] [--parent ID] [--assignee Y] [--description T] [--description-append T] [--description-append-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+**Synopsis:** `act update <id> [--title T] [--status X] [--priority N] [--type T] [--parent ID] [--assignee Y] [--machine LABEL] [--description T] [--description-append T] [--description-append-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
 
-`act update` reaches every one of the six LWW-per-field updatable fields the fold table in §3 names — `title`, `description`, `priority`, `type`, `assignee`, `parent`. This is normative: a field the fold merges per-field MUST have a write path on both the CLI and MCP surfaces, or the storage layer supports a state no caller can reach. Title, type and parent were added in act-3e21b8 to close exactly that gap.
+`act update` reaches every one of the seven LWW-per-field updatable fields the fold table in §3 names — `title`, `description`, `priority`, `type`, `assignee`, `parent`, `machine`. This is normative: a field the fold merges per-field MUST have a write path on both the CLI and MCP surfaces, or the storage layer supports a state no caller can reach. Title, type and parent were added in act-3e21b8 to close exactly that gap.
 
 **Flags:**
 - `--title T` (string). REPLACES the title; ≤256 bytes, matching `act create`. Non-empty is required — unlike `--assignee`/`--description`, `--title ""` is exit 2 rather than a clear, because every `act list` / `act ready` row renders the title and nothing else of the body. Retitling is deliberately cheap: a title that has gone stale misleads every dispatcher before they reach the correcting text in the description.
@@ -728,6 +730,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--type T` (enum task|bug|epic|chore). Any other value → exit 2 with `bad_flag`; the closed set matches `act create --type`.
 - `--parent ID` (string). Sets the hierarchy parent — NOT a dep edge; use `act dep add` for blocking. Resolved through the id-resolution pipeline, so a prefix works (unknown → exit 3, ambiguous → exit 2). `--parent ""` detaches the issue from its parent. An issue naming itself, or a value whose existing parent chain already reaches this issue, → exit 2 with `cycle_detected`: `act doctor`'s `cycle` check walks the *blocks* subgraph only, so a parent cycle has no downstream detector and is refused at the write path instead.
 - `--assignee Y` (string; empty string clears).
+- `--machine LABEL` (string). Pins the issue to one machine, or un-pins it: `--machine ""` returns it to the default, "runs anywhere". Same label rules as `act create --machine`. Compared case-insensitively against the running machine's own label (`act machine`).
 - `--description T` (string). REPLACES the body.
 - `--description-file <path|->` (string). Reads the replacement body from a file, or from stdin for `-`. Mutually exclusive with `--description`.
 - `--description-append T` (string). APPENDS to the existing body, separated by one blank line, resolving the current body server-side — the note-append path, so annotating an issue is one command rather than a read-modify-write of the whole body. Mutually exclusive with both replace flags.
@@ -810,22 +813,30 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 ### `act ready`
 
-**Synopsis:** `act ready [--under <id>] [--json] [--limit N]`
+**Synopsis:** `act ready [--under <id>] [--json] [--limit N] [--all-machines]`
 
 **Flags:**
 - `--under <id>` (string, optional). Restrict output to descendants (via `parent` edges) of this id.
 - `--json` (bool).
 - `--limit N` (int, default 50). `--limit 0` means "no limit" (every ready issue), the same meaning it has on `act list`.
+- `--all-machines` (bool). Include issues pinned to another machine.
 
-**Algorithm:** Fold all issues; an issue is **ready** iff `status == open` AND no incoming `blocks` dep points at it from an open/in_progress issue. Sort by priority asc, created_at desc, id asc.
+**Algorithm:** Fold all issues; an issue is **ready** iff `status == open` AND no incoming `blocks` dep points at it from an open/in_progress issue AND it is not pinned to a different machine. Sort by priority asc, created_at desc, id asc.
+
+**Machine filtering runs BEFORE `--limit`**, so `total` means "machine-eligible ready rows before the cap". An aggregator that treats `count >= limit` as "total unknown" therefore never sees a cap applied to rows it could not use anyway.
+
+**The machine filter only runs when this machine has an EXPLICIT label** — `$ACT_MACHINE` or `$XDG_CONFIG_HOME/act/machine`. A label merely inferred from the hostname is reported but never filters: it is the one layer that can change underneath a fleet (an OS rename, a lost config file), and a label matching nothing would exclude every pinned issue on every machine while suppressing its own alarm, since a store whose ready count fell to zero is one nothing launches into. So act fails open on an unnamed machine and says so on stderr.
 
 **JSON output:**
 ```json
-{"ready": [{"id":"...","short_id":"...","title":"...","priority":0,"status":"open","created_at":"..."}],
- "count": 3, "total": 3, "truncated": false}
+{"ready": [{"id":"...","short_id":"...","title":"...","priority":0,"status":"open","created_at":"...","machine":"laptop"}],
+ "count": 3, "total": 3, "truncated": false,
+ "machine": {"label":"mini","source":"config","filtered":true,"pinned_elsewhere":7}}
 ```
 
 `count` is how many rows were returned; `total` is how many were ready before `--limit` was applied; `truncated` says outright whether the cap dropped rows. A capped ready set also prints a WARNING to **stderr** naming how many issues were hidden — in both `--json` and human mode, since the JSON consumer's human sees nothing else when stdout is piped. Callers must test `truncated` rather than infer truncation from `count == limit`, which is wrong exactly when the ready count equals the limit.
+
+The top-level `machine` object is **always emitted**, so its ABSENCE is how a consumer detects an act that predates machine affinity. `label` and `source` are this machine's identity; `filtered` says whether pinned-elsewhere rows were actually excluded; `pinned_elsewhere` counts rows needing another machine **either way** — dropped when `filtered`, still present in `ready` when not. `filtered: false` with `source: "hostname"` means the machine was never named; with any other source it means `--all-machines`. The per-row `machine` key appears on pinned rows in both modes.
 
 **Exit codes:** 0; 2 bad flags; 3 missing `.act/`; 4 on skew.
 
@@ -833,7 +844,9 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 ### `act next`
 
-**Synopsis:** `act next [--under <id>] [--limit N] [--peek] [--isolated] [--json]`
+**Synopsis:** `act next [--under <id>] [--limit N] [--peek] [--all-machines] [--isolated] [--json]`
+
+`--all-machines` requires `--peek`: a bare `act next --all-machines` exits 2. `act next` claims, and claiming an issue pinned to another machine sets it `in_progress`, which removes it from the ready set on **every** machine — so the flag is allowed only on the read-only path.
 
 The composed `ready` → claim → `show` step of the work loop: it picks the top
 claimable issue from the ready frontier, **claims it**, and shows it.
@@ -986,6 +999,27 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 **Host-repo resolution.** Each `tools/call` resolves the host repo independently. If the client names a workspace out-of-band on the call — Codex sends `_meta."x-codex-turn-metadata".workspaces` (a map keyed by absolute workspace path), since it launches the server with cwd = the plugin install dir and advertises no MCP `roots` capability — that workspace is authoritative: the server resolves the host repo from it rather than from its own process cwd. Absent any client workspace hint (Claude Code, which launches the server in the project dir; or the direct CLI), the server falls back to cwd-based resolution. This keeps repo-relative tools operating on the user's project regardless of where the plugin host launches the long-lived server process.
 
 **Exit codes:** 0 on clean shutdown; 2 bad flag; 3 missing `.act/`; 4 on skew.
+
+---
+
+### `act machine`
+
+**Synopsis:** `act machine [--set <label>] [--json]`
+
+Prints **this machine's label** — the value an issue's `machine` pin is compared against — and where it was resolved from. Needs no repo and no `.act/`: the label is a property of the machine, not of a tracker, which is why it lives in one per-machine file rather than in each store's `config.json`.
+
+**Resolution order:**
+1. `$ACT_MACHINE`, if set and non-empty.
+2. `$XDG_CONFIG_HOME/act/machine` (default `~/.config/act/machine`), first line, trimmed.
+3. The short hostname, lower-cased — `os.Hostname()` up to the first `.`.
+
+Layers 1 and 2 are **explicit**; only they cause `act ready`/`act next` to filter. Layer 3 is reported but never filters (see `act ready`). act ships no mapping from hostname to label: the mechanism is act's, the machine names are the operator's.
+
+**Flags:**
+- `--set <label>` (string). Write the label to the per-machine file and print the result. `--set ""` removes the file, restoring the hostname fallback.
+- `--json` (bool). `{"machine":"mini","source":"hostname","config_path":"..."}` — `config_path` is where `--set` writes, whatever the active source is.
+
+**Exit codes:** 0; 2 bad flag or invalid label.
 
 ---
 

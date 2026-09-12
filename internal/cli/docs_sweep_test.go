@@ -70,6 +70,70 @@ type docClaim struct {
 // Order is alphabetical by `name` for readability; the sweep does not
 // depend on it.
 var docClaimRegistry = []docClaim{
+	// act-2c7be3: machine affinity. Eight claims across five surfaces —
+	// the exclusion itself, the write path (including the clearing
+	// form), the fail-open rule, the always-emitted JSON contract, the
+	// next/--peek refusal, and `act machine`. Each names the doc a
+	// reader would actually be holding when they rely on it.
+	{
+		name:         "spec-ready-excludes-other-machines",
+		docFile:      "docs/spec.md",
+		claimPattern: "AND it is not pinned to a different machine",
+		testName:     "TestDocClaim_Machine_ReadyExcludesOtherMachines",
+	},
+	{
+		name:         "readme-machine-pin",
+		docFile:      "README.md",
+		claimPattern: "work queue, not from the tracker",
+		testName:     "TestDocClaim_Machine_ReadyExcludesOtherMachines",
+	},
+	{
+		name:         "skill-machine-pin-not-title",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "pin it, don't put it in the title",
+		testName:     "TestDocClaim_Machine_ReadyExcludesOtherMachines",
+	},
+	{
+		name:         "spec-update-machine-unpins",
+		docFile:      "docs/spec.md",
+		claimPattern: "or un-pins it: `--machine \"\"` returns it to the default",
+		testName:     "TestDocClaim_Machine_UpdatePinsAndUnpins",
+	},
+	{
+		// The safety claim. Its test is the one that would go red if
+		// anybody "simplified" the resolver into filtering on the
+		// hostname it can always produce.
+		name:         "spec-ready-fails-open-unlabelled",
+		docFile:      "docs/spec.md",
+		claimPattern: "The machine filter only runs when this machine has an EXPLICIT label",
+		testName:     "TestDocClaim_Machine_FailsOpenWithoutExplicitLabel",
+	},
+	{
+		name:         "readme-machine-fails-open",
+		docFile:      "README.md",
+		claimPattern: "act will not filter on a guess",
+		testName:     "TestDocClaim_Machine_FailsOpenWithoutExplicitLabel",
+	},
+	{
+		// The cross-process contract with quota-floor. Absence of the
+		// key is semantically loaded, so the key set is the claim.
+		name:         "spec-ready-machine-object-always",
+		docFile:      "docs/spec.md",
+		claimPattern: "The top-level `machine` object is **always emitted**",
+		testName:     "TestDocClaim_Machine_ReadyJSONKeySet",
+	},
+	{
+		name:         "spec-next-all-machines-requires-peek",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--all-machines` requires `--peek`",
+		testName:     "TestDocClaim_Machine_NextAllMachinesRequiresPeek",
+	},
+	{
+		name:         "spec-act-machine-resolution-order",
+		docFile:      "docs/spec.md",
+		claimPattern: "Layers 1 and 2 are **explicit**; only they cause",
+		testName:     "TestDocClaim_Machine_SubcommandReportsLabelAndSource",
+	},
 	{
 		// act-43d11f: the read path no longer refolds the whole op log
 		// before every answer. The claim that matters is the pair —

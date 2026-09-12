@@ -341,19 +341,19 @@ func formatShowFields(res ShowResult) string {
 	if assignee, ok := f["assignee"].(string); ok && assignee != "" {
 		fmt.Fprintf(&b, "assignee: %s\n", assignee)
 	}
-	// host is printed only when the issue is pinned. An unpinned issue
+	// machine is printed only when the issue is pinned. An unpinned issue
 	// runs anywhere, which is the default and the overwhelming majority,
 	// so a `host: -` line on every ticket would be noise. When it IS
 	// pinned and this is not the machine, say so on the same line: a
 	// reader who ran `act show` after not finding the id in `act ready`
 	// is asking exactly that question (act-2c7be3).
-	if host, ok := f["host"].(string); ok && host != "" {
-		here := ResolveHost()
-		if HostMatches(host, here.Label) {
-			fmt.Fprintf(&b, "host: %s (this machine)\n", host)
+	if machine, ok := f["machine"].(string); ok && machine != "" {
+		here := ResolveMachine()
+		if MachineMatches(machine, here.Label) {
+			fmt.Fprintf(&b, "machine: %s (this machine)\n", machine)
 		} else {
-			fmt.Fprintf(&b, "host: %s — NOT this machine, which is %s; `act ready`/`act next` exclude it here\n",
-				host, here.Describe())
+			fmt.Fprintf(&b, "machine: %s — NOT this machine, which is %s; `act ready`/`act next` exclude it here\n",
+				machine, here.Describe())
 		}
 	}
 	if priority, ok := f["priority"]; ok {

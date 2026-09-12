@@ -69,12 +69,12 @@ type UpdateOptions struct {
 	// `act dep add` rejects a cycle in the blocks subgraph.
 	Parent *string
 
-	// Host pins the issue to one machine, or un-pins it. nil means not
+	// Machine pins the issue to one machine, or un-pins it. nil means not
 	// supplied; a pointer to "" is the explicit CLEARING form
-	// (`act update <id> --host ""`), which returns the issue to "runs
+	// (`act update <id> --machine ""`), which returns the issue to "runs
 	// anywhere". A pointer to a label restricts `act ready`/`act next`
 	// to the machine carrying that label (act-2c7be3).
-	Host *string
+	Machine *string
 
 	// DescriptionAppend, when non-nil, appends its text to the issue's
 	// CURRENT description rather than replacing it (act-a79d66). act
@@ -256,12 +256,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}, 2
 	}
 
-	// A host label is rejected here, at the flag boundary, so a typo
+	// A machine label is rejected here, at the flag boundary, so a typo
 	// surfaces as bad_flag with the offending value rather than as a
 	// written op (act-2c7be3). The empty string is the legitimate
 	// un-pinning form and passes.
-	if opts.Host != nil {
-		if herr := op.ValidateHostLabel("--host", *opts.Host); herr != nil {
+	if opts.Machine != nil {
+		if herr := op.ValidateMachineLabel("--machine", *opts.Machine); herr != nil {
 			return UpdateErrorOutput{
 				Error:   "bad_flag",
 				Message: fmt.Sprintf("act update: %v", herr),
@@ -461,10 +461,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	}
 
 	// Step 5: non-claim mutation. We must have at least one mutating flag.
-	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && opts.DescriptionAppend == nil && opts.Title == nil && opts.Type == nil && opts.Parent == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
+	if opts.Status == nil && opts.Priority == nil && opts.Assignee == nil && opts.Description == nil && opts.DescriptionAppend == nil && opts.Title == nil && opts.Type == nil && opts.Parent == nil && opts.Machine == nil && !opts.AcceptSet && len(opts.AcceptAdd) == 0 && len(opts.AcceptRm) == 0 && len(opts.DepRm) == 0 && len(opts.ExtRm) == 0 && !opts.Unclaim {
 		return UpdateErrorOutput{
 			Error:   "bad_flag",
-			Message: "act update: at least one of --title, --status, --priority, --type, --parent, --assignee, --description, --description-append, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
+			Message: "act update: at least one of --title, --status, --priority, --type, --parent, --assignee, --machine, --description, --description-append, --accept, --accept-add, --accept-rm, --dep-rm, --ext-rm, --claim, or --unclaim must be supplied",
 		}, 2
 	}
 
@@ -797,9 +797,9 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			return errOut, code
 		}
 	}
-	if opts.Host != nil {
-		val, _ := json.Marshal(*opts.Host)
-		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "host", Value: val}); code != 0 {
+	if opts.Machine != nil {
+		val, _ := json.Marshal(*opts.Machine)
+		if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "machine", Value: val}); code != 0 {
 			return errOut, code
 		}
 	}

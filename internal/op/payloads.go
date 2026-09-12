@@ -40,7 +40,7 @@ var validUpdateFields = map[string]bool{
 	// host pins an issue to one machine (act-2c7be3). Empty means "runs
 	// anywhere", which is what every issue filed before this field folds
 	// to — so the addition changes no existing issue's meaning.
-	"host": true,
+	"machine": true,
 }
 
 // statusUpdateFieldForbidden enumerates status values that MUST go through
@@ -72,11 +72,17 @@ type CreatePayload struct {
 	Type        string   `json:"type"`
 	Parent      string   `json:"parent,omitempty"`
 	Accept      []string `json:"accept,omitempty"`
-	// Host pins the issue to one machine: `act ready`/`act next` on any
-	// other host exclude it. Omitted/empty means "runs anywhere" — the
-	// default, and what every pre-host op folds to (act-2c7be3).
-	Host  string `json:"host,omitempty"`
-	Nonce string `json:"nonce"`
+	// Machine pins the issue to one machine: `act ready`/`act next` on
+	// any other machine exclude it. Omitted/empty means "runs anywhere" —
+	// the default, and what every op written before this field folds to
+	// (act-2c7be3).
+	//
+	// The field is `machine`, not `host`: in act "host" already means the
+	// HOST REPO the .act/ store sits beside (`act init --commit-host`,
+	// "act commands resolve the host repo root"), and two senses of the
+	// word on one CLI is a rename nobody will do later.
+	Machine string `json:"machine,omitempty"`
+	Nonce   string `json:"nonce"`
 }
 
 // Validate implements the create-payload write-time rules.
@@ -106,7 +112,7 @@ func (p CreatePayload) Validate() error {
 			return fmt.Errorf("op: create.accept[%d] length %d > 500 bytes (see 'act help workflow' for cap rationale)", i, len(c))
 		}
 	}
-	if err := ValidateHostLabel("create.host", p.Host); err != nil {
+	if err := ValidateMachineLabel("create.machine", p.Machine); err != nil {
 		return err
 	}
 	if !nonceLooksValid(p.Nonce) {
@@ -141,16 +147,16 @@ func (p UpdateFieldPayload) Validate() error {
 			return fmt.Errorf("op: update_field status=%s: MUST go through claim/close", s)
 		}
 	}
-	if p.Field == "host" {
+	if p.Field == "machine" {
 		// The empty string is the legitimate CLEARING form
-		// (`act update <id> --host ""` un-pins an issue), so it is
+		// (`act update <id> --machine ""` un-pins an issue), so it is
 		// validated here rather than by rejecting empties outright.
 		var h string
 		if err := json.Unmarshal(p.Value, &h); err != nil {
-			return fmt.Errorf("op: update_field.value (host): %w", err)
+			return fmt.Errorf("op: update_field.value (machine): %w", err)
 		}
 		if h != "" {
-			if err := ValidateHostLabel("update_field.host", h); err != nil {
+			if err := ValidateMachineLabel("update_field.machine", h); err != nil {
 				return err
 			}
 		}
@@ -158,28 +164,28 @@ func (p UpdateFieldPayload) Validate() error {
 	return nil
 }
 
-// MaxHostLabelLen caps a host label. A machine label is a short name a
+// MaxMachineLabelLen caps a host label. A machine label is a short name a
 // person types at filing time ("laptop", "mini", "build-box"); 64 bytes is
 // generous for any of those and keeps the wire shape predictable, the same
 // reasoning as MaxExternalRefLen.
-const MaxHostLabelLen = 64
+const MaxMachineLabelLen = 64
 
-// ValidateHostLabel enforces the write-time rules for a non-empty host
+// ValidateMachineLabel enforces the write-time rules for a non-empty host
 // label: printable ASCII, no whitespace, no control characters, within the
 // byte cap. The character rules exist so a label can be compared, printed
 // in a one-line ready row, and round-tripped through a config file without
 // quoting — a label with a space in it would split the `@label` column in
-// `act ready --all-hosts` and read as two fields.
+// `act ready --all-machines` and read as two fields.
 //
 // Comparison is case-insensitive everywhere the label is USED; this
 // function does not lower-case, so `act show` reports the label exactly as
 // it was filed.
-func ValidateHostLabel(what, h string) error {
+func ValidateMachineLabel(what, h string) error {
 	if h == "" {
 		return nil
 	}
-	if len(h) > MaxHostLabelLen {
-		return fmt.Errorf("op: %s length %d > %d bytes", what, len(h), MaxHostLabelLen)
+	if len(h) > MaxMachineLabelLen {
+		return fmt.Errorf("op: %s length %d > %d bytes", what, len(h), MaxMachineLabelLen)
 	}
 	for i := 0; i < len(h); i++ {
 		c := h[i]

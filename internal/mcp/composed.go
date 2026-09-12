@@ -116,9 +116,16 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 		return errEnvelope("internal", fmt.Sprintf("ready: unexpected type %T", readyOut)), true
 	}
 	if len(res.Ready) == 0 {
+		// Carry the machine object into the empty answer. An MCP client
+		// has no stderr — the server's stderr is the host's log file —
+		// so the CLI's notice reaches nobody here, and a bare
+		// {"claimed": false, "candidates": []} for a queue full of
+		// pinned work is exactly the silence this feature exists to end
+		// (act-2c7be3).
 		return map[string]any{
 			"claimed":    false,
 			"candidates": []cli.ReadyIssue{},
+			"machine":    res.Machine,
 		}, false
 	}
 
@@ -221,6 +228,7 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 	return map[string]any{
 		"claimed":    false,
 		"candidates": cands,
+		"machine":    res.Machine,
 	}, false
 }
 

@@ -190,6 +190,24 @@ stderr and, under `--json`, carries `total` (the pre-limit ready count) and `tru
 `truncated` rather than comparing `count` to the limit, and pass `act ready --limit 0` when
 you need every ready issue — the same contract `act list` honours.
 
+**Work that can only run on one machine: pin it, don't put it in the title.** If a ticket
+genuinely cannot be done anywhere but one machine, file it with `act create --machine
+<label>` (MCP: `machine` on `act_create`), or pin it later with `act update <id> --machine
+<label>`. `act ready` and `act next` then exclude it everywhere else and say so on stderr,
+while `act list`/`act show` still show it — it leaves the work queue, not the tracker.
+`act machine` prints this machine's label. Rules of thumb:
+
+- **The default is "runs anywhere", and it should stay that way.** Pin only what genuinely
+  cannot move. A pin only ever SUBTRACTS from where work can run, so a wrong one silently
+  starves the queue.
+- **Do not pin a ticket to the machine you are on** as a way of saying "this needs a live
+  machine, not a worktree". A pin to THIS machine includes it here — it does not mark it
+  undrainable. Express that with an acceptance criterion or a blocker, not a pin.
+- **A ticket needing TWO machines cannot be pinned.** Split it into one ticket per machine
+  with a `blocks` edge between them. If it truly cannot be split, leave it unpinned and say
+  in the description which machines it needs — a single-machine pin would be a lie either
+  way.
+
 ## Dependency edges: getting the direction right
 
 A `blocks` edge has a dependent and a blocker, and the two are easy to swap. Prefer the

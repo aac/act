@@ -808,6 +808,7 @@ func allTools() []toolDescriptor {
 				"blocks":      schemaArrayOfString("Existing ids the NEW issue blocks (each stays out of ready until it closes)."),
 				"description": schemaString("Free-text body."),
 				"accept":      schemaArrayOfString("Acceptance criteria, in order."),
+				"machine":     schemaString("Pin this issue to one machine, by its label (the label is reported in act_ready's `machine` object). act_ready/act_next on any OTHER machine exclude it; act_list/act_show still show it everywhere. Omit for the default, \"runs anywhere\" — set it only for work that genuinely cannot be done elsewhere. Filing time is when this is known."),
 				"push":        schemaBool("Push after commit."),
 			}, []string{"title"}),
 		},
@@ -842,6 +843,7 @@ func allTools() []toolDescriptor {
 				"type":               schemaEnum([]string{"task", "bug", "epic", "chore"}, "New issue type."),
 				"parent":             schemaString("New parent id (hierarchy only, NOT a dep edge); empty string detaches."),
 				"assignee":           schemaString("New assignee (empty string clears)."),
+				"machine":            schemaString("Pin this issue to one machine by label, or pass \"\" to un-pin it (back to \"runs anywhere\"). act_ready's `machine` object reports this machine's label."),
 				"description":        schemaString("New description (REPLACES the body; use description_append to add)."),
 				"description_append": schemaString("Append this text to the existing description instead of replacing it. Mutually exclusive with description."),
 				"accept":             schemaArrayOfString("Replace the acceptance criteria with exactly this list (the set REPLACES any prior criteria, it does not append); [] clears."),
@@ -879,10 +881,11 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_ready",
-			Description: "Escape hatch: list the ready set: open issues with no unclosed blocking deps. Prefer act_next which combines ready + claim + show.",
+			Description: "Escape hatch: list the ready set: open issues with no unclosed blocking deps, and no pin to a different machine. Prefer act_next which combines ready + claim + show. The result's `machine` object says which machine this is, whether the pin filter ran, and how many rows are pinned elsewhere — read it before concluding a queue is empty.",
 			InputSchema: schemaObject(map[string]any{
-				"under": schemaString("Restrict to descendants of this issue id/prefix."),
-				"limit": schemaInteger("Maximum issues to return (default 50). The result carries total+truncated, so a capped answer is detectable."),
+				"under":        schemaString("Restrict to descendants of this issue id/prefix."),
+				"limit":        schemaInteger("Maximum issues to return (default 50). The result carries total+truncated, so a capped answer is detectable."),
+				"all_machines": schemaBool("Include issues pinned to OTHER machines. Off by default: the ready set is what THIS machine can work."),
 			}, nil),
 		},
 		{
@@ -1047,6 +1050,7 @@ func (s *Server) callCreate(raw json.RawMessage) (any, bool) {
 		Blocks      []string `json:"blocks"`
 		Description string   `json:"description"`
 		Accept      []string `json:"accept"`
+		Machine     string   `json:"machine"`
 		NoCommit    bool     `json:"no_commit"`
 		Push        bool     `json:"push"`
 		Isolated    bool     `json:"isolated"`
@@ -1063,6 +1067,7 @@ func (s *Server) callCreate(raw json.RawMessage) (any, bool) {
 		Blocks:      args.Blocks,
 		Description: args.Description,
 		Accept:      args.Accept,
+		Machine:     args.Machine,
 		AsJSON:      true,
 		NoCommit:    args.NoCommit,
 		Push:        args.Push,
@@ -1129,6 +1134,7 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		Type              *string   `json:"type"`
 		Parent            *string   `json:"parent"`
 		Assignee          *string   `json:"assignee"`
+		Machine           *string   `json:"machine"`
 		Description       *string   `json:"description"`
 		DescriptionAppend *string   `json:"description_append"`
 		Accept            *[]string `json:"accept"`
@@ -1172,6 +1178,7 @@ func (s *Server) callUpdate(raw json.RawMessage) (any, bool) {
 		Type:        args.Type,
 		Parent:      args.Parent,
 		Assignee:    args.Assignee,
+		Machine:     args.Machine,
 		Description: args.Description,
 		// RunUpdate rejects description + description_append together, so
 		// the conflict guard is shared with the CLI rather than duplicated.
@@ -1255,8 +1262,9 @@ func (s *Server) callDepAdd(raw json.RawMessage) (any, bool) {
 
 func (s *Server) callReady(raw json.RawMessage) (any, bool) {
 	var args struct {
-		Under string `json:"under"`
-		Limit int    `json:"limit"`
+		Under       string `json:"under"`
+		Limit       int    `json:"limit"`
+		AllMachines bool   `json:"all_machines"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
@@ -1273,9 +1281,10 @@ func (s *Server) callReady(raw json.RawMessage) (any, bool) {
 		limit = cli.DefaultReadyLimit
 	}
 	out, code := cli.RunReady(s.repoRoot, cli.ReadyOptions{
-		Under:  args.Under,
-		Limit:  limit,
-		AsJSON: true,
+		Under:       args.Under,
+		Limit:       limit,
+		AllMachines: args.AllMachines,
+		AsJSON:      true,
 	})
 	return out, code != 0
 }
