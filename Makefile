@@ -23,8 +23,15 @@ fuzz:
 	go test -fuzz=Fuzz -fuzztime=10s ./internal/fold/
 
 # release-local builds the same 5-target matrix as the release workflow
-# into ./dist for manual smoke-testing without cutting a tag.
+# into ./dist for manual smoke-testing, without running the real release
+# (which commits stamped bin/act-<os>-<arch> binaries straight to the
+# default branch — see release.yml and AGENTS.md; there are no tags and no
+# GitHub Releases to cut).
 # Override VERSION=v0.0.0-local on the command line to embed a custom string.
+#
+# No checksum sidecars: those belonged to the retired tag-and-GitHub-Release
+# model, whose one consumer (scripts/install.sh) has been removed. Nothing
+# in this repo verifies dist/ output against a checksum.
 VERSION ?= v0.0.0-local
 
 release-local:
@@ -41,8 +48,6 @@ release-local:
 	    -trimpath \
 	    -ldflags "-s -w -X github.com/aac/act/internal/version.Binary=$(VERSION)" \
 	    -o "$$out" ./cmd/act/; \
-	  (cd dist && sha256sum "act-$$goos-$$goarch$$ext" > "act-$$goos-$$goarch$$ext.sha256"); \
 	done
-	@cd dist && cat *.sha256 > checksums.txt
 	@echo "Artifacts:"
 	@ls -la dist
