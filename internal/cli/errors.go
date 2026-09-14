@@ -125,10 +125,19 @@ const (
 	// recovery sequence rather than burying git's stderr. Details keys:
 	// `lock_file` (path relative to the host repo root) and `remedy`.
 	ErrStaleGitLock = "stale_git_lock"
-	ErrStatFailed   = "stat_failed"
-	ErrWalkFailed   = "walk_failed"
-	ErrNoRepo       = "no_repo"
-	ErrImportFailed = "import_failed"
+	// ErrTrackerNotCheckedOut is emitted by the no-state guard when this
+	// checkout has no usable .act/ state but the configured tracker remote
+	// ($ACT_TRACKER_REMOTE / ~/.config/act/tracker-remote) exists
+	// (act-a025ab). Exit 3, for read and write commands alike: the queue is
+	// real, just not here. Distinct from act_not_initialized because the
+	// recovery is a clone, and `act init` alone would start a new, divergent
+	// tracker. Details keys: `repo_root`, `tracker_remote`, `source`,
+	// `recover`.
+	ErrTrackerNotCheckedOut = "tracker_not_checked_out"
+	ErrStatFailed           = "stat_failed"
+	ErrWalkFailed           = "walk_failed"
+	ErrNoRepo               = "no_repo"
+	ErrImportFailed         = "import_failed"
 )
 
 // Envelope is the canonical JSON shape emitted on every non-zero exit

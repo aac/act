@@ -62,7 +62,22 @@ func main() {
 	if shouldCheckNoState(sub, args) {
 		if root, err := findRepoRoot(); err == nil {
 			actDir := filepath.Join(root, ".act")
-			if _, serr := os.Stat(actDir); os.IsNotExist(serr) {
+			_, serr := os.Stat(actDir)
+			noActDir := os.IsNotExist(serr)
+			// act-a025ab: a checkout with no .act/ (or an .act/ with no
+			// config.json) is only "normal" when there is no tracker to
+			// check out. If the operator configured where trackers live
+			// and one exists for this repo, say so and name the recovery
+			// instead of letting a session work an empty queue.
+			if noActDir || !fileExists(filepath.Join(actDir, "config.json")) {
+				if tr := cli.DetectTrackerRemote(root); tr.Found {
+					emitTrackerNotCheckedOut(hasJSONFlag(args), root, actDir, noActDir, tr)
+					os.Exit(3)
+				} else if noActDir && tr.Unconfirmed != "" {
+					fmt.Fprintf(os.Stderr, "act: could not check tracker remote %s (from %s): %s\n", tr.URL, tr.Source, tr.Unconfirmed)
+				}
+			}
+			if noActDir {
 				if isReadOnlyNoStateCommand(sub) {
 					fmt.Fprintln(os.Stderr, "act: no act state in this repo — this is normal in CI / fresh clones")
 					os.Exit(0)

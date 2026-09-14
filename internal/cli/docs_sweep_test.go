@@ -202,6 +202,33 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "MUST have a write path on both the CLI and MCP surfaces",
 		testName:     "TestDocClaim_MCP_UpdateTitleTypeParent",
 	},
+	// act-a025ab: a configured tracker remote that exists turns the
+	// no-state guard's "this is normal" into tracker_not_checked_out;
+	// without one the fresh-clone wording is unchanged.
+	{
+		name:         "help-tracker-remote-found",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "tracker_not_checked_out, naming the remote and the recovery command",
+		testName:     "TestDocClaim_TrackerRemoteFoundNoActDir",
+	},
+	{
+		name:         "help-tracker-remote-xdg-file",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "(default ~/.config/act/tracker-remote)",
+		testName:     "TestDocClaim_TrackerRemoteFoundNoConfigJSON",
+	},
+	{
+		name:         "help-tracker-remote-absent-unchanged",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "fresh-clone wording is unchanged",
+		testName:     "TestDocClaim_TrackerRemoteAbsentKeepsFreshCloneWording",
+	},
+	{
+		name:         "spec-tracker-not-checked-out",
+		docFile:      "docs/spec.md",
+		claimPattern: "no `.act/config.json`, every guarded command, read or write, exits 3 with `tracker_not_checked_out`",
+		testName:     "TestDocClaim_TrackerRemoteFoundNoConfigJSON",
+	},
 	{
 		name:         "help-update-retitle",
 		docFile:      "cmd/act/help.go",

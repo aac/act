@@ -784,6 +784,23 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     walk_failed             generic filepath.Walk failure
     no_repo                 git rev-parse showed no repo (subset of not_in_git)
     import_failed           'act import' wrote nothing usable
+    tracker_not_checked_out tracker remote exists; this checkout lacks it
+
+NO ACT STATE IN THIS CHECKOUT
+  .act/ is gitignored, so a fresh clone has no tracker and read commands
+  say "this is normal in CI / fresh clones" and exit 0. If you keep each
+  project's tracker in a git remote, tell act where, once per machine:
+
+    export ACT_TRACKER_REMOTE='ssh://host/srv/trackers/{repo}.git'
+    # or the first line of $XDG_CONFIG_HOME/act/tracker-remote
+    # (default ~/.config/act/tracker-remote)
+
+  {repo} is the host repo's directory name; a leading ~/ is expanded.
+  When that remote exists but this checkout has no .act/ (or no
+  .act/config.json), every guarded command exits 3 with
+  tracker_not_checked_out, naming the remote and the recovery command,
+  instead of calling it normal. When the remote does not exist, the
+  fresh-clone wording is unchanged. act ships no default location.
 
   When in doubt, add a new constant in internal/cli/errors.go rather
   than reusing one. Callers pin codes; rename = breakage.
