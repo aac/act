@@ -3,6 +3,7 @@ package gitops
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,6 +131,50 @@ func TestFetchAndRebase_RebaseConflict(t *testing.T) {
 	}
 	if _, errStat := os.Stat(filepath.Join(clone2, ".git", "rebase-apply")); errStat == nil {
 		t.Fatalf("rebase-apply dir still present after abort")
+	}
+}
+
+// TestFetchAndRebase_LeavesForeignRebaseAlone (act-38330b): when a rebase
+// is already in progress in the checkout (another process's, or an
+// operator's), FetchAndRebase must not run `git rebase --abort` on it.
+func TestFetchAndRebase_LeavesForeignRebaseAlone(t *testing.T) {
+	remote := testfixtures.NewBareRemote(t)
+	clone1 := cloneAndConfigure(t, remote.URL)
+	clone2 := cloneAndConfigure(t, remote.URL)
+
+	writeFile(t, filepath.Join(clone1, "conflict.txt"), "from-clone1\n")
+	runGit(t, clone1, "add", "conflict.txt")
+	runGit(t, clone1, "commit", "-q", "--no-verify", "-m", "c1")
+	runGit(t, clone1, "push", "-q", "origin", "main")
+
+	writeFile(t, filepath.Join(clone2, "conflict.txt"), "from-clone2\n")
+	runGit(t, clone2, "add", "conflict.txt")
+	runGit(t, clone2, "commit", "-q", "--no-verify", "-m", "c2")
+	runGit(t, clone2, "fetch", "-q", "origin", "main")
+
+	// The "other process": a rebase left stopped on the conflict.
+	cmd := exec.Command("git", "rebase", "origin/main")
+	cmd.Dir = clone2
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("fixture rebase unexpectedly succeeded:\n%s", out)
+	}
+	rebaseMerge := filepath.Join(clone2, ".git", "rebase-merge")
+	if _, err := os.Stat(rebaseMerge); err != nil {
+		t.Fatalf("fixture: no rebase in progress: %v", err)
+	}
+	// Origin moves on meanwhile, so FetchAndRebase sees real divergence and
+	// reaches its rebase step (and, before the guard, its abort).
+	writeFile(t, filepath.Join(clone1, "later.txt"), "later\n")
+	runGit(t, clone1, "add", "later.txt")
+	runGit(t, clone1, "commit", "-q", "--no-verify", "-m", "later")
+	runGit(t, clone1, "push", "-q", "origin", "main")
+
+	err := NewGitOps(clone2).FetchAndRebase("main")
+	if !errors.Is(err, ErrRebaseConflict) || !strings.Contains(err.Error(), "already in progress") {
+		t.Fatalf("FetchAndRebase = %v, want ErrRebaseConflict naming the in-progress rebase", err)
+	}
+	if _, statErr := os.Stat(rebaseMerge); statErr != nil {
+		t.Fatalf("FetchAndRebase aborted a rebase it did not start (rebase-merge gone): %v", statErr)
 	}
 }
 

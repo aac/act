@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -141,6 +142,17 @@ func (g *GitOps) FetchAndRebase(branch string) error {
 		return fmt.Errorf("gitops: FetchAndRebase: empty branch")
 	}
 
+	// act-38330b: every failure branch below runs `git rebase --abort`.
+	// That is only safe for a rebase THIS call started. If one is already
+	// in progress (another git process, or an operator mid-rebase), our
+	// `git rebase` would refuse and the abort would destroy their rebase —
+	// and while HEAD is detached mid-rebase the ancestry shortcut below
+	// would misreport "up to date". Leave it alone and report it instead.
+	if g.rebaseInProgress() {
+		return fmt.Errorf("%w: a rebase is already in progress in %s; leaving it untouched",
+			ErrRebaseConflict, g.RepoRoot)
+	}
+
 	// Resolve the fetch wall-time budget once for both the initial fetch
 	// and any --unshallow retry below. Zero means unbounded (today's
 	// behavior), so a repo that never set act.fetchTimeoutSeconds is not
@@ -260,6 +272,26 @@ func (g *GitOps) FetchAndRebase(branch string) error {
 	_, _ = g.runCombined("rebase", "--abort")
 	return fmt.Errorf("%w: %v (output: %s)",
 		ErrRebaseConflict, rebaseErr, strings.TrimSpace(rebaseOut))
+}
+
+// rebaseInProgress reports whether the repo has rebase state on disk
+// (rebase-merge/ or rebase-apply/ in its git dir). A probe failure reads as
+// "not in progress": the rebase that follows then fails on its own terms.
+func (g *GitOps) rebaseInProgress() bool {
+	for _, name := range []string{"rebase-merge", "rebase-apply"} {
+		out, err := g.runCombined("rev-parse", "--git-path", name)
+		if err != nil {
+			continue
+		}
+		p := strings.TrimSpace(out)
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(g.RepoRoot, p)
+		}
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // isShallowFailure reports whether the rebase failure output matches one
