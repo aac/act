@@ -83,6 +83,10 @@ type successOutput struct {
 type InitOptions struct {
 	// Force reinitializes even when .act/config.json already exists.
 	Force bool
+	// ForceNew starts a new tracker even though this checkout has none and
+	// the configured tracker remote exists (act-ef5a69). Without it init
+	// refuses with tracker_not_checked_out and names the clone recovery.
+	ForceNew bool
 	// MachineID and GitEmail feed node_id derivation and the nested
 	// repo's commit identity. Empty is allowed (MCP passes empty).
 	MachineID string
@@ -234,6 +238,24 @@ func RunInit(repoRoot string, opts InitOptions) (any, int) {
 	}
 
 	paths := config.Layout(repoRoot)
+
+	// act-ef5a69: with no usable tracker here but a configured tracker
+	// remote that exists, a fresh init would start a second, divergent
+	// tracker for the same repo. Refuse and name the clone recovery, unless
+	// the caller deliberately asks for a new tracker. An `.act/` that is a
+	// git repo missing only config.json is exactly what init recovers, so it
+	// is not refused.
+	if !opts.ForceNew {
+		actDir, noActDir, missing := TrackerCheckoutState(repoRoot)
+		if missing && !isRegularFile(filepath.Join(actDir, ".git", "HEAD")) {
+			if tr := DetectTrackerRemote(repoRoot); tr.Found {
+				payload := TrackerNotCheckedOutPayload(repoRoot, actDir, noActDir, tr)
+				payload["message"] = fmt.Sprintf("act init: refusing to start a new tracker — %s. To start a separate new tracker anyway: act init --force-new",
+					strings.TrimPrefix(payload["message"].(string), "act: "))
+				return payload, 3
+			}
+		}
+	}
 
 	// Refuse re-init unless --force. We detect existing init via .act/config.json
 	// (the canonical sentinel; .act/ may be an empty dir on a stale partial

@@ -125,6 +125,68 @@ func TestDocClaim_TrackerRemoteMCPToolCallsReturnTrackerNotCheckedOut(t *testing
 	}
 }
 
+func TestDocClaim_TrackerRemoteInitRefusesDivergentTracker(t *testing.T) {
+	brokencoIsolateEnv(t)
+	bares := t.TempDir()
+	bare, _ := brokencoTrackerBare(t, bares)
+	t.Setenv("ACT_TRACKER_REMOTE", filepath.Join(bares, "{repo}.git"))
+
+	// --help names the escape flag and what happens without it.
+	_, helpErr, _ := runActIn(t, t.TempDir(), "init", "--help")
+	if !strings.Contains(helpErr, "-force-new") || !strings.Contains(helpErr, "tracker_not_checked_out") {
+		t.Errorf("act init --help does not describe --force-new: %q", helpErr)
+	}
+
+	// Refused: human mode names the clone recovery and the escape.
+	host := brokencoHostRepo(t)
+	actDir := filepath.Join(host, ".act")
+	_, stderr, code := runActIn(t, host, "init")
+	if code != 3 {
+		t.Fatalf("init exit = %d, want 3; stderr=%q", code, stderr)
+	}
+	for _, want := range []string{
+		"tracker exists at " + bare,
+		"Recover with: git clone " + bare + " " + actDir,
+		"act init --force-new",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q: %q", want, stderr)
+		}
+	}
+	if _, err := os.Stat(actDir); !os.IsNotExist(err) {
+		t.Fatalf("refused init left %s behind: %v", actDir, err)
+	}
+
+	// Refused: JSON mode carries the code.
+	stdout, _, code := runActIn(t, host, "init", "--json")
+	var env map[string]any
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil || code != 3 || env["error"] != "tracker_not_checked_out" {
+		t.Fatalf("init --json: exit=%d stdout=%q err=%v", code, stdout, err)
+	}
+
+	// MCP act_init refuses the same way, and force_new is its escape.
+	mcpHost := brokencoHostRepo(t)
+	res := trkfollowMCPSession(t, mcpHost, `{"name":"act_init","arguments":{}}`)
+	if e := trkfollowToolEnvelope(t, res[2]); e["error"] != "tracker_not_checked_out" {
+		t.Errorf("MCP act_init error = %v", e["error"])
+	}
+
+	// The escape flag deliberately starts a new tracker.
+	if _, stderr, code := runActIn(t, host, "init", "--force-new"); code != 0 {
+		t.Fatalf("init --force-new: exit %d: %s", code, stderr)
+	}
+	if !fileExists(filepath.Join(actDir, "config.json")) {
+		t.Errorf("init --force-new did not create %s", filepath.Join(actDir, "config.json"))
+	}
+
+	// Unconfigured: init is unchanged.
+	t.Setenv("ACT_TRACKER_REMOTE", "")
+	plain := brokencoHostRepo(t)
+	if _, stderr, code := runActIn(t, plain, "init"); code != 0 {
+		t.Fatalf("unconfigured init: exit %d: %s", code, stderr)
+	}
+}
+
 func TestDocClaim_TrackerRemoteWorktreeUsesMainRepoName(t *testing.T) {
 	brokencoIsolateEnv(t)
 	bares := t.TempDir()

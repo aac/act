@@ -803,6 +803,8 @@ NO ACT STATE IN THIS CHECKOUT
   instead of calling it normal. When the remote does not exist, the
   fresh-clone wording is unchanged. act ships no default location.
   act mcp still starts; its tool calls return the same error envelope.
+  act init refuses too, printing the clone recovery, rather than start a
+  divergent tracker; act init --force-new starts a new tracker anyway.
 
   When in doubt, add a new constant in internal/cli/errors.go rather
   than reusing one. Callers pin codes; rename = breakage.

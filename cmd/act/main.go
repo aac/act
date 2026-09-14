@@ -238,6 +238,9 @@ func unknownDepVerbMsg(verb string) string {
 func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	force := fs.Bool("force", false, "reinitialize even if .act/ already exists")
+	// act-ef5a69: distinct from --force, which reinitializes an existing
+	// tracker; this one overrides the refusal to start a second tracker.
+	forceNew := fs.Bool("force-new", false, "start a new tracker even though the configured tracker remote ($ACT_TRACKER_REMOTE / ~/.config/act/tracker-remote) already has one for this repo; without it init refuses with tracker_not_checked_out and prints the clone recovery")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	// act-66f987: both host-repo effects are opt-in. Without them init
 	// writes .gitignore and the pre-commit hook into the working tree and
@@ -261,6 +264,7 @@ func runInit(args []string) int {
 
 	out, code := cli.RunInit(root, cli.InitOptions{
 		Force:        *force,
+		ForceNew:     *forceNew,
 		MachineID:    getMachineID(),
 		GitEmail:     getGitEmail(),
 		Contributing: *contributing,

@@ -963,7 +963,8 @@ func allTools() []toolDescriptor {
 			Name:        "act_init",
 			Description: "Initialize an act repository at the server's repo root.",
 			InputSchema: schemaObject(map[string]any{
-				"force": schemaBool("Reinitialize even if .act/ already exists."),
+				"force":     schemaBool("Reinitialize even if .act/ already exists."),
+				"force_new": schemaBool("Start a new tracker even though the configured tracker remote already has one for this repo."),
 			}, nil),
 		},
 		{
@@ -1194,7 +1195,8 @@ func schemaEnum(values []string, desc string) map[string]any {
 
 func (s *Server) callInit(raw json.RawMessage) (any, bool) {
 	var args struct {
-		Force bool `json:"force"`
+		Force    bool `json:"force"`
+		ForceNew bool `json:"force_new"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return errEnvelope("bad_args", err.Error()), true
@@ -1206,7 +1208,7 @@ func (s *Server) callInit(raw json.RawMessage) (any, bool) {
 	// exposed over MCP (act-66f987): the surprise this ticket fixes was an
 	// agent-driven bootstrap mutating host repos, and an agent that truly
 	// wants the stanza or the commit can run the CLI flags explicitly.
-	out, code := cli.RunInit(s.repoRoot, cli.InitOptions{Force: args.Force})
+	out, code := cli.RunInit(s.repoRoot, cli.InitOptions{Force: args.Force, ForceNew: args.ForceNew})
 	return out, code != 0
 }
 

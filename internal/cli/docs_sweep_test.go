@@ -249,6 +249,25 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "return an `isError` tool result carrying the same `tracker_not_checked_out` envelope",
 		testName:     "TestDocClaim_TrackerRemoteMCPToolCallsReturnTrackerNotCheckedOut",
 	},
+	// act-ef5a69: act init refuses to start a divergent tracker.
+	{
+		name:         "help-tracker-remote-init-refuses",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "divergent tracker; act init --force-new starts a new tracker anyway.",
+		testName:     "TestDocClaim_TrackerRemoteInitRefusesDivergentTracker",
+	},
+	{
+		name:         "help-init-force-new-flag",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "without it init refuses with tracker_not_checked_out and prints the clone recovery",
+		testName:     "TestDocClaim_TrackerRemoteInitRefusesDivergentTracker",
+	},
+	{
+		name:         "spec-tracker-remote-init-refuses",
+		docFile:      "docs/spec.md",
+		claimPattern: "refuses with exit 3 and `tracker_not_checked_out`, printing the clone recovery",
+		testName:     "TestDocClaim_TrackerRemoteInitRefusesDivergentTracker",
+	},
 	{
 		name:         "spec-tracker-not-checked-out",
 		docFile:      "docs/spec.md",
