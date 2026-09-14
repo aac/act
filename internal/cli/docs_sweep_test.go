@@ -735,6 +735,15 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ReadCache_TTLFiveSeconds",
 	},
 	{
+		// act-00182d: dual-era MCP — 2026-07-28 clients are served
+		// statelessly from per-request _meta, with the tools/list cache hint;
+		// the test drives the server over stdio without initialize.
+		name:         "mcp-stateless-protocol-revision",
+		docFile:      "docs/spec.md",
+		claimPattern: "answered without initialize",
+		testName:     "TestDocClaim_MCP_StatelessRequestsWithoutInitialize",
+	},
+	{
 		// act-ffc00d: the MCP server resolves the host repo per-call from a
 		// client-supplied workspace (Codex's proprietary
 		// `_meta."x-codex-turn-metadata".workspaces`) rather than its own

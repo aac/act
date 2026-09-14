@@ -5,9 +5,11 @@
 //
 // The wire protocol is the standard MCP subset over stdio: newline-delimited
 // JSON-RPC requests on stdin, responses on stdout. Three methods are
-// implemented:
+// implemented, plus server/discover for stateless (2026-07-28) clients:
 //
-//   - initialize  — handshake; advertises tool capabilities.
+//   - initialize  — legacy handshake; advertises tool capabilities. Clients
+//     on the 2026-07-28 revision skip it and send their protocol version in
+//     each request's params._meta instead (see checkModern).
 //   - tools/list  — returns the registered tool descriptors with input
 //     schemas mirroring the CLI flag set.
 //   - tools/call  — dispatches into the matching cli.RunX function and
@@ -40,6 +42,41 @@ import (
 // our own back. Clients that depend on a specific version should pin it
 // out-of-band.
 const protocolVersion = "2024-11-05"
+
+// Modern (stateless) protocol support — MCP revision 2026-07-28 (act-00182d).
+// That revision retires the initialize handshake: every request carries its
+// protocol version and client capabilities in params._meta under the reserved
+// io.modelcontextprotocol/ keys. The server is dual-era per the spec's
+// "Backward Compatibility with Initialization-Based Versions": a request whose
+// _meta names a protocol version is served statelessly under the modern
+// revision; any other request (an initialize, or a legacy client that simply
+// skipped it) is served exactly as before, byte for byte.
+const (
+	modernProtocolVersion = "2026-07-28"
+
+	metaProtocolVersion    = "io.modelcontextprotocol/protocolVersion"
+	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
+	metaServerInfo         = "io.modelcontextprotocol/serverInfo"
+
+	// errUnsupportedProtocolVersion is the spec-reserved code for a request
+	// naming a version this server does not implement statelessly.
+	errUnsupportedProtocolVersion = -32022
+
+	// toolsListTTLMs is the tools/list freshness hint. The advertised tool set
+	// is fixed for the life of the server process (a new binary means a new
+	// process), so an hour is conservative. cacheScope is "public" because the
+	// list carries no user-specific data — the spec's own guidance for tool
+	// lists that are identical for every caller.
+	toolsListTTLMs      = 3600000
+	toolsListCacheScope = "public"
+)
+
+// modernSupportedVersions is what an UnsupportedProtocolVersionError and
+// server/discover advertise. Only the modern revision is listed: the legacy
+// 2024-11-05 behavior is reachable solely through initialize, never through a
+// per-request _meta version, so naming it here would invite a retry that
+// cannot succeed.
+var modernSupportedVersions = []string{modernProtocolVersion}
 
 // serverName / serverVersion are echoed in the initialize response so MCP
 // clients can render an identifying label in their UIs.
@@ -409,8 +446,12 @@ type toolDescriptor struct {
 // underlying CLI command. IsError signals to MCP clients that the tool
 // returned an error envelope rather than a successful result.
 type toolResult struct {
-	Content []toolContent `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
+	// ResultType and Meta are set only on modern (stateless) requests; the
+	// omitempty tags keep the legacy wire form unchanged.
+	ResultType string         `json:"resultType,omitempty"`
+	Content    []toolContent  `json:"content"`
+	IsError    bool           `json:"isError,omitempty"`
+	Meta       map[string]any `json:"_meta,omitempty"`
 }
 
 // toolContent is one content part. Only "text" parts are produced by the
@@ -511,9 +552,17 @@ func (s *Server) dispatch(ctx context.Context, enc *json.Encoder, req jsonRPCReq
 		s.rootsAsked = false
 		s.requestClientRoots(enc)
 	case "tools/list":
-		s.handleToolsList(enc, req)
+		if modern, ok := s.checkModern(enc, req); ok {
+			s.handleToolsList(enc, req, modern)
+		}
 	case "tools/call":
-		s.handleToolsCall(ctx, enc, req)
+		if modern, ok := s.checkModern(enc, req); ok {
+			s.handleToolsCall(ctx, enc, req, modern)
+		}
+	case "server/discover":
+		if _, ok := s.checkModern(enc, req); ok {
+			s.handleDiscover(enc, req)
+		}
 	case "ping":
 		s.writeResult(enc, req.ID, map[string]any{})
 	default:
@@ -542,16 +591,80 @@ func (s *Server) handleInitialize(enc *json.Encoder, req jsonRPCRequest) {
 // handleToolsList returns the ADVERTISED tool registry (see exposedTools).
 // The list shape and schemas are stable; clients are expected to cache them
 // per-session.
-func (s *Server) handleToolsList(enc *json.Encoder, req jsonRPCRequest) {
+func (s *Server) handleToolsList(enc *json.Encoder, req jsonRPCRequest, modern bool) {
 	tools := s.tools()
-	s.writeResult(enc, req.ID, map[string]any{"tools": tools})
+	res := map[string]any{"tools": tools}
+	if modern {
+		res["resultType"] = "complete"
+		res["ttlMs"] = toolsListTTLMs
+		res["cacheScope"] = toolsListCacheScope
+		res["_meta"] = modernResultMeta()
+	}
+	s.writeResult(enc, req.ID, res)
+}
+
+// checkModern classifies a request's era from its params._meta and validates
+// the modern fields. It returns modern=true when the request names a protocol
+// version, and ok=false when it has already written a JSON-RPC error (an
+// unsupported version, or a modern request missing the required client
+// capabilities) and the caller must not answer further.
+func (s *Server) checkModern(enc *json.Encoder, req jsonRPCRequest) (modern, ok bool) {
+	var p struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if len(req.Params) == 0 || json.Unmarshal(req.Params, &p) != nil {
+		return false, true
+	}
+	rawVer, present := p.Meta[metaProtocolVersion]
+	if !present {
+		return false, true
+	}
+	var ver string
+	if err := json.Unmarshal(rawVer, &ver); err != nil || ver == "" {
+		s.writeError(enc, req.ID, errInvalidParams, "invalid params",
+			metaProtocolVersion+" must be a non-empty string")
+		return true, false
+	}
+	if ver != modernProtocolVersion {
+		s.writeError(enc, req.ID, errUnsupportedProtocolVersion, "Unsupported protocol version",
+			map[string]any{"supported": modernSupportedVersions, "requested": ver})
+		return true, false
+	}
+	if _, has := p.Meta[metaClientCapabilities]; !has {
+		s.writeError(enc, req.ID, errInvalidParams, "invalid params",
+			"missing required _meta field "+metaClientCapabilities)
+		return true, false
+	}
+	return true, true
+}
+
+// modernResultMeta is the per-result _meta a modern response carries: the
+// server identifies itself on every result instead of once at initialize.
+func modernResultMeta() map[string]any {
+	return map[string]any{
+		metaServerInfo: map[string]any{"name": serverName, "version": serverVersion},
+	}
+}
+
+// handleDiscover answers server/discover, the modern revision's required
+// version/capability advertisement (and a dual-era client's stdio probe). Its
+// result is cacheable like tools/list.
+func (s *Server) handleDiscover(enc *json.Encoder, req jsonRPCRequest) {
+	s.writeResult(enc, req.ID, map[string]any{
+		"resultType":        "complete",
+		"supportedVersions": modernSupportedVersions,
+		"capabilities":      map[string]any{"tools": map[string]any{}},
+		"ttlMs":             toolsListTTLMs,
+		"cacheScope":        toolsListCacheScope,
+		"_meta":             modernResultMeta(),
+	})
 }
 
 // handleToolsCall dispatches to the matching tool implementation. The
 // params shape is `{name: string, arguments: object}`; missing arguments
 // default to an empty object so tools without inputs (e.g. act_doctor)
 // work without ceremony.
-func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jsonRPCRequest) {
+func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jsonRPCRequest, modern bool) {
 	_ = ctx
 	var p struct {
 		Name      string          `json:"name"`
@@ -567,7 +680,7 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 	}
 	if isWriteTool(p.Name) && s.readOnly {
 		s.writeToolError(enc, req.ID, "method_not_allowed",
-			fmt.Sprintf("server is read-only; tool %q not permitted", p.Name))
+			fmt.Sprintf("server is read-only; tool %q not permitted", p.Name), modern)
 		return
 	}
 	// Resolve the host repo root for this call (act-119180, act-ffc00d).
@@ -579,7 +692,7 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 	// tool-error envelope rather than aborting the server.
 	root, err := s.effectiveRoot(req.Params)
 	if err != nil {
-		s.writeToolError(enc, req.ID, "no_repo", fmt.Sprintf("act mcp: %v", err))
+		s.writeToolError(enc, req.ID, "no_repo", fmt.Sprintf("act mcp: %v", err), modern)
 		return
 	}
 	s.repoRoot = root
@@ -599,6 +712,7 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 		Content: []toolContent{{Type: "text", Text: string(body)}},
 		IsError: isErr,
 	}
+	stampModern(&tr, modern)
 	s.writeResult(enc, req.ID, tr)
 }
 
@@ -678,13 +792,24 @@ func (s *Server) writeError(enc *json.Encoder, id json.RawMessage, code int, msg
 // writeToolError emits a tool-result envelope with isError=true so the
 // client surfaces it as a tool failure rather than a transport error. Used
 // for read-only enforcement and the like.
-func (s *Server) writeToolError(enc *json.Encoder, id json.RawMessage, kind, msg string) {
+func (s *Server) writeToolError(enc *json.Encoder, id json.RawMessage, kind, msg string, modern bool) {
 	body, _ := marshalNoHTMLEscape(errEnvelope(kind, msg))
 	tr := toolResult{
 		Content: []toolContent{{Type: "text", Text: string(body)}},
 		IsError: true,
 	}
+	stampModern(&tr, modern)
 	s.writeResult(enc, id, tr)
+}
+
+// stampModern adds the modern revision's required resultType and the
+// per-result serverInfo to a tool result; a legacy result is left untouched.
+func stampModern(tr *toolResult, modern bool) {
+	if !modern {
+		return
+	}
+	tr.ResultType = "complete"
+	tr.Meta = modernResultMeta()
 }
 
 // marshalNoHTMLEscape is json.Marshal without the default HTML-safe escaping

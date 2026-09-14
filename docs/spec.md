@@ -996,6 +996,8 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 
 **Behavior:** Stdio MCP server, no network. Tool surface specified below.
 
+**Protocol revisions.** The server is dual-era. A legacy client opens with `initialize` and is served under protocol `2024-11-05`, unchanged. A client on the stateless `2026-07-28` revision skips the handshake and sends `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in each request's `params._meta`; such requests are answered without initialize, carry `resultType` and `_meta."io.modelcontextprotocol/serverInfo"` on every result, and `tools/list` adds the cache hint `ttlMs` + `cacheScope`. `server/discover` advertises the supported modern version. A `_meta` version other than `2026-07-28` returns `-32022` (UnsupportedProtocolVersion) listing the supported versions.
+
 **Host-repo resolution.** Each `tools/call` resolves the host repo independently. If the client names a workspace out-of-band on the call — Codex sends `_meta."x-codex-turn-metadata".workspaces` (a map keyed by absolute workspace path), since it launches the server with cwd = the plugin install dir and advertises no MCP `roots` capability — that workspace is authoritative: the server resolves the host repo from it rather than from its own process cwd. Absent any client workspace hint (Claude Code, which launches the server in the project dir; or the direct CLI), the server falls back to cwd-based resolution. This keeps repo-relative tools operating on the user's project regardless of where the plugin host launches the long-lived server process.
 
 **Exit codes:** 0 on clean shutdown; 2 bad flag; 3 missing `.act/`; 4 on skew.
