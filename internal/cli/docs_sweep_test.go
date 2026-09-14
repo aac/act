@@ -1501,6 +1501,28 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "inline the HLC-sorted op stream alongside the snapshot",
 		testName:     "TestDocClaim_IncludeOps_SubprocessShowsOpStream",
 	},
+	// title-cap-* (act-65b0ec): docs/spec.md states one 256-byte title cap
+	// for `act create` and `act update --title`. Op-payload validation (what
+	// `act import` runs) once capped at 200, so act's own issues did not
+	// round-trip. The tests drive create/update/import through the binary.
+	{
+		name:         "title-cap-create-over-cap",
+		docFile:      "docs/spec.md",
+		claimPattern: "title >256 bytes → exit 2",
+		testName:     "TestDocClaim_TitleCap_OverCapRejected",
+	},
+	{
+		name:         "title-cap-create-max-round-trips-import",
+		docFile:      "docs/spec.md",
+		claimPattern: "title >256 bytes → exit 2",
+		testName:     "TestDocClaim_TitleCap_MaxLengthRoundTripsThroughImport",
+	},
+	{
+		name:         "title-cap-update-matches-create",
+		docFile:      "docs/spec.md",
+		claimPattern: "≤256 bytes, matching `act create`",
+		testName:     "TestDocClaim_TitleCap_OverCapRejected",
+	},
 	// help-errors-exit-{3,4,5} (act-387e01, act-a373bb): `act help errors`
 	// EXIT CODES block previously listed only exits 1 and 2. Exit 3
 	// (issue_not_found) and exit 4 were added by act-387e01; exit 4's
