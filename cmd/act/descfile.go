@@ -9,7 +9,7 @@ import (
 // maxDescriptionBytes mirrors the schema's 16384-char description cap
 // (spec.md §Data model: description is "0..16384 chars"). The check
 // is byte-based for parity with the other write-side length checks in
-// internal/op/payloads.go (title <= 200, accept[i] <= 500), all of
+// internal/op/payloads.go (title <= 256, accept[i] <= 500), all of
 // which use len() rather than a rune count.
 const maxDescriptionBytes = 16384
 

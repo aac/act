@@ -64,6 +64,11 @@ var validMigrateKinds = map[string]bool{
 	"coerce_type":  true,
 }
 
+// MaxPriority is the highest (least urgent) issue priority; the range is
+// 0..MaxPriority inclusive (docs/spec.md: "int 0..3 inclusive"). Create and
+// update_field both validate against it, as do the CLI flags (act-841052).
+const MaxPriority = 3
+
 // MaxTitleLen caps an issue title in bytes. It is the one title cap in act:
 // `act create`, `act update --title`, and op-payload validation (which is what
 // `act import` runs) all read this constant, so an issue act itself wrote
@@ -104,8 +109,8 @@ func (p CreatePayload) Validate() error {
 		return fmt.Errorf("op: create.type %q: not one of {task,bug,epic,chore}", p.Type)
 	}
 	if p.Priority != nil {
-		if *p.Priority < 0 || *p.Priority > 3 {
-			return fmt.Errorf("op: create.priority %d out of range [0,3]", *p.Priority)
+		if *p.Priority < 0 || *p.Priority > MaxPriority {
+			return fmt.Errorf("op: create.priority %d out of range [0,%d]", *p.Priority, MaxPriority)
 		}
 	}
 	if p.Parent != "" && !ids.IsValidID(p.Parent) {
@@ -152,6 +157,27 @@ func (p UpdateFieldPayload) Validate() error {
 		}
 		if statusUpdateFieldForbidden[s] {
 			return fmt.Errorf("op: update_field status=%s: MUST go through claim/close", s)
+		}
+	}
+	if p.Field == "priority" {
+		// act-841052: create.priority was range-checked but update_field
+		// priority was not, so `act import` accepted a value `act update
+		// --priority` refuses.
+		var pr int
+		if err := json.Unmarshal(p.Value, &pr); err != nil {
+			return fmt.Errorf("op: update_field.value (priority): %w", err)
+		}
+		if pr < 0 || pr > MaxPriority {
+			return fmt.Errorf("op: update_field.priority %d out of range [0,%d]", pr, MaxPriority)
+		}
+	}
+	if p.Field == "type" {
+		var ty string
+		if err := json.Unmarshal(p.Value, &ty); err != nil {
+			return fmt.Errorf("op: update_field.value (type): %w", err)
+		}
+		if !validIssueTypes[ty] {
+			return fmt.Errorf("op: update_field.type %q: not one of {task,bug,epic,chore}", ty)
 		}
 	}
 	if p.Field == "title" {

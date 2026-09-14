@@ -377,10 +377,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 
 	// Step 2e: priority range.
 	if opts.Priority != nil {
-		if *opts.Priority < 0 || *opts.Priority > 3 {
+		if *opts.Priority < 0 || *opts.Priority > op.MaxPriority {
 			return UpdateErrorOutput{
 				Error:   "bad_flag",
-				Message: fmt.Sprintf("act update: --priority %d out of range [0,3]", *opts.Priority),
+				Message: fmt.Sprintf("act update: --priority %d out of range [0,%d]", *opts.Priority, op.MaxPriority),
 			}, 2
 		}
 	}

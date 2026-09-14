@@ -181,10 +181,10 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	if opts.Priority != nil {
 		priority = *opts.Priority
 	}
-	if priority < 0 || priority > 3 {
+	if priority < 0 || priority > op.MaxPriority {
 		return CreateErrorOutput{
 			Error:   "bad_flag",
-			Message: fmt.Sprintf("act create: --priority %d out of range [0,3]", priority),
+			Message: fmt.Sprintf("act create: --priority %d out of range [0,%d]", priority, op.MaxPriority),
 		}, 2
 	}
 	// A host label is rejected at the CLI boundary rather than deep in

@@ -823,7 +823,7 @@ DETAILS KEYS PROMOTED VERBATIM
 LENGTHS ARE BYTE-COUNTED
   All length checks across act use Go's len() on the raw string,
   which counts BYTES, not runes. Precedent lives in
-  internal/op/payloads.go (e.g. create.title <= 200, accept[i] <= 500,
+  internal/op/payloads.go (e.g. create.title <= 256, accept[i] <= 500,
   close.reason <= 500). Apply the same rule when adding new
   validations: a 200-byte cap with a multibyte UTF-8 string may
   reject before 200 user-visible characters, and that is intentional —
