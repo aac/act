@@ -1772,6 +1772,12 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_BlockedStatus_RequiresDepEdge",
 	},
 	{
+		name:         "blocked-status-writes-no-op",
+		docFile:      "docs/spec.md",
+		claimPattern: "already blocked by its dep edge (no ops written)",
+		testName:     "TestDocClaim_BlockedStatus_WritesNoOp",
+	},
+	{
 		name:         "blocked-requires-dep-flag-help",
 		docFile:      "cmd/act/update.go",
 		claimPattern: "derived from blocked-by dep edges",
