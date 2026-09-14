@@ -131,6 +131,10 @@ type Server struct {
 	// so nothing a client sends during that window is lost or reordered.
 	pending [][]byte
 
+	// trackerRemotes caches the configured-tracker-remote probe per host
+	// root (act-626391); see trackerNotCheckedOut.
+	trackerRemotes map[string]cli.TrackerRemote
+
 	readOnly bool
 	in       io.Reader
 	out      io.Writer
@@ -698,6 +702,10 @@ func (s *Server) handleToolsCall(ctx context.Context, enc *json.Encoder, req jso
 	s.repoRoot = root
 	s.rootResolved = true
 	s.rootErr = nil
+	if payload, blocked := s.trackerNotCheckedOut(p.Name, root); blocked {
+		s.writeToolPayloadError(enc, req.ID, payload, modern)
+		return
+	}
 	args := p.Arguments
 	if len(args) == 0 {
 		args = []byte("{}")
@@ -793,7 +801,44 @@ func (s *Server) writeError(enc *json.Encoder, id json.RawMessage, code int, msg
 // client surfaces it as a tool failure rather than a transport error. Used
 // for read-only enforcement and the like.
 func (s *Server) writeToolError(enc *json.Encoder, id json.RawMessage, kind, msg string, modern bool) {
-	body, _ := marshalNoHTMLEscape(errEnvelope(kind, msg))
+	s.writeToolPayloadError(enc, id, errEnvelope(kind, msg), modern)
+}
+
+// trackerNotCheckedOut is the MCP counterpart of the CLI no-state guard's
+// tracker_not_checked_out branch (act-626391). When the host repo at root
+// has no `.act/` (or no `.act/config.json`) and the configured tracker
+// remote exists, tool calls return the same envelope the CLI prints rather
+// than acting on an empty store. act_version is stateless and passes;
+// act_init passes too, because cli.RunInit makes its own call (a missing
+// config.json is recovered by init, and a missing `.act/` is refused there).
+// The remote probe runs only while state is missing and is cached per root
+// for the server's lifetime, so a slow network remote costs one probe.
+func (s *Server) trackerNotCheckedOut(tool, root string) (map[string]any, bool) {
+	if tool == "act_version" || tool == "act_init" {
+		return nil, false
+	}
+	actDir, noActDir, missing := cli.TrackerCheckoutState(root)
+	if !missing {
+		return nil, false
+	}
+	tr, ok := s.trackerRemotes[root]
+	if !ok {
+		tr = cli.DetectTrackerRemote(root)
+		if s.trackerRemotes == nil {
+			s.trackerRemotes = map[string]cli.TrackerRemote{}
+		}
+		s.trackerRemotes[root] = tr
+	}
+	if !tr.Found {
+		return nil, false
+	}
+	return cli.TrackerNotCheckedOutPayload(root, actDir, noActDir, tr), true
+}
+
+// writeToolPayloadError emits a tool-result error carrying a full error
+// envelope (error, message, and any details) as its text content.
+func (s *Server) writeToolPayloadError(enc *json.Encoder, id json.RawMessage, payload map[string]any, modern bool) {
+	body, _ := marshalNoHTMLEscape(payload)
 	tr := toolResult{
 		Content: []toolContent{{Type: "text", Text: string(body)}},
 		IsError: true,

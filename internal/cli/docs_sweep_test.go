@@ -236,6 +236,19 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Inside a linked git worktree `{repo}` is the main repository's directory name",
 		testName:     "TestDocClaim_TrackerRemoteWorktreeUsesMainRepoName",
 	},
+	// act-626391: act mcp starts but its tool calls carry the same envelope.
+	{
+		name:         "help-tracker-remote-mcp",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act mcp still starts; its tool calls return the same error envelope.",
+		testName:     "TestDocClaim_TrackerRemoteMCPToolCallsReturnTrackerNotCheckedOut",
+	},
+	{
+		name:         "spec-tracker-remote-mcp",
+		docFile:      "docs/spec.md",
+		claimPattern: "return an `isError` tool result carrying the same `tracker_not_checked_out` envelope",
+		testName:     "TestDocClaim_TrackerRemoteMCPToolCallsReturnTrackerNotCheckedOut",
+	},
 	{
 		name:         "spec-tracker-not-checked-out",
 		docFile:      "docs/spec.md",

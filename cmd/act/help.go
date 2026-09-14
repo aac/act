@@ -802,6 +802,7 @@ NO ACT STATE IN THIS CHECKOUT
   tracker_not_checked_out, naming the remote and the recovery command,
   instead of calling it normal. When the remote does not exist, the
   fresh-clone wording is unchanged. act ships no default location.
+  act mcp still starts; its tool calls return the same error envelope.
 
   When in doubt, add a new constant in internal/cli/errors.go rather
   than reusing one. Callers pin codes; rename = breakage.

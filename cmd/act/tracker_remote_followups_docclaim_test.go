@@ -5,6 +5,9 @@ package main
 // (act-ef5a69).
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -30,6 +33,96 @@ func trkfollowLinkedWorktree(t *testing.T, host, name string) string {
 	wt := filepath.Join(host, ".claude", "worktrees", name)
 	trkfollowGitIn(t, host, "worktree", "add", "-q", "-b", name, wt)
 	return wt
+}
+
+// trkfollowMCPSession runs `act mcp` in dir, feeds it initialize plus the
+// given tools/call requests (ids 2..), and returns each call's decoded
+// result keyed by id. The process must exit 0 (the server started).
+func trkfollowMCPSession(t *testing.T, dir string, calls ...string) map[float64]map[string]any {
+	t.Helper()
+	input := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"
+	for i, c := range calls {
+		input += fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":%s}`, i+2, c) + "\n"
+	}
+	cmd := exec.Command(actBinary(t), "mcp")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(input)
+	var outB, errB strings.Builder
+	cmd.Stdout = &outB
+	cmd.Stderr = &errB
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("act mcp exited non-zero: %v\nstderr=%s\nstdout=%s", err, errB.String(), outB.String())
+	}
+	results := map[float64]map[string]any{}
+	for _, line := range strings.Split(strings.TrimSpace(outB.String()), "\n") {
+		var resp struct {
+			ID     float64        `json:"id"`
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			t.Fatalf("parse response %q: %v", line, err)
+		}
+		results[resp.ID] = resp.Result
+	}
+	if info, _ := results[1]["serverInfo"].(map[string]any); info == nil {
+		t.Fatalf("initialize did not answer with serverInfo: %s", outB.String())
+	}
+	return results
+}
+
+// trkfollowToolEnvelope extracts the error envelope from a tool result,
+// failing unless the result is marked isError.
+func trkfollowToolEnvelope(t *testing.T, res map[string]any) map[string]any {
+	t.Helper()
+	if isErr, _ := res["isError"].(bool); !isErr {
+		t.Fatalf("tool result isError=false, want true: %v", res)
+	}
+	content, _ := res["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("tool result has no content: %v", res)
+	}
+	first, _ := content[0].(map[string]any)
+	var env map[string]any
+	if err := json.Unmarshal([]byte(first["text"].(string)), &env); err != nil {
+		t.Fatalf("parse envelope %q: %v", first["text"], err)
+	}
+	return env
+}
+
+func TestDocClaim_TrackerRemoteMCPToolCallsReturnTrackerNotCheckedOut(t *testing.T) {
+	brokencoIsolateEnv(t)
+	bares := t.TempDir()
+	bare, id := brokencoTrackerBare(t, bares)
+	host := brokencoHostRepo(t)
+	t.Setenv("ACT_TRACKER_REMOTE", filepath.Join(bares, "{repo}.git"))
+
+	results := trkfollowMCPSession(t, host,
+		`{"name":"act_list","arguments":{}}`,
+		fmt.Sprintf(`{"name":"act_show","arguments":{"id":%q}}`, id),
+		`{"name":"act_create","arguments":{"title":"would land in an empty store"}}`,
+		`{"name":"act_version","arguments":{}}`,
+	)
+	for _, callID := range []float64{2, 3, 4} {
+		env := trkfollowToolEnvelope(t, results[callID])
+		if env["error"] != "tracker_not_checked_out" {
+			t.Errorf("call %v: error = %v, want tracker_not_checked_out", callID, env["error"])
+		}
+		msg, _ := env["message"].(string)
+		if !strings.Contains(msg, "tracker exists at "+bare) || !strings.Contains(msg, "Recover with: git clone "+bare) || strings.Contains(msg, "normal") {
+			t.Errorf("call %v: message = %q", callID, msg)
+		}
+		details, _ := env["details"].(map[string]any)
+		if details["tracker_remote"] != bare || details["source"] != "$ACT_TRACKER_REMOTE" {
+			t.Errorf("call %v: details = %v", callID, details)
+		}
+	}
+	if isErr, _ := results[5]["isError"].(bool); isErr {
+		t.Errorf("act_version must stay stateless: %v", results[5])
+	}
+	// The create must not have made a store behind the error.
+	if _, err := os.Stat(filepath.Join(host, ".act")); !os.IsNotExist(err) {
+		t.Errorf(".act/ exists after refused MCP calls: %v", err)
+	}
 }
 
 func TestDocClaim_TrackerRemoteWorktreeUsesMainRepoName(t *testing.T) {
