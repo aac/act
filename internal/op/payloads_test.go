@@ -36,9 +36,31 @@ func TestCreatePayload_Validate_TitleEmpty(t *testing.T) {
 }
 
 func TestCreatePayload_Validate_TitleTooLong(t *testing.T) {
-	p := CreatePayload{Title: strings.Repeat("x", 201), Type: "task", Nonce: validNonce}
+	p := CreatePayload{Title: strings.Repeat("x", MaxTitleLen+1), Type: "task", Nonce: validNonce}
 	if err := p.Validate(); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+// The op-layer cap is the CLI's 256, not the old 200 (act-65b0ec).
+func TestCreatePayload_Validate_TitleAtCap(t *testing.T) {
+	if MaxTitleLen != 256 {
+		t.Fatalf("MaxTitleLen = %d, want 256 (docs/spec.md)", MaxTitleLen)
+	}
+	p := CreatePayload{Title: strings.Repeat("x", MaxTitleLen), Type: "task", Nonce: validNonce}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("256-byte title rejected: %v", err)
+	}
+}
+
+func TestUpdateFieldPayload_Validate_TitleCap(t *testing.T) {
+	at := UpdateFieldPayload{Field: "title", Value: []byte(`"` + strings.Repeat("x", MaxTitleLen) + `"`)}
+	if err := at.Validate(); err != nil {
+		t.Fatalf("at cap: %v", err)
+	}
+	over := UpdateFieldPayload{Field: "title", Value: []byte(`"` + strings.Repeat("x", MaxTitleLen+1) + `"`)}
+	if err := over.Validate(); err == nil {
+		t.Fatal("over cap: want error")
 	}
 }
 

@@ -391,10 +391,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 				Message: "act update: --title: title is empty (a title cannot be cleared; supply replacement text)",
 			}, 2
 		}
-		if len(*opts.Title) > 256 {
+		if len(*opts.Title) > op.MaxTitleLen {
 			return UpdateErrorOutput{
 				Error:   "bad_flag",
-				Message: fmt.Sprintf("act update: --title: length %d > 256 bytes", len(*opts.Title)),
+				Message: fmt.Sprintf("act update: --title: length %d > %d bytes", len(*opts.Title), op.MaxTitleLen),
 			}, 2
 		}
 	}
@@ -705,6 +705,13 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			return UpdateErrorOutput{
 				Error:   "marshal_failed",
 				Message: perr.Error(),
+			}, 1
+		}
+		// Same payload validation `act import` runs (act-65b0ec).
+		if verr := op.ValidatePayload(opType, bodyPayload); verr != nil {
+			return UpdateErrorOutput{
+				Error:   "payload_invalid",
+				Message: verr.Error(),
 			}, 1
 		}
 		stamp := clock.Send()

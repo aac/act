@@ -64,6 +64,13 @@ var validMigrateKinds = map[string]bool{
 	"coerce_type":  true,
 }
 
+// MaxTitleLen caps an issue title in bytes. It is the one title cap in act:
+// `act create`, `act update --title`, and op-payload validation (which is what
+// `act import` runs) all read this constant, so an issue act itself wrote
+// always re-imports (act-65b0ec — the op layer once capped at 200 while the
+// CLI wrote up to 256). docs/spec.md states the same number.
+const MaxTitleLen = 256
+
 // CreatePayload is the payload for op_type=create.
 type CreatePayload struct {
 	Title       string   `json:"title"`
@@ -90,8 +97,8 @@ func (p CreatePayload) Validate() error {
 	if p.Title == "" {
 		return fmt.Errorf("op: create.title is empty")
 	}
-	if len(p.Title) > 200 {
-		return fmt.Errorf("op: create.title length %d > 200", len(p.Title))
+	if len(p.Title) > MaxTitleLen {
+		return fmt.Errorf("op: create.title length %d > %d bytes", len(p.Title), MaxTitleLen)
 	}
 	if !validIssueTypes[p.Type] {
 		return fmt.Errorf("op: create.type %q: not one of {task,bug,epic,chore}", p.Type)
@@ -145,6 +152,15 @@ func (p UpdateFieldPayload) Validate() error {
 		}
 		if statusUpdateFieldForbidden[s] {
 			return fmt.Errorf("op: update_field status=%s: MUST go through claim/close", s)
+		}
+	}
+	if p.Field == "title" {
+		var title string
+		if err := json.Unmarshal(p.Value, &title); err != nil {
+			return fmt.Errorf("op: update_field.value (title): %w", err)
+		}
+		if len(title) > MaxTitleLen {
+			return fmt.Errorf("op: update_field.title length %d > %d bytes", len(title), MaxTitleLen)
 		}
 	}
 	if p.Field == "machine" {

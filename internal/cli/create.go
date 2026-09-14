@@ -155,10 +155,10 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Message: "act create: <title> is required and must be non-empty",
 		}, 2
 	}
-	if len(opts.Title) > 256 {
+	if len(opts.Title) > op.MaxTitleLen {
 		return CreateErrorOutput{
 			Error:   "bad_flag",
-			Message: fmt.Sprintf("act create: title length %d > 256 bytes", len(opts.Title)),
+			Message: fmt.Sprintf("act create: title length %d > %d bytes", len(opts.Title), op.MaxTitleLen),
 		}, 2
 	}
 	typ := opts.Type
@@ -329,6 +329,15 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		return CreateErrorOutput{
 			Error:   "marshal_failed",
 			Message: perr.Error(),
+		}, 1
+	}
+
+	// Run the same payload validation `act import` runs, so nothing
+	// create writes can fail to re-import (act-65b0ec).
+	if verr := op.ValidatePayload("create", bodyPayload); verr != nil {
+		return CreateErrorOutput{
+			Error:   "payload_invalid",
+			Message: verr.Error(),
 		}, 1
 	}
 
