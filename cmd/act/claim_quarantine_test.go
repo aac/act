@@ -60,30 +60,6 @@ func claimqOnlyStamp(t *testing.T, dir string, e claimqEnvelope, opSuffix string
 	return stamp
 }
 
-// claimqRunReadmeRecovery runs the README "If a write is interrupted"
-// console block literally, with only <timestamp> filled in.
-func claimqRunReadmeRecovery(t *testing.T, dir, stamp string) {
-	t.Helper()
-	block := strings.ReplaceAll(stagefailReadmeRecoveryBlock(t), "<timestamp>", stamp)
-	for _, line := range strings.Split(block, "\n") {
-		cmdline := strings.TrimPrefix(line, "$ ")
-		if strings.HasPrefix(cmdline, "act ") {
-			if _, stderr, code := runActIn(t, dir, strings.Fields(cmdline)[1:]...); code != 0 {
-				t.Fatalf("%s: exit %d; stderr=%s", cmdline, code, stderr)
-			}
-			continue
-		}
-		sh := exec.Command("sh", "-c", cmdline)
-		sh.Dir = dir
-		sh.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
-		if out, err := sh.CombinedOutput(); err != nil {
-			t.Fatalf("%s: %v: %s", cmdline, err, out)
-		}
-	}
-}
-
 // TestDocClaim_StaleLock_ClaimStageFailureStaysUnclaimed: a claim that fails
 // on a stale index.lock reports stale_git_lock, reads back as not claimed,
 // keeps its op under .act/.failed-ops/, and the README runbook recovers it.
@@ -114,7 +90,7 @@ func TestDocClaim_StaleLock_ClaimStageFailureStaysUnclaimed(t *testing.T) {
 		t.Errorf("remedy does not copy the op back from .act/.failed-ops/%s: %q", stamp, remedy)
 	}
 
-	claimqRunReadmeRecovery(t, dir, stamp)
+	runbookReplayRecovery(t, dir, stamp)
 	if got := showStatus(t, dir, id); got != "in_progress" {
 		t.Errorf("after README recovery status = %q; want in_progress", got)
 	}

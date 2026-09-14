@@ -106,27 +106,7 @@ func TestDocClaim_StaleLock_OpSurvivesAndRecovers(t *testing.T) {
 
 	// The README recovery block, extracted from the README itself so the
 	// test cannot drift from it, with <timestamp> substituted.
-	block := stagefailReadmeRecoveryBlock(t)
-	block = strings.ReplaceAll(block, "<timestamp>", stamp)
-	for _, line := range strings.Split(block, "\n") {
-		cmdline := strings.TrimPrefix(line, "$ ")
-		if strings.HasPrefix(cmdline, "act ") {
-			if _, stderr, code := runActIn(t, dir, strings.Fields(cmdline)[1:]...); code != 0 {
-				t.Fatalf("%s: exit %d; stderr=%s", cmdline, code, stderr)
-			}
-			continue
-		}
-		sh := exec.Command("sh", "-c", cmdline)
-		sh.Dir = dir
-		// Identity for the recovery commit only; the command text is the
-		// README's, unmodified.
-		sh.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
-			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
-		if out, err := sh.CombinedOutput(); err != nil {
-			t.Fatalf("%s: %v: %s", cmdline, err, out)
-		}
-	}
+	runbookReplayRecovery(t, dir, stamp)
 
 	// The wedged write's issue is back, and new writes work.
 	listOut, _, code := runActIn(t, dir, "list")
@@ -189,6 +169,35 @@ func stagefailReadmeRecoveryBlock(t *testing.T) string {
 		t.Fatal("recovery console block has no commands")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// runbookReplayRecovery runs the README "If a write is interrupted" recovery
+// block literally against dir, through a shell in the host repo, with
+// <timestamp> substituted for stamp. Shared by every test that wedges a
+// write (stale lock, failed commit) and then proves the README runbook
+// recovers it.
+func runbookReplayRecovery(t *testing.T, dir, stamp string) {
+	t.Helper()
+	block := strings.ReplaceAll(stagefailReadmeRecoveryBlock(t), "<timestamp>", stamp)
+	for _, line := range strings.Split(block, "\n") {
+		cmdline := strings.TrimPrefix(line, "$ ")
+		if strings.HasPrefix(cmdline, "act ") {
+			if _, stderr, code := runActIn(t, dir, strings.Fields(cmdline)[1:]...); code != 0 {
+				t.Fatalf("%s: exit %d; stderr=%s", cmdline, code, stderr)
+			}
+			continue
+		}
+		sh := exec.Command("sh", "-c", cmdline)
+		sh.Dir = dir
+		// Identity for the recovery commit only; the command text is the
+		// README's, unmodified.
+		sh.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+		if out, err := sh.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v: %s", cmdline, err, out)
+		}
+	}
 }
 
 // stagefailCountFiles counts regular files under root (0 if absent).
