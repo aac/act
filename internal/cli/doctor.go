@@ -517,8 +517,9 @@ func checkStaleGitLock(paths config.LayoutPaths) []Finding {
 			Severity: "error",
 			Message: fmt.Sprintf(
 				"stale git lock blocks the tracker: %s exists — every act write fails until it is removed. "+
-					"If no git process is running, remove it and recover the stranded ops: "+
-					"rm -f %s && git -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
+					"If no git process is running, remove it and recover the stranded ops "+
+					"(a write that failed on the lock moved its op to .act/.failed-ops/<timestamp>/ops/): "+
+					"rm -f %s && cp -R .act/.failed-ops/<timestamp>/ops/. .act/ops/ && git -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
 				lockRel, lockRel),
 		})
 	}

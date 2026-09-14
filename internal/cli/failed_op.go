@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,14 +45,14 @@ const failedOpQuarantineDir = ".failed-ops"
 // knows that THIS op did not land, so that command is where the
 // correction belongs.
 //
-// SCOPE: the COMMIT step only, not every pre-commit failure. A STAGE
-// failure leaves its op file in ops/ deliberately — its dominant cause
-// is a stale `.act/.git/index.lock`, and README "If a write is
-// interrupted" documents a recovery runbook (`git -C .act add ops`,
-// commit, `act doctor --fix`) that depends on the file still being
-// there. Those two documented contracts disagree about the same class
-// of event and reconciling them is a decision of its own, tracked
-// separately; this helper deliberately does not pre-empt it.
+// SCOPE: every failure at the stage or commit step (act-a3160b). A
+// stage failure used to be the exception — its dominant cause is a
+// stale `.act/.git/index.lock`, and README "If a write is interrupted"
+// once recovered by committing the op file still sitting in ops/. That
+// left `act create` exiting non-zero while `act list` showed the issue.
+// The runbook now copies the envelope back from `.act/.failed-ops/`
+// instead, so one rule covers both steps. The move is a working-tree
+// rename, which a held index.lock does not block.
 //
 // THE ORIGINAL INTENT IS PRESERVED. The commit-failure paths used to
 // leave the file in place explicitly "so the user can retry without
@@ -154,6 +155,53 @@ func quarantineSuffix(quarantined string) string {
 		return ""
 	}
 	return fmt.Sprintf(" (op file preserved at %s; nothing was recorded)", quarantined)
+}
+
+// quarantinedOpError carries the quarantine path of a withdrawn op
+// alongside the stage/commit error that caused the withdrawal. The
+// single-op write helper returns a plain error, and the commands that
+// call it classify that error afterwards (StaleLockDetails, write_failed)
+// — so the path has to travel on the error itself for the structured
+// envelope to report it. Error() keeps the historical plain-text shape
+// ("... (op file preserved at <path>; nothing was recorded)").
+type quarantinedOpError struct {
+	err  error
+	path string
+}
+
+// newQuarantinedOpError wraps err with the quarantine path. An empty path
+// (nothing was moved) returns err unchanged.
+func newQuarantinedOpError(err error, path string) error {
+	if path == "" {
+		return err
+	}
+	return &quarantinedOpError{err: err, path: path}
+}
+
+func (e *quarantinedOpError) Error() string { return e.err.Error() + quarantineSuffix(e.path) }
+func (e *quarantinedOpError) Unwrap() error { return e.err }
+
+// quarantinedOpPath returns the quarantine path carried by err, or "".
+func quarantinedOpPath(err error) string {
+	var qe *quarantinedOpError
+	if errors.As(err, &qe) {
+		return qe.path
+	}
+	return ""
+}
+
+// failedOpStampDir renders the `.act/.failed-ops/<stamp>` directory that
+// holds a quarantined op, relative to the host repo root — the form the
+// README recovery runbook and the stale_git_lock remedy copy from. Returns
+// "" when path is not under a .failed-ops directory.
+func failedOpStampDir(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i, p := range parts {
+		if p == failedOpQuarantineDir && i+1 < len(parts) {
+			return ".act/" + failedOpQuarantineDir + "/" + parts[i+1]
+		}
+	}
+	return ""
 }
 
 // withQuarantineDetail folds the quarantine path into an error-envelope

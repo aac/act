@@ -1750,11 +1750,36 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "every act write fails until the lock is removed",
 		testName:     "TestDocClaim_StaleLock_WedgesWrites",
 	},
+	// act-a3160b: a stage failure now withdraws its op like a commit
+	// failure does. README says the issue is absent from show/list, the op
+	// is preserved under .act/.failed-ops/<timestamp>/ops/, and the runbook
+	// copies it back from there. The asserting test runs the README block
+	// literally. Drift shape: the stage path goes back to leaving the op in
+	// ops/ (exit and `act list` disagree again), or the runbook's cp step
+	// stops matching where the op actually lands.
 	{
-		name:         "stale-lock-op-survives",
+		name:         "stale-lock-failed-write-absent",
 		docFile:      "README.md",
-		claimPattern: "op file is already on disk",
+		claimPattern: "issue does not appear in `act show` or `act list`",
 		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
+	},
+	{
+		name:         "stale-lock-op-preserved-in-failed-ops",
+		docFile:      "README.md",
+		claimPattern: "failed write's op file is moved aside to `.act/.failed-ops/<timestamp>/ops/`",
+		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
+	},
+	{
+		name:         "stale-lock-recovery-copies-back",
+		docFile:      "README.md",
+		claimPattern: "$ cp -R .act/.failed-ops/<timestamp>/ops/. .act/ops/",
+		testName:     "TestDocClaim_StaleLock_OpSurvivesAndRecovers",
+	},
+	{
+		name:         "help-errors-stage-failure-same-rule",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "A STAGE failure follows the same rule.",
+		testName:     "TestDocClaim_StaleLock_CloseStageFailureStaysOpen",
 	},
 	{
 		name:         "stale-lock-recovery-doctor-fix",

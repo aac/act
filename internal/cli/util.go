@@ -264,18 +264,17 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	if err := gops.EnsureBranch(opts.Branch); err != nil {
 		return fmt.Errorf("cli: ensure branch: %w", err)
 	}
-	// NOTE (act-94272e): a stage failure deliberately does NOT withdraw
-	// the op file, even though it leaves the same exit-code-vs-`act show`
-	// disagreement a failed commit used to. The dominant cause of a stage
-	// failure is a stale `.act/.git/index.lock`, and README "If a write is
-	// interrupted" documents — and TestDocClaim_StaleLock_OpSurvivesAnd
-	// Recovers asserts — a recovery sequence that depends on the op file
-	// still being in ops/ (`git -C .act add ops && ... && act doctor
-	// --fix`). Reconciling that documented runbook with the
-	// invisible-until-committed rule is its own decision, tracked
-	// separately; this ticket withdraws ops only where the COMMIT failed.
+	// act-a3160b: a STAGE failure withdraws the op exactly like a commit
+	// failure does — one rule for every pre-commit failure. Nothing was
+	// recorded, so no reader may fold this op. The envelope is preserved
+	// under .act/.failed-ops/<stamp>/ and the path travels on the error
+	// (quarantinedOpError), so the stale_git_lock envelope can name it and
+	// README "If a write is interrupted" recovers from there. The dominant
+	// cause is a stale .act/.git/index.lock; the withdrawal is a plain
+	// rename in the working tree, which that lock does not block.
 	if err := gops.StageOpFile(opPath); err != nil {
-		return fmt.Errorf("cli: stage: %w", err)
+		q := withdrawOpFile(gops, paths.Root, opPath, env)
+		return newQuarantinedOpError(fmt.Errorf("cli: stage: %w", err), q)
 	}
 	// Auto-commit subject is built by BuildOpCommitMessage; the canonical
 	// format is `act-op: (act-XXXX) <op_type>`. Doctor's orphan-close
@@ -304,7 +303,7 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		// rebuild it.
 		_ = unstage(gops, opPath)
 		q := withdrawOpFile(gops, paths.Root, opPath, env)
-		return fmt.Errorf("cli: commit: %w%s", err, quarantineSuffix(q))
+		return newQuarantinedOpError(fmt.Errorf("cli: commit: %w", err), q)
 	}
 
 	// Phase 2 ticket 3b: --offline path. Defer the push by appending a

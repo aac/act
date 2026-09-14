@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (pinned by `TestDocClaim_Update_RetitleKeepsCommitCorrelation`).
 
 ### Changed
+- **A write that fails on a stale git lock no longer reads back as if it
+  landed (act-a3160b).** A failure at the stage step (usually a stale
+  `.act/.git/index.lock`) left its op file in `.act/ops`, so `act create`
+  exited non-zero while `act list` showed the issue. Stage failures now follow
+  the same rule as commit failures: the op moves to
+  `.act/.failed-ops/<timestamp>/ops/`, the `stale_git_lock` envelope reports it
+  as `details.quarantined_op` and its remedy copies it back, and README "If a
+  write is interrupted" recovers from there. Nothing is lost; only the path
+  changed.
 - **Reads no longer refold the whole op log before answering (act-43d11f).**
   Every `act list` / `ready` / `search` / `blocks` — and every pre-write status
   check inside `create`, `close`, `reopen`, `update` and `dep add` — used to

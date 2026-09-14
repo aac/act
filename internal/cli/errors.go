@@ -395,15 +395,24 @@ func StaleLockDetails(err error) (message string, details map[string]any, isStal
 		return "", nil, false
 	}
 	lockRel := filepath.ToSlash(filepath.Join(".act", ".git", se.LockFile))
+	// act-a3160b: the failed write's op was withdrawn to
+	// .act/.failed-ops/<stamp>/, so the remedy copies it back from there
+	// before committing — the same runbook README documents.
+	q := quarantinedOpPath(err)
+	restore := ""
+	if stampDir := failedOpStampDir(q); stampDir != "" {
+		restore = fmt.Sprintf("cp -R %s/ops/. .act/ops/ && ", stampDir)
+	}
 	remedy := fmt.Sprintf(
 		"if no git process is running, remove it and recover the stranded ops: "+
-			"rm -f %s && git -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
-		lockRel)
+			"rm -f %s && %sgit -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
+		lockRel, restore)
 	message = fmt.Sprintf("stale git lock blocks the tracker: %s exists; %s", lockRel, remedy)
 	details = map[string]any{
 		"lock_file": lockRel,
 		"remedy":    remedy,
 	}
+	details = withQuarantineDetail(details, q)
 	return message, details, true
 }
 

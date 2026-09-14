@@ -461,14 +461,24 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}, 1
 		}
 
-		// Stage the close op file. See the act-94272e note on the stage
-		// step in WriteOpAndAutoCommit: a stage failure keeps its op file
-		// in ops/ because README's stale-lock recovery runbook depends on
-		// it. Only the commit-failure path below withdraws the op.
+		// Stage the close op file. act-a3160b: a stage failure withdraws
+		// the op just like the commit-failure path below (see the note on
+		// the stage step in WriteOpAndAutoCommit) — nothing landed, so the
+		// fold must not report this issue closed. The envelope is kept,
+		// its path reported in details.quarantined_op.
 		if err := gops.StageOpFile(opPath); err != nil {
+			q := withdrawOpFile(gops, paths.Root, opPath, env)
+			if msg, details, isLock := StaleLockDetails(newQuarantinedOpError(err, q)); isLock {
+				return CloseErrorOutput{
+					Error:   ErrStaleGitLock,
+					Message: msg,
+					Details: details,
+				}, 1
+			}
 			return CloseErrorOutput{
 				Error:   "stage_failed",
-				Message: err.Error(),
+				Message: err.Error() + quarantineSuffix(q),
+				Details: withQuarantineDetail(nil, q),
 			}, 1
 		}
 

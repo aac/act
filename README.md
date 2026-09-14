@@ -163,16 +163,23 @@ structured `stale_git_lock` error naming the lock file and the recovery
 sequence, and `act doctor` detects the lingering lock as an error finding (it
 also catches the index divergence that tends to follow).
 
-Nothing is lost in this state: the failed write's op file is already on disk,
-and the op files — not the nested git history — are the source of truth.
+The failed write did not happen, and act reports it that way everywhere: its
+issue does not appear in `act show` or `act list`. Nothing is lost, though. The
+failed write's op file is moved aside to `.act/.failed-ops/<timestamp>/ops/`
+rather than deleted, and the error names that path (`details.quarantined_op`
+under `--json`). This is the same rule as any other write whose commit fails.
 
-To recover:
+To recover, remove the lock, copy the preserved op back, and commit it:
 
 ```console
 $ rm -f .act/.git/index.lock .act/.git/HEAD.lock
+$ cp -R .act/.failed-ops/<timestamp>/ops/. .act/ops/
 $ git -C .act add ops && git -C .act commit -m "recover ops stranded by a stale lock"
 $ act doctor --fix
 ```
+
+If you would rather not replay it, skip the `cp` and just re-run the command
+once the lock is gone. That is safe, because nothing was recorded.
 
 A note for sandboxed environments that gate file deletion (Claude's Cowork,
 for example): a denied delete can make git's own temp-file cleanup fail
