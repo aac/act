@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/aac/act/internal/claim"
@@ -1044,7 +1043,7 @@ func (g *GitOps) maybeFireOrchestratorSync() {
 		cmd.Stdout = devNull
 		cmd.Stderr = devNull
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = setsidAttr()
 	if startErr := cmd.Start(); startErr != nil {
 		// Best-effort: nothing to do — close handles and move on. The
 		// next write will retry the trigger; an explicit `act remote
