@@ -223,6 +223,19 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "fresh-clone wording is unchanged",
 		testName:     "TestDocClaim_TrackerRemoteAbsentKeepsFreshCloneWording",
 	},
+	// act-15ca2b: {repo} inside a linked worktree is the main repo's name.
+	{
+		name:         "help-tracker-remote-worktree-repo",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "Inside a linked git worktree, {repo} is the main repo's directory name.",
+		testName:     "TestDocClaim_TrackerRemoteWorktreeUsesMainRepoName",
+	},
+	{
+		name:         "spec-tracker-remote-worktree-repo",
+		docFile:      "docs/spec.md",
+		claimPattern: "Inside a linked git worktree `{repo}` is the main repository's directory name",
+		testName:     "TestDocClaim_TrackerRemoteWorktreeUsesMainRepoName",
+	},
 	{
 		name:         "spec-tracker-not-checked-out",
 		docFile:      "docs/spec.md",

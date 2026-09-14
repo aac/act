@@ -19,7 +19,8 @@ package cli
 //     ~/.config/act/tracker-remote), first non-empty line.
 //
 // The value is a git URL or path template; `{repo}` is replaced with the
-// basename of the host repo root, and a leading `~/` expands to the home
+// folder name of the main repository — inside a linked git worktree, the
+// repo the worktree belongs to, not the worktree's own folder — and a leading `~/` expands to the home
 // directory. Unset (the default) means no probe runs and the no-state
 // guard behaves exactly as before.
 
@@ -118,6 +119,36 @@ func isLocalGitPath(url string) (string, bool) {
 	return url, true
 }
 
+// trackerRemoteRepoName returns the name `{repo}` expands to for the host
+// repo at hostRoot: the folder name of the main repository (act-15ca2b).
+//
+// In a linked worktree (e.g. <repo>/.claude/worktrees/<name>) the host root
+// is the worktree folder, whose name has nothing to do with where the
+// tracker lives; git's common dir points back at the main repository's
+// .git, whose parent folder is the name the operator's remotes are keyed
+// by. Any failure asking git — or a common dir that is not a `.git`
+// folder — falls back to hostRoot's basename, which is also the answer for
+// an ordinary checkout.
+func trackerRemoteRepoName(hostRoot string) string {
+	fallback := filepath.Base(hostRoot)
+	out, err := exec.Command("git", "-C", hostRoot, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return fallback
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" {
+		return fallback
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(hostRoot, common)
+	}
+	common = filepath.Clean(common)
+	if filepath.Base(common) != ".git" {
+		return fallback
+	}
+	return filepath.Base(filepath.Dir(common))
+}
+
 // DetectTrackerRemote resolves the configured tracker remote for the host
 // repo at hostRoot and probes whether it exists. It never fails: any problem
 // resolving or probing degrades to "not found" (plus Unconfirmed for a
@@ -127,7 +158,7 @@ func DetectTrackerRemote(hostRoot string) TrackerRemote {
 	if tmpl == "" {
 		return TrackerRemote{}
 	}
-	url := strings.ReplaceAll(tmpl, TrackerRemoteRepoPlaceholder, filepath.Base(hostRoot))
+	url := strings.ReplaceAll(tmpl, TrackerRemoteRepoPlaceholder, trackerRemoteRepoName(hostRoot))
 	if strings.HasPrefix(url, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			url = filepath.Join(home, url[2:])

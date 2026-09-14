@@ -796,6 +796,7 @@ NO ACT STATE IN THIS CHECKOUT
     # (default ~/.config/act/tracker-remote)
 
   {repo} is the host repo's directory name; a leading ~/ is expanded.
+  Inside a linked git worktree, {repo} is the main repo's directory name.
   When that remote exists but this checkout has no .act/ (or no
   .act/config.json), every guarded command exits 3 with
   tracker_not_checked_out, naming the remote and the recovery command,
