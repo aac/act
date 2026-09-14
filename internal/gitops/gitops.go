@@ -190,20 +190,37 @@ func NewGitOps(repoRoot string) *GitOps {
 // act makes into a caller's host repo keep the host's git configuration,
 // including its background-maintenance preference.
 //
-// KNOWN GAP — `git push` ignores this (measured on git 2.50.1, act-40e336).
-// Same repo, same config, same invocation shape:
+// PUSH — the override cannot reach the process that detaches, so act
+// passes it by another route, and only where that route is safe
+// (act-25ba49; measured with GIT_TRACE on git 2.50.1 and 2.55.0).
 //
-//	commit -c maintenance.autoDetach=false → maintenance run --auto --no-detach
-//	push   -c maintenance.autoDetach=false → maintenance run --auto --detach
+// `git push` itself never runs auto-maintenance. The detached
+// `git maintenance run --auto --quiet --detach` seen after a push is
+// spawned by the REMOTE side: `git receive-pack`, running inside the
+// remote repository, fires it after accepting the pack. The pushing git
+// launches receive-pack with GIT_CONFIG_PARAMETERS unset, so the `-c`
+// overrides above never reach it. That is intended git behaviour (the
+// remote's maintenance policy belongs to the remote), not a bug, and
+// `-c maintenance.auto=false` on the push is just as invisible to it.
 //
-// `commit` and `fetch` (including `fetch --dry-run`) honor the override;
-// `push` spawns the detached child anyway. So routing every nested-repo
-// invocation through this handle removes the FOOTGUN — no call site can
-// forget the override — but it does not make act push-detach-free, and
-// this comment is the honest statement of that. Suppressing maintenance
-// outright for pushes (`maintenance.auto=false`) would work but trades
-// "wait for it" for "never do it", a different policy than the one this
-// variable encodes; that call is tracked separately.
+// What does reach it is the receive-pack command line itself:
+// `push --receive-pack='git -c maintenance.autoDetach=false receive-pack'`
+// makes receive-pack fire `--no-detach`, so the push waits for the
+// remote's maintenance the way `git commit` waits for the local one.
+// gitArgs adds that flag to a nested-repo push ONLY when the destination
+// resolves to a local path or file:// URL (see pushReceivePackArgs) —
+// the shape of same-machine bare tracker remotes and the test fixtures,
+// where the detached child writes into a directory act or its tests may
+// be about to lock or remove.
+//
+// It is deliberately NOT applied to ssh or http(s) remotes, nor when
+// `remote.<name>.receivepack` is configured. Hosted ssh remotes
+// (GitHub-style forced commands) accept only a plain
+// `git-receive-pack '<repo>'`, so a rewritten command would break every
+// push to them; http transports ignore --receive-pack entirely; and an
+// explicit receivepack setting is the operator's choice to keep. On those
+// remotes a detached maintenance child may still run, but on the remote
+// host, outside anything act locks or removes.
 var noDetachedMaintenance = []string{
 	"-c", "maintenance.autoDetach=false",
 	"-c", "gc.autoDetach=false",
@@ -232,7 +249,91 @@ func (g *GitOps) gitArgs(args []string) []string {
 		"--git-dir="+g.gitDir,
 		"--work-tree="+g.RepoRoot,
 	)
+	if len(args) > 0 && args[0] == "push" {
+		if extra := g.pushReceivePackArgs(args[1:]); len(extra) > 0 {
+			full = append(full, "push")
+			full = append(full, extra...)
+			return append(full, args[1:]...)
+		}
+	}
 	return append(full, args...)
+}
+
+// foregroundReceivePack is the receive-pack command a local-remote push
+// runs instead of the default, so the remote side's auto-maintenance
+// runs --no-detach (see the PUSH section of noDetachedMaintenance). Git
+// hands --receive-pack to a shell for local transports, so it travels as
+// one argv element with no quoting of its own.
+const foregroundReceivePack = "git -c maintenance.autoDetach=false receive-pack"
+
+// pushReceivePackArgs returns the extra push flags that force the remote
+// receive-pack's maintenance into the foreground, or nil when they must
+// not be applied: the destination is not a local path / file:// URL, the
+// remote configures its own receivepack, or the caller already chose a
+// receive-pack. pushArgs is the push argv after the "push" token.
+func (g *GitOps) pushReceivePackArgs(pushArgs []string) []string {
+	dest := ""
+	for _, a := range pushArgs {
+		if a == "--receive-pack" || a == "--exec" ||
+			strings.HasPrefix(a, "--receive-pack=") || strings.HasPrefix(a, "--exec=") {
+			return nil
+		}
+		if dest == "" && !strings.HasPrefix(a, "-") {
+			dest = a
+		}
+	}
+	if dest == "" {
+		// A destination-less push resolves its remote from branch config;
+		// act never issues that shape, so don't guess.
+		return nil
+	}
+	url := dest
+	if out, err := g.probeGit("remote", "get-url", "--push", dest); err == nil {
+		url = strings.TrimSpace(out)
+		if rp, err := g.probeGit("config", "--get", "remote."+dest+".receivepack"); err == nil && strings.TrimSpace(rp) != "" {
+			return nil
+		}
+	}
+	// A name git does not know as a remote is itself the URL — the same
+	// fallback git's own remote lookup applies.
+	if !pushURLIsLocal(url) {
+		return nil
+	}
+	return []string{"--receive-pack=" + foregroundReceivePack}
+}
+
+// probeGit runs a read-only git query against the nested repo on behalf
+// of gitArgs. It pins discovery like every nested invocation but does not
+// recurse through gitArgs (a probe is never a push).
+func (g *GitOps) probeGit(args ...string) (string, error) {
+	r := g.runner
+	if r == nil {
+		r = exec.Command
+	}
+	full := append([]string{"--git-dir=" + g.gitDir, "--work-tree=" + g.RepoRoot}, args...)
+	cmd := r("git", full...)
+	cmd.Dir = g.RepoRoot
+	if len(g.Env) > 0 {
+		cmd.Env = append(os.Environ(), g.Env...)
+	}
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// pushURLIsLocal mirrors git's local-transport test (url_is_local_not_ssh):
+// file:// URLs, and anything without a scheme whose first ':' (if any)
+// comes after a '/'. scp-style `host:path` and every other `scheme://`
+// are not local.
+func pushURLIsLocal(url string) bool {
+	if strings.HasPrefix(url, "file://") {
+		return true
+	}
+	if strings.Contains(url, "://") {
+		return false
+	}
+	colon := strings.Index(url, ":")
+	slash := strings.Index(url, "/")
+	return colon < 0 || (slash >= 0 && slash < colon)
 }
 
 // ActGitOps is the handle authorized to write act ops and query the act

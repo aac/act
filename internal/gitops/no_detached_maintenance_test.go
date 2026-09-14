@@ -118,3 +118,62 @@ func TestCommit_FiresMaintenanceWithNoDetach(t *testing.T) {
 		t.Errorf("auto-maintenance was not forced into the foreground; act's commit can return while a git daemon still writes into .act/.git.\ntrace:\n%s", trace)
 	}
 }
+
+// pushmaintTracing returns a runner that sets GIT_TRACE for every git it
+// starts. The variable is inherited by the receive-pack a local push
+// spawns, so the trace also records what the REMOTE side runs.
+func pushmaintTracing(tracePath string) func(string, ...string) *exec.Cmd {
+	return func(name string, args ...string) *exec.Cmd {
+		cmd := exec.Command(name, args...)
+		cmd.Env = append(os.Environ(), "GIT_TRACE="+tracePath)
+		return cmd
+	}
+}
+
+// TestPush_RemoteMaintenanceRunsNoDetach is the behavioral half of
+// act-25ba49. A push's detached auto-maintenance is spawned by the remote
+// receive-pack, which the local `-c` overrides never reach; act therefore
+// passes a foreground receive-pack for local remotes. This pushes to a
+// real local bare repo with GIT_TRACE on and asserts the maintenance child
+// receive-pack fires is `--no-detach` — the boundary that decides whether
+// a process outlives the push.
+func TestPush_RemoteMaintenanceRunsNoDetach(t *testing.T) {
+	host := initHostWithIgnoredAct(t)
+	actDir := filepath.Join(host, ".act")
+	initNestedActRepo(t, actDir)
+
+	bare := filepath.Join(t.TempDir(), "tracker.git")
+	runGit(t, "", "init", "-q", "--bare", "-b", "main", bare)
+	// Make the remote's auto-maintenance as eager as possible so its
+	// receive-pack has a reason to fire it (the nudge the research used).
+	runGit(t, bare, "config", "gc.auto", "1")
+	runGit(t, actDir, "remote", "add", "origin", bare)
+
+	tracePath := filepath.Join(t.TempDir(), "git-trace.log")
+	g := NewActGitOps(actDir).WithRunner(pushmaintTracing(tracePath))
+	if out, err := g.RunGitCombined("push", "origin", "main"); err != nil {
+		t.Fatalf("push: %v: %s", err, out)
+	}
+
+	body, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatalf("read git trace: %v", err)
+	}
+	trace := string(body)
+	if !strings.Contains(trace, "receive-pack") {
+		t.Fatalf("trace shows no receive-pack; the push did not use the local transport:\n%s", trace)
+	}
+	if !strings.Contains(trace, "maintenance run --auto") {
+		t.Skipf("this git's receive-pack does not fire auto-maintenance; nothing to detach\n%s", trace)
+	}
+	for _, line := range strings.Split(trace, "\n") {
+		if strings.Contains(line, "maintenance run --auto") && strings.Contains(line, "--detach") &&
+			!strings.Contains(line, "--no-detach") {
+			t.Errorf("remote auto-maintenance was detached; a push to a local tracker can return while a git daemon still writes into it.\ntrace:\n%s", trace)
+			return
+		}
+	}
+	if !strings.Contains(trace, "--no-detach") {
+		t.Errorf("remote auto-maintenance not forced into the foreground.\ntrace:\n%s", trace)
+	}
+}

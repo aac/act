@@ -99,6 +99,95 @@ func TestNestedGitInvocationsCarryOverrides(t *testing.T) {
 	}
 }
 
+// pushmaintInitActRepo makes a real nested repo with the named remotes
+// configured (name → push URL), so push-destination resolution runs
+// against git's own config rather than a guess.
+func pushmaintInitActRepo(t *testing.T, remotes map[string]string) string {
+	t.Helper()
+	actDir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", actDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for name, url := range remotes {
+		if out, err := exec.Command("git", "-C", actDir, "remote", "add", name, url).CombinedOutput(); err != nil {
+			t.Fatalf("git remote add %s: %v: %s", name, err, out)
+		}
+	}
+	return actDir
+}
+
+// TestNestedPushReceivePackOnlyForLocalRemotes asserts at the argv
+// boundary (act-25ba49) that a nested-repo push forces the remote
+// receive-pack's maintenance into the foreground only where that is safe:
+// local-path and file:// destinations carry --receive-pack; ssh, https and
+// a remote with its own receivepack configured do not — a rewritten
+// receive-pack command breaks GitHub-style ssh hosts.
+func TestNestedPushReceivePackOnlyForLocalRemotes(t *testing.T) {
+	const want = "--receive-pack=git -c maintenance.autoDetach=false receive-pack"
+	bare := filepath.Join(t.TempDir(), "tracker.git")
+	actDir := pushmaintInitActRepo(t, map[string]string{
+		"localpath": bare,
+		"fileurl":   "file://" + bare,
+		"sshscp":    "git@github.com:example/tracker.git",
+		"sshurl":    "ssh://git@example.com/tracker.git",
+		"https":     "https://example.com/tracker.git",
+		"ownrp":     bare,
+	})
+	if out, err := exec.Command("git", "-C", actDir, "config", "remote.ownrp.receivepack", "git-receive-pack").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v: %s", err, out)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		carry bool
+	}{
+		{"local path remote", []string{"push", "localpath", "main"}, true},
+		{"file:// remote", []string{"push", "-u", "fileurl", "main"}, true},
+		{"bare local path, no remote", []string{"push", bare, "main"}, true},
+		{"scp-style ssh remote", []string{"push", "sshscp", "main"}, false},
+		{"ssh:// remote", []string{"push", "sshurl", "main"}, false},
+		{"https remote", []string{"push", "https", "main"}, false},
+		{"remote with receivepack configured", []string{"push", "ownrp", "main"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &argvRecorder{}
+			g := gitops.NewActGitOps(actDir)
+			// Record every call, but never let the push itself reach the
+			// network: the remote-resolution probes run real git, the push
+			// is replaced by a no-op once its argv is captured.
+			g.WithRunner(func(name string, args ...string) *exec.Cmd {
+				cmd := rec.runner(name, args...)
+				if hasAll(args, "push") {
+					return exec.Command("true")
+				}
+				return cmd
+			})
+			_, _ = g.RunGitCombined(tc.args...)
+
+			argv := rec.find(t, "push")
+			if got := hasAll(argv, want); got != tc.carry {
+				t.Errorf("push to %s: carries --receive-pack override = %v, want %v; argv: %v",
+					tc.args, got, tc.carry, argv)
+			}
+			if tc.carry {
+				pushAt, rpAt := -1, -1
+				for i, a := range argv {
+					if a == "push" && pushAt < 0 {
+						pushAt = i
+					}
+					if a == want {
+						rpAt = i
+					}
+				}
+				if rpAt < pushAt {
+					t.Errorf("--receive-pack must follow the push subcommand: %v", argv)
+				}
+			}
+		})
+	}
+}
+
 // TestHostGitInvocationsKeepHostConfig is the counterpart fence: act must
 // NOT impose its maintenance preference on the caller's repo. The plain
 // handle (what runHostGitIn and hostHasHEAD use) passes args through
