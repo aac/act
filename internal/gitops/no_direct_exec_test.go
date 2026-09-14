@@ -62,6 +62,11 @@ var gitExecAllowlist = map[string]string{
 	// a node id. Not scoped to any repo act owns.
 	"cmd/act/main.go": "global `git config user.email` read for node-id derivation",
 
+	// `git ls-remote <url>` probes a configured tracker remote when this
+	// checkout has NO nested repo (act-a025ab) — there is nothing to pin a
+	// handle to, and ls-remote runs no maintenance.
+	"internal/cli/trackerremote.go": "ls-remote probe of a remote when no nested repo exists",
+
 	// Test-support fixtures build throwaway repos; they are not act's
 	// production write path.
 	"internal/testfixtures/remote.go": "test fixture repo builder",
