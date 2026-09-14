@@ -5,11 +5,15 @@ name: Release Smoke
 # concurrency tests), and drives the canonical end-to-end smoke workflow
 # via .github/scripts/smoke.sh.
 #
-# Triggered on `v*` tag push only — runs alongside the release build so a
-# tagged release that breaks the smoke surfaces a failure notification.
-# Per-push / per-PR runs were dropped to cut Actions burn; regressions in
-# normal development show up via the plain `ci.yml` job and through
-# dogfooding.
+# Under the commit-to-main release model (see release.yml and AGENTS.md)
+# there are no tags and no GitHub Releases — a release IS the commit that
+# lands the stamped `bin/act-<os>-<arch>` artifacts on the default branch.
+# So this triggers on a push to the default branch that touches `bin/**`,
+# which is exactly (and only) what a release commit does; ordinary
+# development commits don't touch `bin/` and don't re-trigger this job.
+# Per-push / per-PR runs on every commit were dropped to cut Actions burn;
+# regressions in normal development show up via the plain `ci.yml` job and
+# through dogfooding.
 #
 # Originally a 3-row matrix (cc-laptop / cc-web / cowork) intended to
 # simulate the three target agent sandboxes, but the rows had no
@@ -22,8 +26,10 @@ name: Release Smoke
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'bin/**'
 
 permissions:
   contents: read
