@@ -164,6 +164,10 @@ type UpdateResult struct {
 	ID         string `json:"id"`
 	OpsWritten int    `json:"ops_written"`
 	Committed  bool   `json:"committed"`
+	// AlreadyBlocked marks the zero-op result of a lone `--status blocked`:
+	// the issue is blocked by its existing dep edge, so nothing was written
+	// (act-6ef7b0). Omitted from JSON otherwise.
+	AlreadyBlocked bool `json:"already_blocked,omitempty"`
 }
 
 // UpdateClaimResult is the JSON shape returned by `act update --claim`.
@@ -762,15 +766,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 					return errOut, code
 				}
 			}
-		} else {
-			// --status blocked: 'blocked' is derived from open blocks dep
-			// edges (gated in Step 6b). The update_field op is a projection
-			// no-op but kept for the audit record.
-			val, _ := json.Marshal(*opts.Status)
-			if errOut, code := addOp("update_field", op.UpdateFieldPayload{Field: "status", Value: val}); code != 0 {
-				return errOut, code
-			}
 		}
+		// --status blocked writes no op (act-6ef7b0): 'blocked' is derived
+		// from open blocks dep edges, and Step 6b already proved one exists.
+		// An update_field{status:blocked} op would be a projection no-op
+		// that applyUpdateField ignores, and counting it made the command
+		// report "wrote 1 op" for a write that changed nothing.
 	}
 	if opts.Title != nil {
 		val, _ := json.Marshal(*opts.Title)
@@ -917,6 +918,13 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// its own auto-commit (unless --no-commit); so we end up with N commits
 	// when N flags were supplied. The JSON contract: committed=true means
 	// at least one commit happened.
+	// Zero ops (act-6ef7b0): the only flag was --status blocked on an issue
+	// whose blocks dep edge already makes it blocked. Nothing is written,
+	// committed, or pushed, and the result says so rather than claiming a
+	// commit.
+	if len(envelopes) == 0 {
+		return UpdateResult{ID: full, OpsWritten: 0, Committed: false, AlreadyBlocked: true}, 0
+	}
 	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
 		// Phase 1: writes target the nested .act/ git repo (delta item 2).
@@ -1243,6 +1251,12 @@ func depEdgeExists(rows []index.Row, childID, parentID, edgeType string) bool {
 // line; the trailing newline is included so callers can pipe directly to
 // stdout. For claim results, FormatUpdateClaimHuman is used instead.
 func FormatUpdateHuman(res UpdateResult) string {
+	if res.OpsWritten == 0 {
+		if res.AlreadyBlocked {
+			return fmt.Sprintf("Unchanged %s: already blocked by its dep edge (no ops written)\n", res.ID)
+		}
+		return fmt.Sprintf("Unchanged %s (no ops written)\n", res.ID)
+	}
 	verb := "wrote"
 	if !res.Committed {
 		verb = "staged"
