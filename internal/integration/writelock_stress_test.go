@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/flock"
+	"github.com/aac/act/internal/gitops"
 )
 
 // wlockStoreFixture is a host repo whose nested .act/.git pushes to a local
@@ -47,12 +50,15 @@ func wlockNewStore(t *testing.T) wlockStoreFixture {
 	mustGitIn(t, "", "--git-dir="+gd, "--work-tree="+filepath.Join(shared, ".act"), "push", "-q", "-u", "origin", "main")
 
 	peer := newHostRepo(t)
-	peerAct := filepath.Join(peer, ".act")
-	mustGitIn(t, "", "clone", "-q", bare, peerAct)
-	if _, code := cli.RunInit(peer, cli.InitOptions{Force: true, MachineID: "machine-peer", GitEmail: "peer@example.com", Now: now}); code != 0 {
-		t.Fatalf("RunInit peer: code=%d", code)
+	if out, code := cli.RunBootstrapWorker(cli.BootstrapWorkerOptions{FromRemoteURL: bare, Target: peer}); code != 0 {
+		t.Fatalf("bootstrap peer: code=%d out=%+v", code, out)
 	}
 	wlockConfigureActRepo(t, peer, "peer@example.com")
+	// bootstrap-worker strips hooks/ from the worker tree but leaves them
+	// tracked, so the peer's tree carries a tracked deletion that makes
+	// every rebase refuse ("You have unstaged changes"). Restore them so
+	// the peer exercises real rebases instead of that unrelated wedge.
+	mustGitIn(t, "", "--git-dir="+filepath.Join(peer, ".act", ".git"), "--work-tree="+filepath.Join(peer, ".act"), "checkout", "--", ".")
 	return wlockStoreFixture{shared: shared, peer: peer, bare: bare}
 }
 
@@ -133,24 +139,41 @@ func wlockRemoteTitles(t *testing.T, bare string) map[string]bool {
 	return got
 }
 
-// TestWriteLockStress is the act-38330b evidence run. It is expensive, so it
-// only runs when ACT_WLOCK_STRESS_ITERS is set:
+// TestWriteLockStress drives concurrent `act` processes through the nested
+// .act write pipeline and asserts that no write fails, no acked create is
+// missing from the remote, and the shared checkout is left untorn.
+//
+// The default suite runs a small instance (2 iterations x 6 writers, a few
+// seconds; skipped under -short). The act-38330b evidence run is:
 //
 //	ACT_WLOCK_STRESS_ITERS=20 ACT_WLOCK_STRESS_WRITERS=8 \
 //	  go test ./internal/integration -run TestWriteLockStress -v -timeout 30m
+//
+// Recorded 2026-09-14 (darwin/arm64), 20 iterations x (8 shared-checkout
+// writers doing create+update, 2 peer-clone creates):
+//
+//   - ACT_TEST_DISABLE_WRITE_LOCK=1 (no lock): 221 runs, 159 non-zero exits
+//     (147 stale_git_lock naming a live sibling's index.lock, 12
+//     write_failed at commit), 15 creates acked with exit 0 that never
+//     reached the remote, 26 of 200 titles on the remote.
+//   - with the lock: 360 runs, 0 non-zero exits, 0 lost, 200 of 200 titles
+//     on the remote, shared tree clean, fsck clean (1 peer push deferred to
+//     .pending-pushes after 5 contended retries and flushed by the next
+//     write, the documented degraded path).
 func TestWriteLockStress(t *testing.T) {
-	iters, _ := strconv.Atoi(os.Getenv("ACT_WLOCK_STRESS_ITERS"))
-	if iters <= 0 {
-		t.Skip("set ACT_WLOCK_STRESS_ITERS to run the write-lock stress test")
+	iters, writers := 2, 6
+	if v, err := strconv.Atoi(os.Getenv("ACT_WLOCK_STRESS_ITERS")); err == nil && v > 0 {
+		iters = v
+	} else if testing.Short() {
+		t.Skip("skipping write-lock stress under -short")
 	}
-	writers := 8
 	if v, err := strconv.Atoi(os.Getenv("ACT_WLOCK_STRESS_WRITERS")); err == nil && v > 0 {
 		writers = v
 	}
 	fx := wlockNewStore(t)
 
 	failures := map[string]int{}
-	totalRuns, totalFail, lost := 0, 0, 0
+	totalRuns, totalFail, lost, deferred := 0, 0, 0, 0
 	var allTitles []string
 	var okTitles []string
 	for it := 0; it < iters; it++ {
@@ -160,12 +183,17 @@ func TestWriteLockStress(t *testing.T) {
 			totalRuns++
 			if r.code != 0 {
 				totalFail++
-				key := fmt.Sprintf("%s exit=%d %s", r.args[0], r.code, wlockErrCode(r.stdout+r.stderr))
+				key := fmt.Sprintf("%s exit=%d %s", r.args[0], r.code, wlockErrCode(r.stdout))
 				failures[key]++
 				if failures[key] <= 2 {
-					t.Logf("FAIL %v exit=%d\nstdout: %s\nstderr: %s", r.args, r.code, strings.TrimSpace(r.stdout), strings.TrimSpace(r.stderr))
+					t.Errorf("act %v exit=%d\nstdout: %s\nstderr: %s", r.args, r.code, strings.TrimSpace(r.stdout), strings.TrimSpace(r.stderr))
 				}
-			} else if r.args[0] == "create" {
+				continue
+			}
+			if strings.Contains(r.stderr, "NOT PUSHED") {
+				deferred++
+			}
+			if r.args[0] == "create" {
 				okTitles = append(okTitles, r.args[1])
 			}
 		}
@@ -185,35 +213,71 @@ func TestWriteLockStress(t *testing.T) {
 	for _, title := range okTitles {
 		if !remote[title] {
 			lost++
-			t.Errorf("LOST: create %q exited 0 but its op is not on the remote", title)
+			t.Errorf("create %q exited 0 but its op is not on the remote", title)
 		}
 	}
-	status, _ := runGitIn("", "--git-dir="+filepath.Join(fx.shared, ".act", ".git"), "--work-tree="+filepath.Join(fx.shared, ".act"), "status", "--porcelain")
-	fsck, fsckErr := runGitIn("", "--git-dir="+filepath.Join(fx.shared, ".act", ".git"), "fsck", "--no-dangling")
-	t.Logf("SUMMARY iters=%d writers=%d peers=2 runs=%d nonzero=%d lost_acked_creates=%d titles=%d on_remote=%d",
-		iters, writers, totalRuns, totalFail, lost, len(allTitles), len(remote))
+	gd := filepath.Join(fx.shared, ".act", ".git")
+	status, _ := runGitIn("", "--git-dir="+gd, "--work-tree="+filepath.Join(fx.shared, ".act"), "status", "--porcelain")
+	for _, line := range strings.Split(strings.TrimRight(status, "\n"), "\n") {
+		if line != "" && !strings.HasPrefix(line, "??") {
+			t.Errorf("shared checkout torn (tracked change left behind): %q", line)
+		}
+	}
+	if fsck, err := runGitIn("", "--git-dir="+gd, "fsck", "--no-dangling"); err != nil {
+		t.Errorf("fsck on shared .act/.git failed: %v\n%s", err, fsck)
+	}
+	t.Logf("SUMMARY iters=%d writers=%d peers=2 runs=%d nonzero=%d push_deferred=%d lost_acked_creates=%d titles=%d on_remote=%d",
+		iters, writers, totalRuns, totalFail, deferred, lost, len(allTitles), len(remote))
 	for k, v := range failures {
 		t.Logf("  failure class %q x%d", k, v)
 	}
-	t.Logf("shared status --porcelain:\n%s", status)
-	if fsckErr != nil {
-		t.Errorf("fsck on shared .act/.git failed: %v\n%s", fsckErr, fsck)
-	}
 }
 
-// wlockErrCode extracts the envelope error code from act's JSON output.
-func wlockErrCode(s string) string {
-	i := strings.Index(s, `"code"`)
-	if i < 0 {
-		first := strings.SplitN(strings.TrimSpace(s), "\n", 2)[0]
-		if len(first) > 80 {
-			first = first[:80]
-		}
-		return first
+// wlockErrCode extracts the envelope `error` code from act's --json output.
+func wlockErrCode(stdout string) string {
+	var env struct {
+		Error string `json:"error"`
 	}
-	rest := s[i:]
-	if j := strings.Index(rest, ","); j > 0 {
-		rest = rest[:j]
+	if json.Unmarshal([]byte(stdout), &env) == nil && env.Error != "" {
+		return env.Error
 	}
-	return rest
+	return "(no envelope)"
+}
+
+// TestWriteLock_TimeoutEnvelope: a write that cannot get the write lock
+// within the bounded wait exits 1 with a write_lock_timeout envelope naming
+// the lock file, and leaves no op behind.
+func TestWriteLock_TimeoutEnvelope(t *testing.T) {
+	host := newHostRepo(t)
+	if _, code := cli.RunInit(host, cli.InitOptions{MachineID: "machine-wlock", GitEmail: "w@example.com"}); code != 0 {
+		t.Fatalf("RunInit: code=%d", code)
+	}
+	wlockConfigureActRepo(t, host, "w@example.com")
+	release, locked, err := flock.TryLock(filepath.Join(host, ".act", gitops.WriteLockFile))
+	if err != nil || !locked {
+		t.Fatalf("hold write lock: locked=%v err=%v", locked, err)
+	}
+	defer release()
+
+	cmd := exec.Command(actBinaryPath, "create", "--json", "wlock-timeout")
+	cmd.Dir = host
+	cmd.Env = append(os.Environ(), "ACT_WRITE_LOCK_TIMEOUT_MS=200")
+	out, _ := cmd.Output()
+	if cmd.ProcessState.ExitCode() != 1 {
+		t.Fatalf("exit = %d, want 1; stdout=%s", cmd.ProcessState.ExitCode(), out)
+	}
+	var env struct {
+		Error   string         `json:"error"`
+		Message string         `json:"message"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("envelope: %v\n%s", err, out)
+	}
+	if env.Error != "write_lock_timeout" || env.Details["lock_file"] != ".act/.write.lock" {
+		t.Fatalf("envelope = %+v, want write_lock_timeout with lock_file .act/.write.lock", env)
+	}
+	if n := countJSONFilesUnder(t, filepath.Join(host, ".act", "ops")); n != 0 {
+		t.Fatalf("%d op files left behind after a lock timeout, want 0", n)
+	}
 }

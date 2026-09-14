@@ -247,7 +247,18 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		}
 	}
 
-	// Step 2b: write the op file.
+	// Step 2b: write the op file. act-38330b: from here through publish
+	// the pipeline holds the cross-process write lock, so a sibling act
+	// process in the same checkout cannot sweep this op into its commit,
+	// hit our index.lock, or rebase under our half-finished write. The
+	// hook above stays outside the lock (it can run for minutes).
+	if !opts.NoCommit {
+		release, lerr := gitops.AcquireWriteLock(gops.RepoRoot)
+		if lerr != nil {
+			return fmt.Errorf("cli: %w", lerr)
+		}
+		defer release()
+	}
 	fsLock := func() (func(), error) { return func() {}, nil }
 	opPath, _, err := op.ProbeAndWrite(paths.Ops, env, body, fsLock)
 	if err != nil {
@@ -384,6 +395,15 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// (today runUnstage discards stderr by default, but the asymmetry was a
 	// latent bug — see the writeBlockOpsViaInterface pattern in
 	// internal/mcp/composed.go).
+	// act-38330b: hold the cross-process write lock from op write through
+	// publish (see WriteOpAndAutoCommit).
+	if !opts.NoCommit {
+		release, lerr := gitops.AcquireWriteLock(gops.RepoRoot)
+		if lerr != nil {
+			return fmt.Errorf("cli: %w", lerr)
+		}
+		defer release()
+	}
 	fsLock := func() (func(), error) { return func() {}, nil }
 	written := make([]string, 0, len(envs))
 	staged := make([]string, 0, len(envs))

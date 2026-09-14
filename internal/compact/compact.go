@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/aac/act/internal/canonicaljson"
+	"github.com/aac/act/internal/flock"
 	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
@@ -110,7 +111,7 @@ func Run(repoRoot string, opts Options, gitops gitOpsCommitter) (Result, error) 
 	}
 
 	lockPath := filepath.Join(actDir, ".compact.lock")
-	release, locked, err := acquireLock(lockPath)
+	release, locked, err := flock.TryLock(lockPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("compact: acquire lock: %w", err)
 	}

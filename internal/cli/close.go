@@ -429,6 +429,21 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	// out of WriteOpAndAutoCommit because it threads a custom hook
 	// invocation; the commit subject itself is the canonical
 	// BuildOpCommitMessage form, identical to every other write op.
+	//
+	// act-38330b: op write through publish holds the cross-process write
+	// lock (see WriteOpAndAutoCommit); the hook above stays outside it.
+	if !opts.NoCommit {
+		release, lerr := gitops.AcquireWriteLock(paths.Root)
+		if lerr != nil {
+			msg, details, _ := WriteLockTimeoutDetails(lerr)
+			return CloseErrorOutput{
+				Error:   ErrWriteLockTimeout,
+				Message: msg,
+				Details: details,
+			}, 1
+		}
+		defer release()
+	}
 	opPath, _, werr := op.ProbeAndWrite(paths.Ops, env, body, func() (func(), error) { return func() {}, nil })
 	if werr != nil {
 		if msg, details, isLock := StaleLockDetails(werr); isLock {

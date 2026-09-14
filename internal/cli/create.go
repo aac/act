@@ -571,6 +571,9 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 				Details: details,
 			}, 1
 		}
+		if msg, details, isTimeout := WriteLockTimeoutDetails(werr); isTimeout {
+			return CreateErrorOutput{Error: ErrWriteLockTimeout, Message: msg, Details: details}, 1
+		}
 		if msg, details, isLock := StaleLockDetails(werr); isLock {
 			return CreateErrorOutput{
 				Error:   ErrStaleGitLock,

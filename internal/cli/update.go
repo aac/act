@@ -955,6 +955,9 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 					Details: details,
 				}, 1
 			}
+			if msg, details, isTimeout := WriteLockTimeoutDetails(werr); isTimeout {
+				return UpdateErrorOutput{Error: ErrWriteLockTimeout, Message: msg, Details: details}, 1
+			}
 			if msg, details, isLock := StaleLockDetails(werr); isLock {
 				return UpdateErrorOutput{
 					Error:   ErrStaleGitLock,
@@ -1090,6 +1093,9 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 			_ = runUnstage(gops.RepoRoot, ce.OpPath)
 			q := withdrawOpFile(gops, paths.Root, ce.OpPath, ce.Envelope)
 			err = newQuarantinedOpError(err, q)
+			if msg, details, isTimeout := WriteLockTimeoutDetails(err); isTimeout {
+				return UpdateErrorOutput{Error: ErrWriteLockTimeout, Message: msg, Details: details}, 1
+			}
 			if msg, details, isLock := StaleLockDetails(err); isLock {
 				return UpdateErrorOutput{
 					Error:   ErrStaleGitLock,
@@ -1282,6 +1288,14 @@ type claimGitOps struct {
 }
 
 func (c *claimGitOps) Commit(message string) error {
+	// act-38330b: branch switch, `git add -- ops` and commit run under the
+	// cross-process write lock so this claim cannot sweep a sibling
+	// process's in-flight op into its commit.
+	release, err := gitops.AcquireWriteLock(c.inner.RepoRoot)
+	if err != nil {
+		return err
+	}
+	defer release()
 	// act-5d6a: switch the nested repo to --branch <ref> (creating if
 	// missing) before staging so the claim commit lands on that branch.
 	// EnsureBranch is a no-op when c.branch is empty.
@@ -1307,8 +1321,15 @@ func (c *claimGitOps) Commit(message string) error {
 	return c.inner.Commit(message)
 }
 
-func (c *claimGitOps) PullRebase() error { return c.inner.PullRebase() }
-func (c *claimGitOps) Push() error       { return c.inner.PushToBranch(c.branch) }
+func (c *claimGitOps) PullRebase() error {
+	release, err := gitops.AcquireWriteLock(c.inner.RepoRoot)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return c.inner.PullRebase()
+}
+func (c *claimGitOps) Push() error { return c.inner.PushToBranch(c.branch) }
 
 // FormatUpdateClaimHuman renders an UpdateClaimResult as a single
 // human-friendly line.

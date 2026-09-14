@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hooks"
@@ -125,6 +126,11 @@ const (
 	// recovery sequence rather than burying git's stderr. Details keys:
 	// `lock_file` (path relative to the host repo root) and `remedy`.
 	ErrStaleGitLock = "stale_git_lock"
+	// ErrWriteLockTimeout is emitted by a write path when another act
+	// process held the nested repo's cross-process write lock
+	// (.act/.write.lock) past the bounded wait (act-38330b). Nothing was
+	// written; the command is safe to retry. Details keys: `lock_file`.
+	ErrWriteLockTimeout = "write_lock_timeout"
 	// ErrTrackerNotCheckedOut is emitted by the no-state guard when this
 	// checkout has no usable .act/ state but the configured tracker remote
 	// ($ACT_TRACKER_REMOTE / ~/.config/act/tracker-remote) exists
@@ -386,6 +392,21 @@ func HookFailureDetails(err error) (message string, details map[string]any, isHo
 		return fmt.Sprintf("hook exited %d", herr.Code), details, true
 	}
 	return fmt.Sprintf("hook exited %d:\n%s", herr.Code, excerpt), details, true
+}
+
+// WriteLockTimeoutDetails reports whether err is a bounded-wait timeout on
+// the nested repo's cross-process write lock (act-38330b) and, if so,
+// returns the envelope message and details (lock_file, relative to the
+// host repo root).
+func WriteLockTimeoutDetails(err error) (message string, details map[string]any, isTimeout bool) {
+	var le *gitops.WriteLockTimeoutError
+	if !errors.As(err, &le) {
+		return "", nil, false
+	}
+	lockRel := filepath.ToSlash(filepath.Join(".act", gitops.WriteLockFile))
+	message = fmt.Sprintf("another act process held %s for over %s; nothing was written — retry the command",
+		lockRel, le.Waited.Round(time.Second))
+	return message, map[string]any{"lock_file": lockRel}, true
 }
 
 // StaleLockDetails extracts a structured, actionable envelope from an error

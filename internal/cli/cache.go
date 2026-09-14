@@ -290,7 +290,17 @@ func MaybeRefresh(repoRoot string, opts MaybeRefreshOptions) (MaybeRefreshResult
 		reason = "dispatch_mode"
 	}
 
-	if err := gops.FetchAndRebase(branch); err != nil {
+	// act-38330b: the rebase rewrites the shared working tree and HEAD, so
+	// it takes the same cross-process write lock as the write pipeline.
+	releaseWriteLock, lerr := gitops.AcquireWriteLock(paths.Root)
+	if lerr != nil {
+		failed := MaybeRefreshResult{Reason: reason}
+		failed.Age, failed.AgeKnown = fetchHeadAge(paths.Root)
+		return failed, lerr
+	}
+	err = gops.FetchAndRebase(branch)
+	releaseWriteLock()
+	if err != nil {
 		// ErrShallowRecovered is the "rebase succeeded after --unshallow"
 		// sentinel — from the caller's perspective the fetch worked.
 		if !errors.Is(err, gitops.ErrShallowRecovered) {

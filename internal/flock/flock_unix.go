@@ -1,6 +1,6 @@
 //go:build unix
 
-package compact
+package flock
 
 import (
 	"errors"
@@ -9,11 +9,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// acquireLock takes a non-blocking exclusive flock on lockPath. The return
+// TryLock takes a non-blocking exclusive flock on lockPath. The return
 // values are: a release callback that must be invoked once the caller is done
 // (always non-nil unless err != nil), a "locked" boolean (false means the
 // lock was contended — not an error), and an error for genuine IO failures.
-func acquireLock(lockPath string) (release func(), locked bool, err error) {
+func TryLock(lockPath string) (release func(), locked bool, err error) {
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, false, err

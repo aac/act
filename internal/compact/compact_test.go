@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aac/act/internal/flock"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
 )
@@ -301,7 +302,7 @@ func TestCompact_LockContention(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	lockPath := filepath.Join(tmp, ".act", ".compact.lock")
-	release, locked, err := acquireLock(lockPath)
+	release, locked, err := flock.TryLock(lockPath)
 	if err != nil {
 		t.Fatalf("acquireLock holder: %v", err)
 	}

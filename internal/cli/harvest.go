@@ -437,6 +437,15 @@ func RunHarvest(opts HarvestOptions) (any, int) {
 	// matching how every other write command in this package commits.
 	paths := config.Layout(hostRoot)
 	gops := gitops.NewActGitOps(paths.Root)
+	// act-38330b: stage+commit under the cross-process write lock.
+	releaseWriteLock, lerr := gitops.AcquireWriteLock(paths.Root)
+	if lerr != nil {
+		return map[string]any{
+			"error":   ErrWriteLockTimeout,
+			"message": fmt.Sprintf(cmd+": %v", lerr),
+		}, 1
+	}
+	defer releaseWriteLock()
 	for _, dstPath := range copied {
 		if err := gops.StageOpFile(dstPath); err != nil {
 			return map[string]any{

@@ -364,6 +364,9 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 				Message: werr.Error(),
 			}, 2
 		}
+		if msg, details, isTimeout := WriteLockTimeoutDetails(werr); isTimeout {
+			return DeleteErrorOutput{Error: ErrWriteLockTimeout, Message: msg, Details: details}, 1
+		}
 		if msg, details, isLock := StaleLockDetails(werr); isLock {
 			return DeleteErrorOutput{
 				Error:   ErrStaleGitLock,

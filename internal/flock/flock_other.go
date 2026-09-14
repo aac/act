@@ -1,6 +1,6 @@
 //go:build !unix
 
-package compact
+package flock
 
 import (
 	"errors"
@@ -8,10 +8,10 @@ import (
 	"os"
 )
 
-// acquireLock is the non-unix fallback: it relies on O_CREATE|O_EXCL to give
+// TryLock is the non-unix fallback: it relies on O_CREATE|O_EXCL to give
 // a single process exclusive ownership of lockPath. Release deletes the file
 // so subsequent invocations can re-acquire.
-func acquireLock(lockPath string) (release func(), locked bool, err error) {
+func TryLock(lockPath string) (release func(), locked bool, err error) {
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
