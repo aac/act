@@ -330,7 +330,7 @@ GETTING THE SKILL
 
     /plugin install act@act
 
-  Running just the binary (go install / curl) does not install the
+  Running just the binary (go install, or a copied bin/act-*) does not install the
   skill: the binary is CLI-only. To use the skill without the plugin,
   clone the repo and copy skills/act/ into your skills directory
   (~/.claude/skills/ or ~/.codex/skills/), or point your agent at it.
