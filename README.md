@@ -170,6 +170,14 @@ rather than deleted, and the error names that path (`details.quarantined_op`
 under `--json`). This is the same rule as any other write whose commit fails,
 and it covers claims: a failed `act update --claim` leaves the issue unclaimed.
 
+Before you remove anything, confirm nothing still owns the lock. Deleting a
+lock that a live git process holds corrupts that process's operation. act
+serializes its own writers on `.act/.write.lock`, so once no act command is
+mid-write in this checkout (an idle `act mcp` server holds no lock), the only
+thing that can still own a git lock is a git process. Check with
+`pgrep -fl '(^|/)git( |$)'` and wait for any match to exit. A lock still
+present after that is stale.
+
 To recover, remove the lock, copy the preserved op back, and commit it:
 
 ```console

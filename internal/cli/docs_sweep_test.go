@@ -1911,6 +1911,25 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_StaleLock_StructuredWriteError",
 	},
 	{
+		// stale-lock confirm-before-remove (act-94bbea): the recovery
+		// confirms nothing still owns the lock (act serializes its own
+		// writers on .act/.write.lock; check for a live git process)
+		// BEFORE the rm, on the README runbook, `act help errors`, the
+		// envelope remedy and doctor's finding. Drift shape: a remedy
+		// rewrite drops or reorders the check and an agent deletes a
+		// lock a live git process holds.
+		name:         "stale-lock-confirm-before-remove-readme",
+		docFile:      "README.md",
+		claimPattern: "Before you remove anything, confirm nothing still owns the lock.",
+		testName:     "TestDocClaim_StaleLock_RemedyConfirmsBeforeRemove",
+	},
+	{
+		name:         "stale-lock-confirm-before-remove-help-errors",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "Confirm the lock is really stale before removing it.",
+		testName:     "TestDocClaim_StaleLock_RemedyConfirmsBeforeRemove",
+	},
+	{
 		// stale-lock doctor detection (act-8fe6eb): `act doctor` detects a
 		// lingering index.lock/HEAD.lock as an error finding, closing the
 		// asymmetry where it caught the index divergence but not the lock

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,4 +86,75 @@ func TestDocClaim_StaleLock_DoctorDetects(t *testing.T) {
 			t.Fatalf("remove %s: %v", lock, err)
 		}
 	}
+}
+
+// TestDocClaim_StaleLock_RemedyConfirmsBeforeRemove pins the README and
+// `act help errors` claim (act-94bbea) that the stale_git_lock recovery
+// confirms nothing still owns the lock BEFORE removing it: with several act
+// processes in one checkout, a bare "rm the lock" can delete a lock a live
+// git process holds. Asserted on every surface an agent reads the remedy
+// from: the write envelope's details.remedy, doctor's human finding, the
+// `act help errors` text, and the README prose ahead of the runbook block.
+func TestDocClaim_StaleLock_RemedyConfirmsBeforeRemove(t *testing.T) {
+	const check = "pgrep -fl '(^|/)git( |$)'"
+	confirmedFirst := func(surface, text string) {
+		t.Helper()
+		ci, ri := strings.Index(text, check), strings.Index(text, "rm -f")
+		if ci < 0 || !strings.Contains(text, ".act/.write.lock") {
+			t.Errorf("%s: missing the confirm step (%q naming .act/.write.lock): %s", surface, check, text)
+			return
+		}
+		if ri >= 0 && ci > ri {
+			t.Errorf("%s: the confirm step comes after rm -f: %s", surface, text)
+		}
+	}
+
+	dir := blocksSite(t)
+	lockPath := filepath.Join(dir, ".act", ".git", "index.lock")
+	if err := os.WriteFile(lockPath, nil, 0o644); err != nil {
+		t.Fatalf("plant index.lock: %v", err)
+	}
+	out, _, code := runActIn(t, dir, "create", "wedged", "--json")
+	if code == 0 {
+		t.Fatalf("create with stale index.lock: want non-zero exit; out=%s", out)
+	}
+	var env struct {
+		Error   string         `json:"error"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil || env.Error != "stale_git_lock" {
+		t.Fatalf("envelope: err=%v out=%s", err, out)
+	}
+	remedy, _ := env.Details["remedy"].(string)
+	confirmedFirst("stale_git_lock details.remedy", remedy)
+
+	_, doctorStderr, _ := runActIn(t, dir, "doctor", "--check", "stale-git-lock")
+	confirmedFirst("doctor stale-git-lock finding", doctorStderr)
+
+	help, _, hcode := runActIn(t, dir, "help", "errors")
+	if hcode != 0 {
+		t.Fatalf("act help errors: exit %d", hcode)
+	}
+	if !strings.Contains(help, "Confirm the lock is really stale before removing it.") {
+		t.Errorf("act help errors lacks the confirm-before-remove paragraph")
+	}
+	confirmedFirst("act help errors", help)
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	readme := string(raw)
+	i := strings.Index(readme, "## If a write is interrupted")
+	if i < 0 {
+		t.Fatal("README has no 'If a write is interrupted' section")
+	}
+	section := readme[i:]
+	if j := strings.Index(section[3:], "\n## "); j >= 0 {
+		section = section[:j+3]
+	}
+	if !strings.Contains(section, "Before you remove anything, confirm nothing still owns the lock.") {
+		t.Errorf("README recovery section lacks the confirm-before-remove step")
+	}
+	confirmedFirst("README 'If a write is interrupted'", section)
 }

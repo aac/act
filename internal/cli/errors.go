@@ -409,6 +409,14 @@ func WriteLockTimeoutDetails(err error) (message string, details map[string]any,
 	return message, map[string]any{"lock_file": lockRel}, true
 }
 
+// StaleLockConfirmStep is the check the stale_git_lock remedy (and doctor's
+// stale-git-lock finding) puts before removing a lock: act serializes its
+// own writers on .act/.write.lock, so the only thing that can still own a
+// git lock once no act command is mid-write is a git process.
+const StaleLockConfirmStep = "first confirm nothing still owns the lock: act serializes its own writers on .act/.write.lock, " +
+	"so once no act command is mid-write in this checkout (an idle `act mcp` server holds no lock) " +
+	"the only live owner can be a git process; check with pgrep -fl '(^|/)git( |$)' and wait for any match to exit"
+
 // StaleLockDetails extracts a structured, actionable envelope from an error
 // returned by a write path when git failed on a stale lock file (act-8fe6eb).
 // When err wraps *gitops.StaleGitLockError, it returns a message naming the
@@ -433,10 +441,13 @@ func StaleLockDetails(err error) (message string, details map[string]any, isStal
 	if stampDir := failedOpStampDir(q); stampDir != "" {
 		restore = fmt.Sprintf("cp -R %s/ops/. .act/ops/ && ", stampDir)
 	}
+	// act-94bbea: the confirm step comes BEFORE the rm. With several act
+	// processes in one checkout a bare "rm the lock" can delete a lock a
+	// live git process holds, corrupting its operation.
 	remedy := fmt.Sprintf(
-		"if no git process is running, remove it and recover the stranded ops: "+
+		"%s, then remove it and recover the stranded ops: "+
 			"rm -f %s && %sgit -C .act add ops && git -C .act commit -m \"recover stranded ops\" && act doctor --fix",
-		lockRel, restore)
+		StaleLockConfirmStep, lockRel, restore)
 	message = fmt.Sprintf("stale git lock blocks the tracker: %s exists; %s", lockRel, remedy)
 	details = map[string]any{
 		"lock_file": lockRel,

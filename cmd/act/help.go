@@ -880,6 +880,14 @@ AN OP WHOSE COMMIT FAILED IS INVISIBLE
   failed leaves the issue unclaimed. A stale HEAD.lock, which fails the
   commit step rather than the stage, also reports stale_git_lock.
 
+  Confirm the lock is really stale before removing it. act serializes
+  its own writers on .act/.write.lock, so once no act command is
+  mid-write in this checkout (an idle 'act mcp' server holds no lock)
+  the only live owner can be a git process: check with
+  pgrep -fl '(^|/)git( |$)' and wait for any match to exit. Deleting a
+  lock a live git process holds corrupts its operation, which is why
+  the stale_git_lock remedy puts this check before the rm.
+
   The envelope is preserved, not deleted. It is moved intact to
   .act/.failed-ops/<timestamp>/ops/... and that path is reported back:
   under --json as details.quarantined_op, and in the plain-text message
