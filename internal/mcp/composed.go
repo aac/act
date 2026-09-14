@@ -469,6 +469,17 @@ func writeBlockOpsViaInterface(envs []op.Envelope, bodies [][]byte, paths config
 		return fmt.Errorf("mcp: gitops is required unless --no-commit is set")
 	}
 
+	// act-94bbea: same scope as cli.WriteOpsAndAutoCommit — op write through
+	// commit+push under the cross-process write lock, so this path cannot
+	// sweep (or be swept into) a sibling process's commit.
+	if !opts.NoCommit {
+		release, lerr := gitops.AcquireWriteLock(paths.Root)
+		if lerr != nil {
+			return fmt.Errorf("mcp: %w", lerr)
+		}
+		defer release()
+	}
+
 	fsLock := func() (func(), error) { return func() {}, nil }
 	written := make([]string, 0, len(envs))
 	rollback := func() {

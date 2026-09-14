@@ -28,6 +28,7 @@ import (
 
 	"github.com/aac/act/internal/canonicaljson"
 	"github.com/aac/act/internal/config"
+	actgit "github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/ids"
 	"github.com/aac/act/internal/op"
@@ -111,6 +112,20 @@ func Run(repoRoot string, opts Options, gitops gitOpsCommitter) (Result, error) 
 	paths := config.Layout(repoRoot)
 	if err := os.MkdirAll(paths.Imports, 0o755); err != nil {
 		return Result{}, fmt.Errorf("importer: mkdir %s: %w", paths.Imports, err)
+	}
+
+	// act-94bbea: a committing import holds the cross-process write lock
+	// (.act/.write.lock) from the idempotency check through commit+push, so
+	// a sibling act process in the same checkout can neither sweep the
+	// imported ops into its own commit nor race a duplicate import of the
+	// same file past the idempotency check. --no-commit touches no git
+	// state and stays unlocked, like every other write path.
+	if !opts.NoCommit {
+		release, lerr := actgit.AcquireWriteLock(paths.Root)
+		if lerr != nil {
+			return Result{}, fmt.Errorf("importer: %w", lerr)
+		}
+		defer release()
 	}
 
 	// Step 1a: idempotency check. Walk imports/*.json for any prior run that

@@ -138,6 +138,21 @@ func RunRemoteAddUpstream(opts RemoteAddUpstreamOptions) (any, int) {
 		}, 3
 	}
 
+	// act-94bbea: the config write and the initial upstream push run under
+	// the cross-process write lock, the same lock `act remote sync` and
+	// every commit/push writer hold, so the push publishes a settled HEAD.
+	releaseWriteLock, lerr := gitops.AcquireWriteLock(actRoot)
+	if lerr != nil {
+		if msg, details, isTimeout := WriteLockTimeoutDetails(lerr); isTimeout {
+			return map[string]any{"error": ErrWriteLockTimeout, "message": msg, "details": details}, 1
+		}
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act remote add-upstream: %v", lerr),
+		}, 3
+	}
+	defer releaseWriteLock()
+
 	// Write the URL + the canonical refspec. We mirror what
 	// `git remote add` would have produced if we'd shelled out (we
 	// don't, because `git remote add` requires a working tree and we

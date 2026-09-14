@@ -976,7 +976,20 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// supplied (act-5d6a) the explicit push targets that branch on origin
 	// so a stale tracking config can't route the op commit to main.
 	if opts.Push && gops != nil {
-		if perr := gops.PushToBranch(opts.Branch); perr != nil {
+		// act-94bbea: the deferred push takes the write lock on its own
+		// (each op above released it after its commit, leaving pre-commit
+		// hooks outside the lock), so it cannot push a sibling's
+		// half-rebased HEAD.
+		releaseWriteLock, lerr := gitops.AcquireWriteLock(gops.RepoRoot)
+		if lerr != nil {
+			if msg, details, isTimeout := WriteLockTimeoutDetails(lerr); isTimeout {
+				return UpdateErrorOutput{Error: ErrWriteLockTimeout, Message: msg, Details: details}, 1
+			}
+			return UpdateErrorOutput{Error: "push_failed", Message: lerr.Error()}, 1
+		}
+		perr := gops.PushToBranch(opts.Branch)
+		releaseWriteLock()
+		if perr != nil {
 			return UpdateErrorOutput{
 				Error:   "push_failed",
 				Message: perr.Error(),
@@ -1329,7 +1342,17 @@ func (c *claimGitOps) PullRebase() error {
 	defer release()
 	return c.inner.PullRebase()
 }
-func (c *claimGitOps) Push() error { return c.inner.PushToBranch(c.branch) }
+
+// Push takes the write lock too (act-94bbea): the post-win push runs after
+// Commit released it, and must not push while a sibling is mid-rebase.
+func (c *claimGitOps) Push() error {
+	release, err := gitops.AcquireWriteLock(c.inner.RepoRoot)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return c.inner.PushToBranch(c.branch)
+}
 
 // FormatUpdateClaimHuman renders an UpdateClaimResult as a single
 // human-friendly line.

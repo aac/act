@@ -176,6 +176,24 @@ func RunRemoteSync(opts RemoteSyncOptions) (any, int) {
 	// read the orchestrator's `.act/.git` HEAD itself — `.act/.git`
 	// IS the origin from the worker's perspective.
 	gitDir := filepath.Join(actRoot, ".git")
+
+	// act-94bbea: the ref read and the upstream push run under the
+	// cross-process write lock, so the push never publishes a sibling
+	// writer's half-rebased HEAD and the idempotency check reads a
+	// settled ref. Commit-and-push writers flush to origin under the same
+	// lock, so a sync started mid-write simply waits for it.
+	releaseWriteLock, lerr := gitops.AcquireWriteLock(actRoot)
+	if lerr != nil {
+		if msg, details, isTimeout := WriteLockTimeoutDetails(lerr); isTimeout {
+			return map[string]any{"error": ErrWriteLockTimeout, "message": msg, "details": details}, 1
+		}
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf("act remote sync: %v", lerr),
+		}, 3
+	}
+	defer releaseWriteLock()
+
 	headRef, headRefErr := readGitHEAD(gitDir)
 	if headRefErr == nil && headRef != "" {
 		upstreamRef, _ := readRemoteRef(gitDir, UpstreamRemoteName, headRef)

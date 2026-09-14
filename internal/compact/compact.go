@@ -28,6 +28,7 @@ import (
 	"github.com/aac/act/internal/canonicaljson"
 	"github.com/aac/act/internal/flock"
 	"github.com/aac/act/internal/fold"
+	actgit "github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
 )
@@ -119,6 +120,26 @@ func Run(repoRoot string, opts Options, gitops gitOpsCommitter) (Result, error) 
 		return Result{Skipped: []string{SkipCompactionLocked}}, nil
 	}
 	defer release()
+
+	// act-94bbea: compaction writes snapshot/compact op files, deletes
+	// subsumed ops, stages and commits into the SAME nested .act/.git every
+	// act writer commits to, so it also holds the cross-process write lock
+	// (.act/.write.lock) for the whole write phase. .compact.lock alone only
+	// excludes other compactors.
+	//
+	// Lock order: .compact.lock BEFORE .write.lock, always. Writers take
+	// only .write.lock and never .compact.lock, so no cycle is possible
+	// today; any future path that needs both must follow this order.
+	// .compact.lock is a non-blocking try, so a compactor never waits on
+	// it while holding .write.lock. A dry run writes nothing and stays
+	// unlocked.
+	if !opts.DryRun {
+		releaseWriteLock, lerr := actgit.AcquireWriteLock(actDir)
+		if lerr != nil {
+			return Result{}, fmt.Errorf("compact: %w", lerr)
+		}
+		defer releaseWriteLock()
+	}
 
 	opsRoot := filepath.Join(actDir, "ops")
 	snapDir := filepath.Join(actDir, "snapshots")

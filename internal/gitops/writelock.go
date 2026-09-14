@@ -44,7 +44,13 @@ package gitops
 //     server serves tool calls sequentially, so in-process re-entrancy never
 //     lets two concurrent pipelines through.
 //   - Scope: op write through publish, and the read path's fetch+rebase.
-//     Hooks and folding run outside it.
+//     Hooks and folding run outside it. act-94bbea extended it to every
+//     other path that commits or pushes in the nested repo: `act import`,
+//     the MCP act_block interface path, `act remote sync` and
+//     `act remote add-upstream`, the deferred push of a multi-flag
+//     `act update --push`, the post-win claim push, and compaction (which
+//     takes .compact.lock FIRST, then this lock). TestLockCoverage_* in the
+//     owning packages hold the lock and assert each path times out.
 
 import (
 	"errors"

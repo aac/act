@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/aac/act/internal/cli"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/importer"
 )
@@ -50,6 +51,14 @@ func runImport(args []string) int {
 		Push:      *push,
 	}, g)
 	if runErr != nil {
+		if msg, details, isTimeout := cli.WriteLockTimeoutDetails(runErr); isTimeout {
+			emitImportError(*asJSON, map[string]any{
+				"error":   cli.ErrWriteLockTimeout,
+				"message": msg,
+				"details": details,
+			})
+			return 1
+		}
 		// Translate the structured error tag (import_invalid_jsonl) into the
 		// envelope shape spec §7.7 expects.
 		errTag := "import_failed"
