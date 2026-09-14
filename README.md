@@ -167,7 +167,8 @@ The failed write did not happen, and act reports it that way everywhere: its
 issue does not appear in `act show` or `act list`. Nothing is lost, though. The
 failed write's op file is moved aside to `.act/.failed-ops/<timestamp>/ops/`
 rather than deleted, and the error names that path (`details.quarantined_op`
-under `--json`). This is the same rule as any other write whose commit fails.
+under `--json`). This is the same rule as any other write whose commit fails,
+and it covers claims: a failed `act update --claim` leaves the issue unclaimed.
 
 To recover, remove the lock, copy the preserved op back, and commit it:
 

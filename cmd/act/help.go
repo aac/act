@@ -872,6 +872,10 @@ AN OP WHOSE COMMIT FAILED IS INVISIBLE
   "If a write is interrupted" runbook, copy the op back from
   .act/.failed-ops/ once the lock is removed.
 
+  'act update --claim' follows it too: a claim whose stage or commit
+  failed leaves the issue unclaimed. A stale HEAD.lock, which fails the
+  commit step rather than the stage, also reports stale_git_lock.
+
   The envelope is preserved, not deleted. It is moved intact to
   .act/.failed-ops/<timestamp>/ops/... and that path is reported back:
   under --json as details.quarantined_op, and in the plain-text message

@@ -1817,6 +1817,29 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "A STAGE failure follows the same rule.",
 		testName:     "TestDocClaim_StaleLock_CloseStageFailureStaysOpen",
 	},
+	// act-b45379: the claim path (internal/claim, outside the shared write
+	// helper) gets the same withdrawal, and close's commit step classifies
+	// a stale HEAD.lock. Drift shape: claim goes back to leaving its op in
+	// ops/, so `act update --claim` exits 1 while `act show` says
+	// in_progress; or close's HEAD.lock falls back to commit_failed.
+	{
+		name:         "stale-lock-failed-claim-unclaimed",
+		docFile:      "README.md",
+		claimPattern: "a failed `act update --claim` leaves the issue unclaimed",
+		testName:     "TestDocClaim_StaleLock_ClaimStageFailureStaysUnclaimed",
+	},
+	{
+		name:         "help-errors-claim-commit-failure-unclaimed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "failed leaves the issue unclaimed.",
+		testName:     "TestDocClaim_FailedCommitClaimStaysUnclaimed",
+	},
+	{
+		name:         "help-errors-close-head-lock-stale-git-lock",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "commit step rather than the stage, also reports stale_git_lock.",
+		testName:     "TestDocClaim_StaleLock_CloseHeadLockCommitFailure",
+	},
 	{
 		name:         "stale-lock-recovery-doctor-fix",
 		docFile:      "README.md",

@@ -108,6 +108,22 @@ var ErrNoUpstream = errors.New("claim: no upstream remote configured")
 // conflict on .act/ops/**, network failure, auth) remain hard errors.
 var ErrPullRebaseSoftFail = errors.New("claim: pull --rebase soft failure (local op durable)")
 
+// CommitError is returned by RunClaim when GitOps.Commit fails after the
+// claim op file was written to disk (any failure inside Commit: branch
+// switch, stage, or the commit itself). The op did not land, so the caller
+// must withdraw OpPath from the op log before any read folds it
+// (act-b45379; the same rule as act-94272e / act-a3160b for other writes).
+// Error() keeps the historical "claim: commit: <cause>" text, and Unwrap
+// exposes the cause so typed git errors (stale lock) stay reachable.
+type CommitError struct {
+	OpPath   string
+	Envelope op.Envelope
+	Err      error
+}
+
+func (e *CommitError) Error() string { return "claim: commit: " + e.Err.Error() }
+func (e *CommitError) Unwrap() error { return e.Err }
+
 // sleeper is the indirection used to make --wait retry deterministic in
 // tests. The default implementation calls time.Sleep; tests inject a fake.
 type sleeper func(time.Duration)
@@ -295,7 +311,8 @@ func singleAttempt(
 
 	// Step 3a: write op file under .act/ops/<issue>/<yyyy-mm>/.
 	fsLock := func() (func(), error) { return func() {}, nil }
-	if _, _, err := op.ProbeAndWrite(paths.Ops, env, body, fsLock); err != nil {
+	opPath, _, err := op.ProbeAndWrite(paths.Ops, env, body, fsLock)
+	if err != nil {
 		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: write op: %w", err)
 	}
 
@@ -307,7 +324,13 @@ func singleAttempt(
 	// because issueID already begins with "act-".
 	msg := buildClaimCommitMessage(issueID)
 	if err := gitOps.Commit(msg); err != nil {
-		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: commit: %w", err)
+		// act-b45379: the op file is on disk but did not land. This
+		// package is git-agnostic and cannot withdraw it itself, so the
+		// error carries the op path and envelope for the caller to take
+		// the op out of the log — otherwise the next read folds a claim
+		// the command reported as failed.
+		return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp},
+			&CommitError{OpPath: opPath, Envelope: env, Err: err}
 	}
 
 	// Step 4: pull --rebase unless --isolated. Two sentinel cases are

@@ -1072,6 +1072,24 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		Push:        opts.Push,
 	}, clock, wrapped)
 	if err != nil {
+		// act-b45379: a failure inside the claim's stage/commit step left
+		// the claim op in ops/ although nothing landed. Withdraw it to
+		// .act/.failed-ops/<stamp>/ exactly as every other write does, so
+		// the non-zero exit and a later `act show` agree the issue is not
+		// claimed. The path travels on the error for the envelope.
+		var ce *claim.CommitError
+		if errors.As(err, &ce) {
+			_ = runUnstage(gops.RepoRoot, ce.OpPath)
+			q := withdrawOpFile(gops, paths.Root, ce.OpPath, ce.Envelope)
+			err = newQuarantinedOpError(err, q)
+			if msg, details, isLock := StaleLockDetails(err); isLock {
+				return UpdateErrorOutput{
+					Error:   ErrStaleGitLock,
+					Message: msg,
+					Details: details,
+				}, 1
+			}
+		}
 		// Hard failure: drift / write / pull-rebase / commit. These surface
 		// as exit 1 (logical) per §5.C.3 + spec §3 update. Per spec §error-
 		// envelope, raw subprocess stderr does NOT belong in `message`; we
@@ -1086,7 +1104,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		return UpdateErrorOutput{
 			Error:   "claim_failed",
 			Message: message,
-			Details: details,
+			Details: withQuarantineDetail(details, quarantinedOpPath(err)),
 		}, 1
 	}
 	if res.Claimed {

@@ -503,6 +503,16 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			// cannot report this issue closed. The envelope is kept
 			// (path in details.quarantined_op), not destroyed.
 			q := withdrawOpFile(gops, paths.Root, opPath, env)
+			// act-b45379: a stale HEAD.lock fails here, at the ref update,
+			// not at the stage step — classify it the same way so the
+			// envelope carries the lock-specific remedy.
+			if msg, details, isLock := StaleLockDetails(newQuarantinedOpError(err, q)); isLock {
+				return CloseErrorOutput{
+					Error:   ErrStaleGitLock,
+					Message: msg,
+					Details: details,
+				}, 1
+			}
 			return CloseErrorOutput{
 				Error:   "commit_failed",
 				Message: err.Error(),
