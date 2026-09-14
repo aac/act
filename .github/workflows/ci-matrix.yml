@@ -8,12 +8,19 @@ name: Release Smoke
 # Under the commit-to-main release model (see release.yml and AGENTS.md)
 # there are no tags and no GitHub Releases — a release IS the commit that
 # lands the stamped `bin/act-<os>-<arch>` artifacts on the default branch.
-# So this triggers on a push to the default branch that touches `bin/**`,
-# which is exactly (and only) what a release commit does; ordinary
-# development commits don't touch `bin/` and don't re-trigger this job.
-# Per-push / per-PR runs on every commit were dropped to cut Actions burn;
-# regressions in normal development show up via the plain `ci.yml` job and
-# through dogfooding.
+# That commit is pushed by the "Release" workflow's job using the default
+# GITHUB_TOKEN (plugin-release-kit's release-plugin.yml does a plain
+# `git push origin HEAD:${GITHUB_REF_NAME}` with no PAT/app token in the
+# picture) — and a push authenticated with GITHUB_TOKEN does not trigger
+# other workflows, so a `push: paths: bin/**` trigger here would never
+# fire on a real release. Instead this listens for the "Release" workflow
+# itself to finish (`workflow_run`, matched by its exact `name:`), and
+# only runs when that run succeeded — a run whose commit/verify-release
+# step failed produced no release commit, so there's nothing to smoke.
+# Checks out the commit the release workflow actually built
+# (`head_branch`). Per-push / per-PR runs on every commit were dropped to
+# cut Actions burn; regressions in normal development show up via the
+# plain `ci.yml` job and through dogfooding.
 #
 # Originally a 3-row matrix (cc-laptop / cc-web / cowork) intended to
 # simulate the three target agent sandboxes, but the rows had no
@@ -25,11 +32,11 @@ name: Release Smoke
 # exercising in parallel rows.
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'bin/**'
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -40,10 +47,13 @@ concurrency:
 
 jobs:
   smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
 
       - name: Set up Go
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5
