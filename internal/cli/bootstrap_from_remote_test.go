@@ -489,3 +489,79 @@ func runGitConfigGet(t *testing.T, configPath, key string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// TestBootstrapFromRemote_StrippedHooksLeaveCleanTree asserts that
+// stripping hooks/ from the worker does not leave tracked deletions
+// behind (act-da2af1). Before the fix the files were removed from disk
+// but stayed in the index, so `git status` showed ` D hooks/close`,
+// every rebase refused with "You have unstaged changes", and the
+// worker's pushes queued as pending forever.
+func TestBootstrapFromRemote_StrippedHooksLeaveCleanTree(t *testing.T) {
+	srcRoot, _ := makeBootstrapSource(t)
+	srcAct := filepath.Join(srcRoot, ".act")
+	if err := os.MkdirAll(filepath.Join(srcAct, "hooks"), 0o755); err != nil {
+		t.Fatalf("mkdir src hooks: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcAct, "hooks", "close"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write close hook: %v", err)
+	}
+	runGit(t, srcAct, "add", "hooks/close")
+	runGit(t, srcAct, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-m", "seed close hook")
+
+	barePath := filepath.Join(t.TempDir(), "act-state.git")
+	runGit(t, "", "clone", "--bare", filepath.Join(srcAct, ".git"), barePath)
+
+	targetRoot := makeBootstrapTarget(t)
+	if _, code := RunBootstrapWorker(BootstrapWorkerOptions{FromRemoteURL: barePath, Target: targetRoot}); code != 0 {
+		t.Fatalf("from-remote exit=%d", code)
+	}
+	workerAct := filepath.Join(targetRoot, ".act")
+	if _, err := os.Stat(filepath.Join(workerAct, "hooks", "close")); !os.IsNotExist(err) {
+		t.Fatalf("host close hook leaked into worker: err=%v", err)
+	}
+
+	status := func() string {
+		out, err := exec.Command("git", "-C", workerAct, "status", "--porcelain", "--untracked-files=no").CombinedOutput()
+		if err != nil {
+			t.Fatalf("git status: %v: %s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if s := status(); s != "" {
+		t.Fatalf("worker tree carries tracked changes after bootstrap:\n%s", s)
+	}
+
+	// The host advances the remote, including a change under hooks/;
+	// the worker commits locally and must still be able to rebase onto
+	// it — the path every act push takes after a rejected push.
+	pusher := filepath.Join(t.TempDir(), "pusher")
+	runGit(t, "", "clone", "-q", barePath, pusher)
+	if err := os.WriteFile(filepath.Join(pusher, "hooks", "close"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("edit hook upstream: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pusher, "upstream.txt"), []byte("u\n"), 0o644); err != nil {
+		t.Fatalf("write upstream file: %v", err)
+	}
+	runGit(t, pusher, "add", "-A")
+	runGit(t, pusher, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-q", "-m", "host advance")
+	runGit(t, pusher, "push", "-q", "origin", "HEAD")
+
+	if err := os.WriteFile(filepath.Join(workerAct, "worker.txt"), []byte("w\n"), 0o644); err != nil {
+		t.Fatalf("write worker file: %v", err)
+	}
+	runGit(t, workerAct, "add", "worker.txt")
+	runGit(t, workerAct, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-q", "-m", "worker change")
+	if out, err := exec.Command("git", "-C", workerAct, "-c", "user.name=test", "-c", "user.email=t@e",
+		"pull", "--rebase", "-q", "origin", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("worker rebase onto advanced remote failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(workerAct, "upstream.txt")); err != nil {
+		t.Errorf("upstream change missing after rebase: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workerAct, "hooks", "close")); !os.IsNotExist(err) {
+		t.Errorf("rebase re-materialized the stripped host hook: err=%v", err)
+	}
+	if s := status(); s != "" {
+		t.Errorf("worker tree dirty after rebase:\n%s", s)
+	}
+}
