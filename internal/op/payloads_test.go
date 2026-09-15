@@ -2,8 +2,10 @@ package op
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func intPtr(v int) *int { return &v }
@@ -510,5 +512,77 @@ func TestValidatePayload_DispatchesToValidate(t *testing.T) {
 	raw := []byte(`{"title":"t","type":"task","priority":4,"nonce":"` + validNonce + `"}`)
 	if err := ValidatePayload("create", raw); err == nil {
 		t.Fatal("want error: priority out of range")
+	}
+}
+
+// TestDocClaim_LengthCaps_ByteBoundary pins docs/spec.md "Length caps": each
+// write-time length cap sits exactly at the number the spec names, and each
+// counts bytes, not characters. The caps are literals on purpose — this test
+// is the spec's side of the contract, so changing a constant without the
+// spec fails here (act-1d044c).
+//
+// For every field: a value of exactly cap bytes is accepted and cap+1 bytes
+// is rejected. For fields that accept non-ASCII, cap/2 copies of a two-byte
+// character (exactly cap bytes) is accepted, and one more ASCII byte — cap+1
+// bytes but only cap/2+1 characters — is rejected, which a character count
+// would have let through.
+func TestDocClaim_LengthCaps_ByteBoundary(t *testing.T) {
+	cases := []struct {
+		name      string
+		cap       int
+		multiByte bool // the field accepts non-ASCII (machine labels do not)
+		validate  func(s string) error
+	}{
+		{"create.title", 256, true, func(s string) error {
+			return CreatePayload{Title: s, Type: "task", Nonce: validNonce}.Validate()
+		}},
+		{"create.accept", 500, true, func(s string) error {
+			return CreatePayload{Title: "t", Type: "task", Accept: []string{s}, Nonce: validNonce}.Validate()
+		}},
+		{"add_accept.criterion", 500, true, func(s string) error {
+			return AddAcceptPayload{Criterion: s}.Validate()
+		}},
+		{"set_accept.criteria", 500, true, func(s string) error {
+			return SetAcceptPayload{Criteria: []string{s}}.Validate()
+		}},
+		{"close.reason", 500, true, func(s string) error { return ClosePayload{Reason: s}.Validate() }},
+		{"reopen.reason", 500, true, func(s string) error { return ReopenPayload{Reason: s}.Validate() }},
+		{"unclaim.reason", 500, true, func(s string) error { return UnclaimPayload{Reason: s}.Validate() }},
+		{"add_external_dep.ref", 256, true, func(s string) error { return AddExternalDepPayload{Ref: s}.Validate() }},
+		{"remove_external_dep.ref", 256, true, func(s string) error { return RemoveExternalDepPayload{Ref: s}.Validate() }},
+		{"machine", 64, false, func(s string) error { return ValidateMachineLabel("create.machine", s) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := c.validate(strings.Repeat("x", c.cap)); err != nil {
+				t.Errorf("%d bytes rejected, want accepted: %v", c.cap, err)
+			}
+			wantMsg := fmt.Sprintf("length %d > %d bytes", c.cap+1, c.cap)
+			if err := c.validate(strings.Repeat("x", c.cap+1)); err == nil {
+				t.Errorf("%d bytes accepted, want rejected", c.cap+1)
+			} else if !strings.Contains(err.Error(), wantMsg) {
+				t.Errorf("error %q does not name %q", err, wantMsg)
+			}
+			if !c.multiByte {
+				return
+			}
+			atCap := strings.Repeat("\u00e9", c.cap/2) // two bytes each
+			if len(atCap) != c.cap {
+				t.Fatalf("fixture is %d bytes, want %d", len(atCap), c.cap)
+			}
+			if err := c.validate(atCap); err != nil {
+				t.Errorf("%d two-byte characters (%d bytes) rejected, want accepted: %v", c.cap/2, c.cap, err)
+			}
+			over := atCap + "x"
+			if chars := utf8.RuneCountInString(over); chars > c.cap {
+				t.Fatalf("fixture has %d characters; it must stay under %d to prove a byte count", chars, c.cap)
+			}
+			if err := c.validate(over); err == nil {
+				t.Errorf("%d bytes in %d characters accepted, want rejected: the cap must count bytes",
+					len(over), utf8.RuneCountInString(over))
+			} else if !strings.Contains(err.Error(), wantMsg) {
+				t.Errorf("error %q does not name %q", err, wantMsg)
+			}
+		})
 	}
 }

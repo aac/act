@@ -34,6 +34,7 @@ import (
 
 	"github.com/aac/act/internal/cli"
 	"github.com/aac/act/internal/gitops"
+	"github.com/aac/act/internal/op"
 	"github.com/aac/act/internal/version"
 )
 
@@ -1035,7 +1036,7 @@ func allTools() []toolDescriptor {
 			Description: "Escape hatch: close an issue. Prefer act_finish for the recommended workflow.",
 			InputSchema: schemaObject(map[string]any{
 				"id":     schemaString("Issue id or prefix."),
-				"reason": schemaString("Optional close reason (≤500 bytes)."),
+				"reason": schemaString(fmt.Sprintf("Optional close reason (≤%d bytes).", op.MaxReasonLen)),
 				"push":   schemaBool("Push after commit."),
 			}, []string{"id"}),
 		},

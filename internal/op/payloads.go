@@ -76,6 +76,23 @@ const MaxPriority = 3
 // CLI wrote up to 256). docs/spec.md states the same number.
 const MaxTitleLen = 256
 
+// MaxReasonLen caps the free-text reason carried by the close, reopen and
+// unclaim ops, and so `act close|finish|reopen --reason`. Reasons are
+// audit-trail summaries meant to read at a glance in git log and `act show`
+// ('act help workflow' gives the rationale; docs/spec.md "Length caps" states
+// the number). Every enforcement site reads this constant: the payload
+// validators here, internal/cli's close and reopen, and cmd/act's flag-parse
+// checks (act-1d044c — it was once eight separate literals). Bytes, not
+// characters, like every length cap in act.
+const MaxReasonLen = 500
+
+// MaxAcceptCriterionLen caps one acceptance criterion (create.accept[i],
+// add_accept.criterion, set_accept.criteria[i]). It is the reason cap by
+// design — 'act help workflow' documents them as the same cap — so it is
+// defined in terms of MaxReasonLen rather than as a second literal. Bytes,
+// not characters.
+const MaxAcceptCriterionLen = MaxReasonLen
+
 // CreatePayload is the payload for op_type=create.
 type CreatePayload struct {
 	Title       string   `json:"title"`
@@ -120,8 +137,8 @@ func (p CreatePayload) Validate() error {
 		if c == "" {
 			return fmt.Errorf("op: create.accept[%d] is empty", i)
 		}
-		if len(c) > 500 {
-			return fmt.Errorf("op: create.accept[%d] length %d > 500 bytes (see 'act help workflow' for cap rationale)", i, len(c))
+		if len(c) > MaxAcceptCriterionLen {
+			return fmt.Errorf("op: create.accept[%d] length %d > %d bytes (see 'act help workflow' for cap rationale)", i, len(c), MaxAcceptCriterionLen)
 		}
 	}
 	if err := ValidateMachineLabel("create.machine", p.Machine); err != nil {
@@ -332,8 +349,8 @@ func (p AddAcceptPayload) Validate() error {
 	if p.Criterion == "" {
 		return fmt.Errorf("op: add_accept.criterion is empty")
 	}
-	if len(p.Criterion) > 500 {
-		return fmt.Errorf("op: add_accept.criterion length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Criterion))
+	if len(p.Criterion) > MaxAcceptCriterionLen {
+		return fmt.Errorf("op: add_accept.criterion length %d > %d bytes (see 'act help workflow' for cap rationale)", len(p.Criterion), MaxAcceptCriterionLen)
 	}
 	return nil
 }
@@ -362,15 +379,15 @@ type SetAcceptPayload struct {
 }
 
 // Validate implements the set_accept write-time rules: each criterion obeys
-// the same non-empty + 500-byte cap as add_accept. An empty list is valid
+// the same non-empty + MaxAcceptCriterionLen cap as add_accept. An empty list is valid
 // (clears the acceptance criteria).
 func (p SetAcceptPayload) Validate() error {
 	for i, c := range p.Criteria {
 		if c == "" {
 			return fmt.Errorf("op: set_accept.criteria[%d] is empty", i)
 		}
-		if len(c) > 500 {
-			return fmt.Errorf("op: set_accept.criteria[%d] length %d > 500 bytes (see 'act help workflow' for cap rationale)", i, len(c))
+		if len(c) > MaxAcceptCriterionLen {
+			return fmt.Errorf("op: set_accept.criteria[%d] length %d > %d bytes (see 'act help workflow' for cap rationale)", i, len(c), MaxAcceptCriterionLen)
 		}
 	}
 	return nil
@@ -400,8 +417,8 @@ type UnclaimPayload struct {
 
 // Validate implements the unclaim write-time rules.
 func (p UnclaimPayload) Validate() error {
-	if len(p.Reason) > 500 {
-		return fmt.Errorf("op: unclaim.reason length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Reason))
+	if len(p.Reason) > MaxReasonLen {
+		return fmt.Errorf("op: unclaim.reason length %d > %d bytes (see 'act help workflow' for cap rationale)", len(p.Reason), MaxReasonLen)
 	}
 	return nil
 }
@@ -425,8 +442,8 @@ type ClosePayload struct {
 
 // Validate implements the close write-time rules.
 func (p ClosePayload) Validate() error {
-	if len(p.Reason) > 500 {
-		return fmt.Errorf("op: close.reason length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Reason))
+	if len(p.Reason) > MaxReasonLen {
+		return fmt.Errorf("op: close.reason length %d > %d bytes (see 'act help workflow' for cap rationale)", len(p.Reason), MaxReasonLen)
 	}
 	return nil
 }
@@ -441,8 +458,8 @@ type ReopenPayload struct {
 
 // Validate implements the reopen write-time rules.
 func (p ReopenPayload) Validate() error {
-	if len(p.Reason) > 500 {
-		return fmt.Errorf("op: reopen.reason length %d > 500 bytes (see 'act help workflow' for cap rationale)", len(p.Reason))
+	if len(p.Reason) > MaxReasonLen {
+		return fmt.Errorf("op: reopen.reason length %d > %d bytes (see 'act help workflow' for cap rationale)", len(p.Reason), MaxReasonLen)
 	}
 	return nil
 }

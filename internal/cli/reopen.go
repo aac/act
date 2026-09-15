@@ -24,7 +24,7 @@ type ReopenOptions struct {
 	// ID is the positional argument: the issue id (full or unique prefix).
 	ID string
 	// Reason is the optional explanatory text recorded in the reopen op
-	// payload. Bounded to 500 chars by ReopenPayload.Validate().
+	// payload. Bounded to op.MaxReasonLen bytes (not characters).
 	Reason string
 	// AsJSON toggles JSON envelope rendering at the call site.
 	AsJSON bool
@@ -68,10 +68,6 @@ type ReopenErrorOutput struct {
 	Candidates []string       `json:"-"`
 }
 
-// reopenReasonMaxBytes mirrors close: bound to 500 to match
-// op.ReopenPayload.Validate().
-const reopenReasonMaxBytes = 500
-
 // RunReopen implements `act reopen <id>`.
 //
 // Steps:
@@ -112,10 +108,10 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		}, 2
 	}
 	// Step 2b: reason length cap.
-	if len(opts.Reason) > reopenReasonMaxBytes {
+	if len(opts.Reason) > op.MaxReasonLen {
 		return ReopenErrorOutput{
 			Error:   "bad_flag",
-			Message: fmt.Sprintf("act reopen: --reason length %d > %d bytes", len(opts.Reason), reopenReasonMaxBytes),
+			Message: fmt.Sprintf("act reopen: --reason length %d > %d bytes", len(opts.Reason), op.MaxReasonLen),
 		}, 2
 	}
 	// Step 2c: universal-write-flag conflicts.

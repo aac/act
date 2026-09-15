@@ -81,8 +81,9 @@ type DeleteErrorOutput struct {
 	Candidates []string       `json:"-"`
 }
 
-// deleteReasonMaxBytes mirrors the close-reason cap at 4 KiB so an
-// agent cannot stash an entire diff in the audit trail.
+// deleteReasonMaxBytes caps `act delete --reason` at 4 KiB so an agent
+// cannot stash an entire diff in the audit trail. It is its own cap, not a
+// mirror of op.MaxReasonLen (the 500-byte close/reopen/unclaim reason cap).
 const deleteReasonMaxBytes = 4096
 
 // RunDelete implements `act delete`.

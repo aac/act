@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/op"
 )
 
 // TestDocClaim_CloseReasonCap_OverCapRejected pins the user-visible 500-byte
@@ -18,7 +20,7 @@ import (
 // See also TestDocClaim_CloseReasonCap_AtCapAccepted for the off-by-one guard.
 func TestDocClaim_CloseReasonCap_OverCapRejected(t *testing.T) {
 	// 501-byte reason: one byte over the documented 500-byte cap.
-	reason := strings.Repeat("x", closeReasonMaxBytes+1)
+	reason := strings.Repeat("x", op.MaxReasonLen+1)
 	dir := t.TempDir()
 	// No git init, no .act init — the upfront check fires before any
 	// repo discovery, so an empty TempDir is sufficient. This is itself
@@ -32,7 +34,7 @@ func TestDocClaim_CloseReasonCap_OverCapRejected(t *testing.T) {
 	// the operator knows by how much to shorten.
 	wantSubs := []string{
 		"act close: --reason",
-		fmt.Sprintf("%d-byte cap", closeReasonMaxBytes),
+		fmt.Sprintf("%d-byte cap", op.MaxReasonLen),
 		fmt.Sprintf("got %d bytes", len(reason)),
 	}
 	for _, want := range wantSubs {
@@ -57,7 +59,7 @@ func TestDocClaim_CloseReasonCap_OverCapRejected(t *testing.T) {
 // The command still fails downstream (no .act/ in the temp dir), but the
 // absence of the "byte cap" message in stderr confirms the cap did not reject.
 func TestDocClaim_CloseReasonCap_AtCapAccepted(t *testing.T) {
-	reason := strings.Repeat("x", closeReasonMaxBytes)
+	reason := strings.Repeat("x", op.MaxReasonLen)
 	dir := t.TempDir()
 	// Need a git working tree so the command gets past hasGitDir() and
 	// proves the reason was accepted. .act/ is still absent, so the
@@ -83,4 +85,28 @@ func TestDocClaim_CloseReasonCap_AtCapAccepted(t *testing.T) {
 		t.Errorf("expected downstream failure (no .act/), got code 0; stderr=%q", stderr)
 	}
 	_ = filepath.Join // keep import set stable for future expansion
+}
+
+// TestDocClaim_CloseReasonCap_MultiByteCountsBytes pins that the 500-byte
+// `act close --reason` cap counts bytes, not characters ("LENGTHS ARE
+// BYTE-COUNTED" in `act help workflow`; docs/spec.md "Length caps"). 250
+// two-byte characters plus one ASCII byte is 501 bytes but only 251
+// characters — far under a 500-character cap — and the flag-parse check
+// still rejects it. The numbers are literals on purpose: they are the doc's
+// numbers, so moving op.MaxReasonLen without moving the docs fails here.
+func TestDocClaim_CloseReasonCap_MultiByteCountsBytes(t *testing.T) {
+	reason := strings.Repeat("\u00e9", 250) + "x"
+	if len(reason) != 501 {
+		t.Fatalf("fixture is %d bytes, want 501", len(reason))
+	}
+	dir := t.TempDir() // no git init — the upfront check fires before discovery
+	_, stderr, code := runActIn(t, dir, "close", "act-deadbeef", "--reason", reason)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (bad_flag); stderr=%q", code, stderr)
+	}
+	for _, want := range []string{"500-byte cap", "got 501 bytes"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q; got %q", want, stderr)
+		}
+	}
 }
