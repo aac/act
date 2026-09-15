@@ -37,7 +37,7 @@ type CloseOptions struct {
 	// to close. Resolved via the standard prefix pipeline.
 	ID string
 	// Reason is the optional `closed_reason`. Empty is allowed; payloads
-	// with `len(Reason) > closeReasonMaxBytes` (500) are rejected with
+	// with `len(Reason) > op.MaxReasonLen` (500 bytes) are rejected with
 	// exit 2 — see `act help workflow` and TestDocClaim_CloseReasonCap_*.
 	Reason string
 	// AsJSON toggles JSON envelope rendering. The cli return shape is
@@ -131,14 +131,6 @@ type CloseErrorOutput struct {
 	Candidates []string       `json:"-"`
 }
 
-// closeReasonMaxBytes mirrors the documented cap (act help close:
-// "--reason is capped at 500 bytes") and the write-time enforcement in
-// internal/op.ClosePayload.Validate. The CLI layer here is
-// defense-in-depth for direct library callers; the cmd/act layer
-// validates upfront at flag-parse time so the operator learns the cap
-// before any op file is written.
-const closeReasonMaxBytes = 500
-
 // RunClose implements `act close`.
 //
 // Steps:
@@ -198,11 +190,14 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			Message: "act close: <id> is required",
 		}, 2
 	}
-	// Step 2b: reason length cap.
-	if len(opts.Reason) > closeReasonMaxBytes {
+	// Step 2b: reason length cap (op.MaxReasonLen). The CLI layer here is
+	// defense-in-depth for direct library callers; cmd/act validates at
+	// flag-parse time so the operator learns the cap before any op file
+	// is written, and op.ClosePayload.Validate is the write-time check.
+	if len(opts.Reason) > op.MaxReasonLen {
 		return CloseErrorOutput{
 			Error:   "bad_flag",
-			Message: fmt.Sprintf("act close: --reason length %d > %d bytes", len(opts.Reason), closeReasonMaxBytes),
+			Message: fmt.Sprintf("act close: --reason length %d > %d bytes", len(opts.Reason), op.MaxReasonLen),
 		}, 2
 	}
 	// Step 2c: universal-write-flag conflicts (per spec §4).

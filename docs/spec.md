@@ -59,7 +59,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
   "assignee":     "string | null",             // default null; free-form (human handle or agent role)
   "machine":      "string | null",             // default null = runs anywhere; a machine label (printable ASCII, no spaces, <=64 bytes). Compared case-insensitively against the running machine's own label; `act ready`/`act next` exclude a non-matching issue, `act list`/`act show` never do
   "acceptance_criteria": [
-    { "text": "string, 1..500 chars", "done": false }
+    { "text": "string, 1..500 bytes", "done": false }
   ],
   "created_at":   "RFC3339 UTC, from create-op HLC wall",
   "closed_at":    "RFC3339 UTC | null",
@@ -73,6 +73,18 @@ Validation rules:
 - `parent` and every `deps[].parent` MUST resolve to an existing (non-tombstoned) issue at fold time; doctor's `dangling-deps` check enforces this on the whole repo.
 - `acceptance_criteria` indices are stable across the issue's lifetime; `remove_accept` shifts later indices down (see op semantics below).
 - A close op against an issue with unmet criteria succeeds only if `closed_reason` is non-empty; doctor flags otherwise.
+
+Length caps. Every length limit on a written field is counted in **bytes** — Go's `len()` of the UTF-8 string — not characters, so a string of multi-byte characters reaches the cap before it reaches that many characters. Each is enforced at write time by the op payload validators in `internal/op/payloads.go`, and each is one named constant there.
+
+| Field | Cap | Constant |
+|---|---|---|
+| `title` (`create`, `update_field`) | 256 bytes | `MaxTitleLen` |
+| each acceptance criterion (`create.accept[i]`, `add_accept.criterion`, `set_accept.criteria[i]`) | 500 bytes | `MaxAcceptCriterionLen` |
+| `reason` on `close`, `reopen`, `unclaim` (`act close`/`finish`/`reopen --reason`) | 500 bytes | `MaxReasonLen` |
+| external dep `ref` (`add_external_dep`, `remove_external_dep`) | 256 bytes | `MaxExternalRefLen` |
+| `machine` label | 64 bytes | `MaxMachineLabelLen` |
+
+The acceptance-criterion cap is the reason cap by design (`MaxAcceptCriterionLen` is defined as `MaxReasonLen`). `act delete --reason` has its own, larger 4096-byte cap.
 
 ### ID model
 
@@ -156,7 +168,7 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 { "parent_id": "act-..." }                  // removes any edge to that id; idempotent
 
 // add_accept
-{ "criterion": "string, 1..500 chars" }     // appended; index = current len
+{ "criterion": "string, 1..500 bytes" }     // appended; index = current len
 
 // remove_accept — exactly one of index/text is required
 { "index": 0 } | { "text": "exact match string" }
@@ -164,13 +176,13 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 // set_accept — REPLACES the full acceptance list (LWW-gated on the accept
 // field). This is the replace primitive `act update --accept` emits, so
 // repeated edits set rather than union. Empty list clears all criteria.
-{ "criteria": ["string, 1..500 chars", ...] }
+{ "criteria": ["string, 1..500 bytes", ...] }
 
 // claim — atomic assignee + status; sugar over two update_fields, but recorded as one op
 { "assignee": "string" }
 
 // close
-{ "reason": "string?" }                     // sets status=closed, closed_at=hlc.wall, closed_reason
+{ "reason": "string?, <=500 bytes" }       // sets status=closed, closed_at=hlc.wall, closed_reason
 
 // redact — replaces the named field's rendered value with "<redacted>" from this HLC forward
 { "field_path": "description | acceptance_criteria[2].text | ...",
@@ -782,7 +794,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 **Exit codes:** 0; 1 if already closed (idempotent close re-emits no op and exits 0; only true conflict returns 1); 2 on bad flags; 3 missing `.act/`; 4 on skew.
 
-**Edge cases:** closing an issue with open children is allowed and surfaced by `doctor orphan-close`; reason >4KB → exit 2.
+**Edge cases:** closing an issue with open children is allowed and surfaced by `doctor orphan-close`; reason >500 bytes → exit 2 (see Length caps).
 
 ---
 

@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/op"
 )
 
 // bootstrapLoopRepo inits a fresh git+act repo in a temp dir and returns its
@@ -264,7 +266,7 @@ func TestFinish_AlreadyClosedIdempotent(t *testing.T) {
 // is rejected at flag-parse time (exit 2) before any repo discovery, with a
 // message naming the byte cap.
 func TestFinish_ReasonCapRejectedUpfront(t *testing.T) {
-	reason := strings.Repeat("x", closeReasonMaxBytes+1)
+	reason := strings.Repeat("x", op.MaxReasonLen+1)
 	dir := t.TempDir() // no git init — the upfront check fires before discovery
 	_, stderr, code := runActIn(t, dir, "finish", "act-deadbeef", "--reason", reason)
 	if code != 2 {

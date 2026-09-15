@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/op"
 )
 
 // runFinish dispatches `act finish <id>`: the composed close + push flow,
@@ -25,7 +26,7 @@ import (
 // dispatch table do not collide with `act finish` wiring (mirrors close.go).
 func runFinish(args []string) int {
 	fs := flag.NewFlagSet("finish", flag.ContinueOnError)
-	reason := fs.String("reason", "", "closed reason (stored as closed_reason; max 500 bytes — see 'act help workflow' for cap rationale)")
+	reason := fs.String("reason", "", fmt.Sprintf("closed reason (stored as closed_reason; max %d bytes — see 'act help workflow' for cap rationale)", op.MaxReasonLen))
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip staging, the auto-commit, and the push")
 	push := fs.Bool("push", false, "push after the commit (errors if the close stays staged for the agent's next commit)")
@@ -46,12 +47,12 @@ func runFinish(args []string) int {
 	}
 	// Upfront --reason length validation, mirroring `act close` (fail fast
 	// before any op file is written, naming the byte cap).
-	if n := len(*reason); n > closeReasonMaxBytes {
+	if n := len(*reason); n > op.MaxReasonLen {
 		emitFinish(*asJSON, map[string]any{
 			"error": cli.ErrBadFlag,
 			"message": fmt.Sprintf(
 				"act finish: --reason exceeds %d-byte cap (got %d bytes); please shorten",
-				closeReasonMaxBytes, n,
+				op.MaxReasonLen, n,
 			),
 		})
 		return 2

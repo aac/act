@@ -1571,6 +1571,41 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "--reason is capped at 500 bytes",
 		testName:     "TestDocClaim_CloseReasonCap_AtCapAccepted",
 	},
+	// close-reason-cap-multibyte / length-caps-* (act-1d044c): the reason
+	// and accept caps are one shared constant, and docs/spec.md "Length
+	// caps" names every write-time cap and says they count bytes, not
+	// characters. The op-layer test pins every cap at its spec number; the
+	// cmd/act test pins the byte count at the user-visible flag boundary.
+	{
+		name:         "close-reason-cap-multibyte-counts-bytes",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "LENGTHS ARE BYTE-COUNTED",
+		testName:     "TestDocClaim_CloseReasonCap_MultiByteCountsBytes",
+	},
+	{
+		name:         "length-caps-spec-bytes-not-characters",
+		docFile:      "docs/spec.md",
+		claimPattern: "Every length limit on a written field is counted in **bytes**",
+		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
+	},
+	{
+		name:         "length-caps-spec-reason",
+		docFile:      "docs/spec.md",
+		claimPattern: "| `reason` on `close`, `reopen`, `unclaim` (`act close`/`finish`/`reopen --reason`) | 500 bytes | `MaxReasonLen` |",
+		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
+	},
+	{
+		name:         "length-caps-spec-accept-criterion",
+		docFile:      "docs/spec.md",
+		claimPattern: "| 500 bytes | `MaxAcceptCriterionLen` |",
+		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
+	},
+	{
+		name:         "length-caps-spec-external-ref",
+		docFile:      "docs/spec.md",
+		claimPattern: "| external dep `ref` (`add_external_dep`, `remove_external_dep`) | 256 bytes | `MaxExternalRefLen` |",
+		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
+	},
 	// show-include-ops (act-ddd458): the `--include-ops` flag-help string in
 	// cmd/act/main.go is a user-visible claim. `TestRunShow_IncludeOpsHumanFormat`
 	// covers the internal Go API, but no TestDocClaim_* existed at the subprocess

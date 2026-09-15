@@ -7,21 +7,15 @@ import (
 	"os"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/op"
 )
-
-// closeReasonMaxBytes is the documented cap on --reason (act help close:
-// "--reason is capped at 500 bytes"). We validate upfront here so the
-// operator learns the cap before the op file is written or staged.
-// internal/op.ClosePayload.Validate enforces the same 500-byte cap as
-// defense-in-depth for direct library callers.
-const closeReasonMaxBytes = 500
 
 // runClose dispatches `act close <id>`. Positional argument is the id;
 // flags follow spec §3 (`--reason TEXT`, `--json`) plus the universal
 // write flags (`--no-commit`, `--push`, `--isolated`).
 func runClose(args []string) int {
 	fs := flag.NewFlagSet("close", flag.ContinueOnError)
-	reason := fs.String("reason", "", "closed reason (stored as closed_reason; max 500 bytes — see 'act help workflow' for cap rationale)")
+	reason := fs.String("reason", "", fmt.Sprintf("closed reason (stored as closed_reason; max %d bytes — see 'act help workflow' for cap rationale)", op.MaxReasonLen))
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noCommit := fs.Bool("no-commit", false, "write op file but skip staging and the auto-commit")
 	push := fs.Bool("push", false, "push after the commit (errors if the close stays staged for the agent's next commit)")
@@ -44,12 +38,13 @@ func runClose(args []string) int {
 	}
 	// Upfront --reason length validation: fail fast before the op file is
 	// written, with a stderr message that names the byte cap so the
-	// operator knows how much to shorten by. Defense-in-depth re-check
-	// lives in internal/op.ClosePayload.Validate.
-	if n := len(*reason); n > closeReasonMaxBytes {
+	// operator knows how much to shorten by, before the op file is written
+	// or staged. The cap is op.MaxReasonLen, which ClosePayload.Validate
+	// re-checks at write time for direct library callers.
+	if n := len(*reason); n > op.MaxReasonLen {
 		emitBadFlag(*asJSON, fmt.Sprintf(
 			"act close: --reason exceeds %d-byte cap (got %d bytes); please shorten",
-			closeReasonMaxBytes, n,
+			op.MaxReasonLen, n,
 		))
 		return 2
 	}
