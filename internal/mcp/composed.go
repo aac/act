@@ -436,13 +436,13 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 	if factory == nil {
 		// Production path: use the canonical helper.
 		if err := cli.WriteOpsAndAutoCommit(envs, bodies, paths, gops, opts, commitMsg); err != nil {
-			return errEnvelope("block_failed", err.Error()), true
+			return blockWriteErrEnvelope(err), true
 		}
 	} else {
 		// Test path: replicate the helper's logic against the injected
 		// blockGitOps so we can exercise commit failure.
 		if err := writeBlockOpsViaInterface(envs, bodies, paths, bgops, opts, commitMsg); err != nil {
-			return errEnvelope("block_failed", err.Error()), true
+			return blockWriteErrEnvelope(err), true
 		}
 	}
 
@@ -452,6 +452,17 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		"blocked_by":  parentFull,
 		"ops_written": []string{"dep-add"},
 	}, false
+}
+
+// blockWriteErrEnvelope maps an act_block write error to its envelope: a
+// bounded-wait write-lock timeout surfaces as write_lock_timeout (a sibling
+// holds the lock; retry), matching the CLI write paths (act-2302dc);
+// anything else stays block_failed.
+func blockWriteErrEnvelope(err error) map[string]any {
+	if msg, details, isTimeout := cli.WriteLockTimeoutDetails(err); isTimeout {
+		return map[string]any{"error": cli.ErrWriteLockTimeout, "message": msg, "details": details}
+	}
+	return errEnvelope("block_failed", err.Error())
 }
 
 // writeBlockOpsViaInterface mirrors cli.WriteOpsAndAutoCommit but accepts a

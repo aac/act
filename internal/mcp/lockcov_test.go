@@ -61,3 +61,48 @@ func TestLockCoverage_MCPBlockInterfacePath(t *testing.T) {
 		t.Fatalf("op files: pre=%d post=%d under a held write lock; want equal", pre, post)
 	}
 }
+
+// TestActBlock_WriteLockTimeoutEnvelope (act-2302dc): a write-lock timeout
+// reaches the act_block caller as write_lock_timeout (naming the lock file),
+// not the generic block_failed, on both the production and injected-gitops
+// write paths — so a caller can tell "a sibling holds the lock, retry" from
+// "the write broke".
+func TestActBlock_WriteLockTimeoutEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		injected bool
+	}{{"production", false}, {"injected", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := makeRealRepo(t)
+			victim := seedIssue(t, root, "v")
+			blocker := seedIssue(t, root, "b")
+			srv := NewServer(root, false, nil, nil)
+
+			t.Setenv("ACT_WRITE_LOCK_TIMEOUT_MS", "150")
+			release, locked, err := flock.TryLock(filepath.Join(root, ".act", gitops.WriteLockFile))
+			if err != nil || !locked {
+				t.Fatalf("hold write lock: locked=%v err=%v", locked, err)
+			}
+			defer release()
+
+			body := json.RawMessage(fmt.Sprintf(`{"id":%q,"blocked_by":%q}`, victim, blocker))
+			var out any
+			var isErr bool
+			if tc.injected {
+				var calls []string
+				factory := func(_ string) blockGitOps { return lockcovRecordingGops{repoRoot: root, calls: &calls} }
+				out, isErr = srv.callBlockWithGops(body, factory)
+			} else {
+				out, isErr = srv.callBlock(body)
+			}
+			m, ok := out.(map[string]any)
+			if !isErr || !ok || m["error"] != "write_lock_timeout" {
+				t.Fatalf("act_block under a held write lock: isErr=%v out=%+v; want error=write_lock_timeout", isErr, out)
+			}
+			details, _ := m["details"].(map[string]any)
+			if details["lock_file"] != ".act/"+gitops.WriteLockFile {
+				t.Fatalf("details = %+v; want lock_file .act/%s", m["details"], gitops.WriteLockFile)
+			}
+		})
+	}
+}
