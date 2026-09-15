@@ -54,11 +54,6 @@ func wlockNewStore(t *testing.T) wlockStoreFixture {
 		t.Fatalf("bootstrap peer: code=%d out=%+v", code, out)
 	}
 	wlockConfigureActRepo(t, peer, "peer@example.com")
-	// bootstrap-worker strips hooks/ from the worker tree but leaves them
-	// tracked, so the peer's tree carries a tracked deletion that makes
-	// every rebase refuse ("You have unstaged changes"). Restore them so
-	// the peer exercises real rebases instead of that unrelated wedge.
-	mustGitIn(t, "", "--git-dir="+filepath.Join(peer, ".act", ".git"), "--work-tree="+filepath.Join(peer, ".act"), "checkout", "--", ".")
 	return wlockStoreFixture{shared: shared, peer: peer, bare: bare}
 }
 

@@ -933,10 +933,26 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 	// typically assume the host project's working-tree context (e.g. the
 	// act repo's close hook runs `go vet ./...`) and fail on a worker
 	// dispatched into a non-host repo. Same rationale as the cwd-source
-	// path; per-worker hook installation is a separate concern. We do
-	// not bother committing the deletion to the nested repo — the
-	// missing files on disk are enough to no-op the close-hook firing,
-	// and a worker's nested .git tree is short-lived.
+	// path; per-worker hook installation is a separate concern.
+	//
+	// The strip goes through sparse-checkout, not a bare delete
+	// (act-da2af1): deleting tracked files leaves ` D hooks/...` in the
+	// worktree, which makes every rebase refuse with "You have unstaged
+	// changes" and strands the worker's pushes in .pending-pushes.
+	// Sparse-checkout marks the paths skip-worktree, so the tree stays
+	// clean and rebases over upstream hook changes never re-materialize
+	// them.
+	sparseCmd := exec.Command("git", "-C", stagingAct, "sparse-checkout", "set", "--no-cone", "/*", "!/hooks/")
+	if out, err := sparseCmd.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": exclude hooks/ from clone via sparse-checkout: %v", err),
+			"details": map[string]any{
+				"stderr_tail": CaptureStderrTail(string(out)),
+			},
+		}, 3
+	}
 	if err := os.RemoveAll(filepath.Join(stagingAct, "hooks")); err != nil {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
