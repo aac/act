@@ -573,6 +573,86 @@ func TestBootstrapWorker_StrippedTrackedHooksLeaveCleanTree(t *testing.T) {
 	}
 }
 
+// TestBootstrapWorker_CopyModesRebaseOverUpstreamHookChange extends the
+// clean-tree check above to the path a worker actually takes after a
+// rejected push (act-07503b): the host advances the shared remote with a
+// change under hooks/, the worker commits locally and rebases onto it.
+// Without the sparse-checkout reconcile the rebase refuses with
+// unstaged changes (` D hooks/close`) and the worker's pushes strand.
+// Mirrors TestBootstrapFromRemote_StrippedHooksLeaveCleanTree for the two
+// copy modes, whose copied nested .git carries the source's origin.
+func TestBootstrapWorker_CopyModesRebaseOverUpstreamHookChange(t *testing.T) {
+	for _, mode := range []string{"cwd-source", "from-cwd"} {
+		t.Run(mode, func(t *testing.T) {
+			srcRoot, _ := makeBootstrapSource(t)
+			srcAct := filepath.Join(srcRoot, ".act")
+			if err := os.MkdirAll(filepath.Join(srcAct, "hooks"), 0o755); err != nil {
+				t.Fatalf("mkdir src hooks: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(srcAct, "hooks", "close"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+				t.Fatalf("write close hook: %v", err)
+			}
+			runGit(t, srcAct, "add", "hooks/close")
+			runGit(t, srcAct, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-q", "-m", "seed close hook")
+
+			// Give the source state repo a shared remote, as a real
+			// synced tracker has; the copy carries this origin along.
+			barePath := filepath.Join(t.TempDir(), "act-state.git")
+			runGit(t, "", "clone", "-q", "--bare", filepath.Join(srcAct, ".git"), barePath)
+			runGit(t, srcAct, "remote", "add", "origin", barePath)
+
+			targetRoot := makeBootstrapTarget(t)
+			opts := BootstrapWorkerOptions{SourceCWD: srcRoot, Target: targetRoot}
+			if mode == "from-cwd" {
+				opts = BootstrapWorkerOptions{FromCWDSourcePath: srcRoot, Target: targetRoot}
+			}
+			if out, code := RunBootstrapWorker(opts); code != 0 {
+				t.Fatalf("state import (%s) code=%d out=%+v", mode, code, out)
+			}
+			workerAct := filepath.Join(targetRoot, ".act")
+
+			status := func() string {
+				out, err := exec.Command("git", "-C", workerAct, "status", "--porcelain", "--untracked-files=no").CombinedOutput()
+				if err != nil {
+					t.Fatalf("git status: %v: %s", err, out)
+				}
+				return strings.TrimSpace(string(out))
+			}
+
+			pusher := filepath.Join(t.TempDir(), "pusher")
+			runGit(t, "", "clone", "-q", barePath, pusher)
+			if err := os.WriteFile(filepath.Join(pusher, "hooks", "close"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatalf("edit hook upstream: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(pusher, "upstream.txt"), []byte("u\n"), 0o644); err != nil {
+				t.Fatalf("write upstream file: %v", err)
+			}
+			runGit(t, pusher, "add", "hooks/close", "upstream.txt")
+			runGit(t, pusher, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-q", "-m", "host advance")
+			runGit(t, pusher, "push", "-q", "origin", "HEAD")
+
+			if err := os.WriteFile(filepath.Join(workerAct, "worker.txt"), []byte("w\n"), 0o644); err != nil {
+				t.Fatalf("write worker file: %v", err)
+			}
+			runGit(t, workerAct, "add", "worker.txt")
+			runGit(t, workerAct, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-q", "-m", "worker change")
+			if out, err := exec.Command("git", "-C", workerAct, "-c", "user.name=test", "-c", "user.email=t@e",
+				"pull", "--rebase", "-q", "origin", "HEAD").CombinedOutput(); err != nil {
+				t.Fatalf("worker rebase onto advanced remote failed: %v\n%s", err, out)
+			}
+			if _, err := os.Stat(filepath.Join(workerAct, "upstream.txt")); err != nil {
+				t.Errorf("upstream change missing after rebase: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(workerAct, "hooks", "close")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("rebase re-materialized the stripped host hook: err=%v", err)
+			}
+			if s := status(); s != "" {
+				t.Errorf("worker tree dirty after rebase:\n%s", s)
+			}
+		})
+	}
+}
+
 // Silence unused-import warnings when the file is edited down: we keep
 // io and io.EOF available for future cases (e.g. an empty-source test)
 // without churning imports.
