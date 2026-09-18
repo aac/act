@@ -320,6 +320,14 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 			"message": fmt.Sprintf(cmd+": copy %s → %s: %v", srcAct, stagingAct, err),
 		}, 3
 	}
+	if out, err := excludeHooksFromCopiedRepo(stagingAct); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": exclude hooks/ from copy via sparse-checkout: %v", err),
+			"details": map[string]any{"stderr_tail": CaptureStderrTail(out)},
+		}, 3
+	}
 
 	// Stamp the dispatch_hlc / meta file into the staging tree BEFORE the
 	// atomic rename so a successful rename means the meta is in place.
@@ -508,6 +516,27 @@ func copyTreeWithStatsOpts(src, dst string, excludeIndex bool) (copyStats, error
 		return stats, walkErr
 	}
 	return stats, nil
+}
+
+// excludeHooksFromCopiedRepo reconciles a copied `.act/` tree's nested
+// git index with the hooks/ subtree copyTreeWithStatsOpts skipped
+// (act-915181). The copy omits hooks/ on disk, but the copied .git index
+// still tracks whatever hooks the host committed, so without this the
+// target shows ` D hooks/close`, every worker rebase refuses with
+// unstaged changes, and pushes strand in .pending-pushes. Same remedy as
+// the --from-remote path (act-da2af1): sparse-checkout marks hooks/
+// skip-worktree, so the tree stays clean and rebases over upstream hook
+// changes never re-materialize them. A copy with no nested .git (nothing
+// to reconcile) is a no-op. Returns combined git output on failure.
+func excludeHooksFromCopiedRepo(stagingAct string) (string, error) {
+	if _, err := os.Stat(filepath.Join(stagingAct, ".git")); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	out, err := exec.Command("git", "-C", stagingAct, "sparse-checkout", "set", "--no-cone", "/*", "!/hooks/").CombinedOutput()
+	return string(out), err
 }
 
 // copyFile copies the contents of src → dst with the given mode. dst's
@@ -720,6 +749,14 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf(cmd+": --from-cwd copy %s → %s: %v", srcAct, stagingAct, err),
+		}, 3
+	}
+	if out, err := excludeHooksFromCopiedRepo(stagingAct); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": --from-cwd exclude hooks/ from copy via sparse-checkout: %v", err),
+			"details": map[string]any{"stderr_tail": CaptureStderrTail(out)},
 		}, 3
 	}
 
