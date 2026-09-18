@@ -5,8 +5,8 @@ package cli
 //   - read a file's UTF-8 contents as the description payload.
 //   - accept "-" as a sentinel for stdin.
 //   - be mutually exclusive with --description (exit 2).
-//   - reject content over the schema's 16384-char description cap
-//     with exit 2 and a clear error message.
+//   - reject content over the op.MaxDescriptionLen byte cap with exit 2
+//     and a clear error message.
 //
 // Driven through the prebuilt act binary so the flag wiring,
 // mutual-exclusion check, and post-load handoff to RunCreate/RunUpdate
@@ -18,8 +18,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/op"
 )
 
 // makeDescFileSite initializes a fresh site with `act init` so subsequent
@@ -136,13 +139,13 @@ func TestCreate_DescriptionFile_MutualExclusion(t *testing.T) {
 	}
 }
 
-// TestCreate_DescriptionFile_OverCap: a file larger than 16384 chars
-// exits 2 with a "bad_flag" envelope and a message that references the
+// TestCreate_DescriptionFile_OverCap: a file larger than
+// op.MaxDescriptionLen bytes exits 2 with a "bad_flag" envelope and a message that references the
 // limit. JSON form is asserted because that's what agents will parse.
 func TestCreate_DescriptionFile_OverCap(t *testing.T) {
 	site := makeDescFileSite(t)
 	descPath := filepath.Join(site, "huge.txt")
-	body := strings.Repeat("a", 16385) // one over the cap
+	body := strings.Repeat("a", op.MaxDescriptionLen+1) // one over the cap
 	if err := os.WriteFile(descPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -159,8 +162,8 @@ func TestCreate_DescriptionFile_OverCap(t *testing.T) {
 		t.Fatalf("error = %v want bad_flag", env["error"])
 	}
 	msg, _ := env["message"].(string)
-	if !strings.Contains(msg, "16384") {
-		t.Fatalf("message does not reference 16384: %q", msg)
+	if want := strconv.Itoa(op.MaxDescriptionLen) + "-byte"; !strings.Contains(msg, want) {
+		t.Fatalf("message does not reference %q: %q", want, msg)
 	}
 }
 
@@ -229,7 +232,7 @@ func TestUpdate_DescriptionFile_OverCap(t *testing.T) {
 	}
 
 	descPath := filepath.Join(site, "huge2.txt")
-	if err := os.WriteFile(descPath, []byte(strings.Repeat("z", 16385)), 0o644); err != nil {
+	if err := os.WriteFile(descPath, []byte(strings.Repeat("z", op.MaxDescriptionLen+1)), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

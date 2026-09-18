@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -53,7 +54,13 @@ func TestDocClaim_DescriptionCap_FileAndAppendFlags(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("--description-append past 1048576 bytes accepted: %s", out)
 	}
-	if want := "update_field.description length 1048579 > 1048576 bytes"; !strings.Contains(out, want) {
-		t.Fatalf("--description-append over-cap error does not name the merged length and cap (%q): %s", want, out)
+	var env struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("parse error envelope: %v\n%s", err, out)
+	}
+	if want := "update_field.description length 1048579 > 1048576 bytes"; !strings.Contains(env.Message, want) {
+		t.Fatalf("--description-append over-cap error does not name the merged length and cap (%q): %s", want, env.Message)
 	}
 }

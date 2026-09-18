@@ -4,14 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-)
 
-// maxDescriptionBytes mirrors the schema's 16384-char description cap
-// (spec.md §Data model: description is "0..16384 chars"). The check
-// is byte-based for parity with the other write-side length checks in
-// internal/op/payloads.go (MaxTitleLen, MaxAcceptCriterionLen), all of
-// which use len() rather than a rune count.
-const maxDescriptionBytes = 16384
+	"github.com/aac/act/internal/op"
+)
 
 // loadDescriptionFile reads a description payload from path for
 // --description-file. See loadDescriptionPayload for the mechanics; this
@@ -26,10 +21,11 @@ func loadDescriptionFile(path string) (string, int, map[string]any) {
 // (bad flag / oversize / read error) or 3 (file missing) and errorEnv is
 // the structured envelope ready to be passed to emitEnvelope.
 //
-// The cap is enforced by reading one byte past the limit (via
-// io.LimitReader) so we can distinguish "exactly 16384 bytes" from
-// "more than 16384 bytes" without pulling a multi-megabyte file into
-// memory.
+// The cap is op.MaxDescriptionLen, the one description cap, which the op
+// payload validators enforce on every write (act-993498). Checking it here
+// too lets the reader stop one byte past the limit (via io.LimitReader),
+// telling "exactly at the cap" from "over it" without pulling an
+// arbitrarily large file into memory, and lets the error name the flag.
 //
 // flagName names the flag in every error message so --description-file
 // and --description-append-file each report themselves rather than one
@@ -64,19 +60,19 @@ func loadDescriptionPayload(flagName, path string) (string, int, map[string]any)
 		defer func() { _ = closer.Close() }()
 	}
 
-	buf, err := io.ReadAll(io.LimitReader(r, maxDescriptionBytes+1))
+	buf, err := io.ReadAll(io.LimitReader(r, op.MaxDescriptionLen+1))
 	if err != nil {
 		return "", 2, map[string]any{
 			"error":   "bad_flag",
 			"message": fmt.Sprintf("%s %s: read: %v", flagName, display, err),
 		}
 	}
-	if len(buf) > maxDescriptionBytes {
+	if len(buf) > op.MaxDescriptionLen {
 		return "", 2, map[string]any{
 			"error": "bad_flag",
 			"message": fmt.Sprintf(
-				"%s %s: content exceeds %d-char description limit",
-				flagName, display, maxDescriptionBytes,
+				"%s %s: content exceeds %d-byte description cap",
+				flagName, display, op.MaxDescriptionLen,
 			),
 		}
 	}

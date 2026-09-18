@@ -93,6 +93,20 @@ const MaxReasonLen = 500
 // not characters.
 const MaxAcceptCriterionLen = MaxReasonLen
 
+// MaxDescriptionLen caps an issue description in bytes: 1 MiB. It is the one
+// description cap in act (act-993498). The payload validators here enforce it
+// on create.description and update_field{description}, so every write path —
+// `act create|update --description`, the merged result of
+// `--description-append`, the MCP tools, and `act import` — runs through it;
+// cmd/act's --description-file / --description-append-file reader reads the
+// same constant to stop reading early. It is a write-time check only: the
+// fold never runs payload validation, so an existing op is always readable.
+// The number is generous on purpose — real trackers carry descriptions past
+// 100 KB, which the spec's old, never-enforced 16 KiB figure would have
+// refused — and it exists to bound a runaway paste, not to shape what a
+// description holds.
+const MaxDescriptionLen = 1048576
+
 // CreatePayload is the payload for op_type=create.
 type CreatePayload struct {
 	Title       string   `json:"title"`
@@ -121,6 +135,9 @@ func (p CreatePayload) Validate() error {
 	}
 	if len(p.Title) > MaxTitleLen {
 		return fmt.Errorf("op: create.title length %d > %d bytes", len(p.Title), MaxTitleLen)
+	}
+	if len(p.Description) > MaxDescriptionLen {
+		return fmt.Errorf("op: create.description length %d > %d bytes", len(p.Description), MaxDescriptionLen)
 	}
 	if !validIssueTypes[p.Type] {
 		return fmt.Errorf("op: create.type %q: not one of {task,bug,epic,chore}", p.Type)
@@ -204,6 +221,15 @@ func (p UpdateFieldPayload) Validate() error {
 		}
 		if len(title) > MaxTitleLen {
 			return fmt.Errorf("op: update_field.title length %d > %d bytes", len(title), MaxTitleLen)
+		}
+	}
+	if p.Field == "description" {
+		var d string
+		if err := json.Unmarshal(p.Value, &d); err != nil {
+			return fmt.Errorf("op: update_field.value (description): %w", err)
+		}
+		if len(d) > MaxDescriptionLen {
+			return fmt.Errorf("op: update_field.description length %d > %d bytes", len(d), MaxDescriptionLen)
 		}
 	}
 	if p.Field == "machine" {

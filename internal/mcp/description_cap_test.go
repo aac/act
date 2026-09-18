@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -40,13 +39,11 @@ func shownDescriptionLen(t *testing.T, root, id string) int {
 	if code != 0 {
 		t.Fatalf("show %s: code=%d", id, code)
 	}
-	body, _ := json.Marshal(shown)
-	var m map[string]any
-	_ = json.Unmarshal(body, &m)
-	if iss, ok := m["issue"].(map[string]any); ok {
-		m = iss
+	res, ok := shown.(cli.ShowResult)
+	if !ok {
+		t.Fatalf("show %s: output type %T, want cli.ShowResult", id, shown)
 	}
-	d, _ := m["description"].(string)
+	d, _ := res.Fields["description"].(string)
 	return len(d)
 }
 

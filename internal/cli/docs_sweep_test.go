@@ -1606,6 +1606,47 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "| external dep `ref` (`add_external_dep`, `remove_external_dep`) | 256 bytes | `MaxExternalRefLen` |",
 		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
 	},
+	// description-cap-* (act-993498): the description cap is one constant,
+	// op.MaxDescriptionLen (1 MiB), enforced by the op payload validators
+	// so every write path and `act import` runs through it. The op-layer
+	// test pins the byte boundary; the others pin it at each user-visible
+	// write boundary the spec row names.
+	{
+		name:         "description-cap-spec-schema",
+		docFile:      "docs/spec.md",
+		claimPattern: `"description":  "string, 0..1048576 bytes (1 MiB), default \"\""`,
+		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
+	},
+	{
+		name:         "description-cap-spec-row-op",
+		docFile:      "docs/spec.md",
+		claimPattern: "| 1048576 bytes (1 MiB) | `MaxDescriptionLen` |",
+		testName:     "TestDocClaim_LengthCaps_ByteBoundary",
+	},
+	{
+		name:         "description-cap-spec-row-inline",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act create`/`update --description`",
+		testName:     "TestDocClaim_DescriptionCap_Inline",
+	},
+	{
+		name:         "description-cap-spec-row-file-and-append",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--description-file`, the merged result of `--description-append`/`--description-append-file`",
+		testName:     "TestDocClaim_DescriptionCap_FileAndAppendFlags",
+	},
+	{
+		name:         "description-cap-spec-row-mcp",
+		docFile:      "docs/spec.md",
+		claimPattern: "MCP `act_create`/`act_update`",
+		testName:     "TestDocClaim_MCP_DescriptionCap",
+	},
+	{
+		name:         "description-cap-spec-row-import",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act import`) | 1048576 bytes (1 MiB)",
+		testName:     "TestDocClaim_Import_DescriptionCap",
+	},
 	// show-include-ops (act-ddd458): the `--include-ops` flag-help string in
 	// cmd/act/main.go is a user-visible claim. `TestRunShow_IncludeOpsHumanFormat`
 	// covers the internal Go API, but no TestDocClaim_* existed at the subprocess

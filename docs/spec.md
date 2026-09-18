@@ -46,7 +46,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
 {
   "id":           "act-a1b2",                  // string, on-disk short id, "act-" + N hex chars (4 <= N <= 16)
   "title":        "string, 1..200 chars, required",
-  "description":  "string, 0..16384 chars, default \"\"",
+  "description":  "string, 0..1048576 bytes (1 MiB), default \"\"",
   "status":       "open | in_progress | closed",              // default "open"; "blocked" is a DERIVED display state computed from open blocked-by dep edges — not stored, not directly settable, never produced by the fold
   "priority":     0,                           // int 0..3 inclusive, default 2 (lower = more urgent)
   "type":         "task | bug | epic | chore", // default "task"
@@ -79,12 +79,13 @@ Length caps. Every length limit on a written field is counted in **bytes** — G
 | Field | Cap | Constant |
 |---|---|---|
 | `title` (`create`, `update_field`) | 256 bytes | `MaxTitleLen` |
+| `description` (`create`, `update_field`; `act create`/`update --description`, `--description-file`, the merged result of `--description-append`/`--description-append-file`, MCP `act_create`/`act_update`, `act import`) | 1048576 bytes (1 MiB) | `MaxDescriptionLen` |
 | each acceptance criterion (`create.accept[i]`, `add_accept.criterion`, `set_accept.criteria[i]`) | 500 bytes | `MaxAcceptCriterionLen` |
 | `reason` on `close`, `reopen`, `unclaim` (`act close`/`finish`/`reopen --reason`) | 500 bytes | `MaxReasonLen` |
 | external dep `ref` (`add_external_dep`, `remove_external_dep`) | 256 bytes | `MaxExternalRefLen` |
 | `machine` label | 64 bytes | `MaxMachineLabelLen` |
 
-The acceptance-criterion cap is the reason cap by design (`MaxAcceptCriterionLen` is defined as `MaxReasonLen`). `act delete --reason` has its own, larger 4096-byte cap.
+The acceptance-criterion cap is the reason cap by design (`MaxAcceptCriterionLen` is defined as `MaxReasonLen`). `act delete --reason` has its own, larger 4096-byte cap. Caps bind writes and imports only: folding existing ops never re-checks them, so an op written before a cap existed stays readable.
 
 ### ID model
 

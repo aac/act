@@ -3,8 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/op"
 )
 
 // TestLoadDescriptionFile_ReadsFile covers the happy path: a regular
@@ -46,12 +49,12 @@ func TestLoadDescriptionFile_FileMissing(t *testing.T) {
 	}
 }
 
-// TestLoadDescriptionFile_AtCap reads a file exactly at the 16384-byte
-// limit. This is the boundary case that proves we don't off-by-one.
+// TestLoadDescriptionFile_AtCap reads a file exactly at the
+// op.MaxDescriptionLen byte cap. This is the boundary case that proves we don't off-by-one.
 func TestLoadDescriptionFile_AtCap(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "desc.txt")
-	body := strings.Repeat("a", maxDescriptionBytes)
+	body := strings.Repeat("a", op.MaxDescriptionLen)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -60,8 +63,8 @@ func TestLoadDescriptionFile_AtCap(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d want 0; errEnv=%v", code, errEnv)
 	}
-	if len(got) != maxDescriptionBytes {
-		t.Fatalf("len = %d want %d", len(got), maxDescriptionBytes)
+	if len(got) != op.MaxDescriptionLen {
+		t.Fatalf("len = %d want %d", len(got), op.MaxDescriptionLen)
 	}
 }
 
@@ -71,7 +74,7 @@ func TestLoadDescriptionFile_AtCap(t *testing.T) {
 func TestLoadDescriptionFile_OverCap(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "desc.txt")
-	body := strings.Repeat("a", maxDescriptionBytes+1)
+	body := strings.Repeat("a", op.MaxDescriptionLen+1)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -84,8 +87,8 @@ func TestLoadDescriptionFile_OverCap(t *testing.T) {
 		t.Fatalf("errEnv = %v want error=bad_flag", errEnv)
 	}
 	msg, _ := errEnv["message"].(string)
-	if !strings.Contains(msg, "16384") {
-		t.Fatalf("message %q does not reference 16384-char limit", msg)
+	if !strings.Contains(msg, strconv.Itoa(op.MaxDescriptionLen)+"-byte") {
+		t.Fatalf("message %q does not reference the byte cap", msg)
 	}
 }
 
@@ -118,8 +121,8 @@ func TestLoadDescriptionFile_StdinSentinel(t *testing.T) {
 }
 
 // TestLoadDescriptionFile_StdinOverCap verifies that the cap is also
-// applied when reading from stdin. Push >16384 bytes through the pipe;
-// expect exit 2 with bad_flag.
+// applied when reading from stdin. Push more than op.MaxDescriptionLen
+// bytes through the pipe; expect exit 2 with bad_flag.
 func TestLoadDescriptionFile_StdinOverCap(t *testing.T) {
 	oldStdin := os.Stdin
 	t.Cleanup(func() { os.Stdin = oldStdin })
@@ -129,8 +132,11 @@ func TestLoadDescriptionFile_StdinOverCap(t *testing.T) {
 		t.Fatalf("pipe: %v", err)
 	}
 	os.Stdin = r
+	// The reader stops one byte past the cap, so the writer is left
+	// blocked on the tail; closing the read end unblocks it.
+	t.Cleanup(func() { _ = r.Close() })
 	go func() {
-		_, _ = w.Write([]byte(strings.Repeat("b", maxDescriptionBytes+10)))
+		_, _ = w.Write([]byte(strings.Repeat("b", op.MaxDescriptionLen+10)))
 		_ = w.Close()
 	}()
 
@@ -144,7 +150,7 @@ func TestLoadDescriptionFile_StdinOverCap(t *testing.T) {
 }
 
 // TestLoadDescriptionFile_EmptyFile is intentionally permitted: an
-// empty payload is a valid description per the schema's 0..16384 range.
+// empty payload is a valid description (the range starts at 0 bytes).
 func TestLoadDescriptionFile_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "desc.txt")
