@@ -23,6 +23,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -521,6 +522,54 @@ func TestBootstrapWorker_SkipsHooks(t *testing.T) {
 	// over-skip.
 	if _, err := os.Stat(filepath.Join(targetRoot, ".act", "config.json")); err != nil {
 		t.Errorf("config.json missing after skip-hooks copy: %v", err)
+	}
+}
+
+// TestBootstrapWorker_StrippedTrackedHooksLeaveCleanTree asserts that
+// `act state import <dir>` from a host whose `.act/` git TRACKS hooks/
+// leaves the target's nested repo clean (act-915181). Before the fix the
+// copy skipped hooks/ on disk but the copied .git index still listed
+// them, so `git status` showed ` D hooks/close`, every worker rebase
+// refused with unstaged changes, and pushes queued in .pending-pushes.
+// Covers both copy modes (cwd-source and --from-cwd), which share the
+// hooks-skipping copy.
+func TestBootstrapWorker_StrippedTrackedHooksLeaveCleanTree(t *testing.T) {
+	for _, mode := range []string{"cwd-source", "from-cwd"} {
+		t.Run(mode, func(t *testing.T) {
+			srcRoot, _ := makeBootstrapSource(t)
+			srcAct := filepath.Join(srcRoot, ".act")
+			if err := os.MkdirAll(filepath.Join(srcAct, "hooks"), 0o755); err != nil {
+				t.Fatalf("mkdir src hooks: %v", err)
+			}
+			for _, name := range []string{"close", "close.sample"} {
+				if err := os.WriteFile(filepath.Join(srcAct, "hooks", name), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+					t.Fatalf("write %s: %v", name, err)
+				}
+			}
+			runGit(t, srcAct, "add", "hooks/close", "hooks/close.sample")
+			runGit(t, srcAct, "-c", "user.name=test", "-c", "user.email=t@e", "commit", "-q", "-m", "seed hooks")
+
+			targetRoot := makeBootstrapTarget(t)
+			opts := BootstrapWorkerOptions{SourceCWD: srcRoot, Target: targetRoot}
+			if mode == "from-cwd" {
+				opts = BootstrapWorkerOptions{FromCWDSourcePath: srcRoot, Target: targetRoot}
+			}
+			if out, code := RunBootstrapWorker(opts); code != 0 {
+				t.Fatalf("state import (%s) code=%d out=%+v", mode, code, out)
+			}
+
+			targetAct := filepath.Join(targetRoot, ".act")
+			if _, err := os.Stat(filepath.Join(targetAct, "hooks", "close")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("host close hook present in target: err=%v", err)
+			}
+			out, err := exec.Command("git", "-C", targetAct, "status", "--porcelain", "--untracked-files=no").CombinedOutput()
+			if err != nil {
+				t.Fatalf("git status: %v: %s", err, out)
+			}
+			if s := strings.TrimSpace(string(out)); s != "" {
+				t.Errorf("target .act tree carries tracked changes after import:\n%s", s)
+			}
+		})
 	}
 }
 
