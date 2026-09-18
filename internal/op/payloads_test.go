@@ -536,6 +536,22 @@ func TestDocClaim_LengthCaps_ByteBoundary(t *testing.T) {
 		{"create.title", 256, true, func(s string) error {
 			return CreatePayload{Title: s, Type: "task", Nonce: validNonce}.Validate()
 		}},
+		{"create.description", 1048576, true, func(s string) error {
+			return CreatePayload{Title: "t", Type: "task", Description: s, Nonce: validNonce}.Validate()
+		}},
+		{"update_field.description", 1048576, true, func(s string) error {
+			// Through the ValidatePayload dispatcher on the wire bytes,
+			// the path `act import` and every CLI/MCP write run.
+			val, err := json.Marshal(s)
+			if err != nil {
+				return err
+			}
+			raw, err := json.Marshal(UpdateFieldPayload{Field: "description", Value: val})
+			if err != nil {
+				return err
+			}
+			return ValidatePayload("update_field", raw)
+		}},
 		{"create.accept", 500, true, func(s string) error {
 			return CreatePayload{Title: "t", Type: "task", Accept: []string{s}, Nonce: validNonce}.Validate()
 		}},
