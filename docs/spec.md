@@ -85,7 +85,7 @@ Length caps. Every length limit on a written field is counted in **bytes** — G
 | external dep `ref` (`add_external_dep`, `remove_external_dep`) | 256 bytes | `MaxExternalRefLen` |
 | `machine` label | 64 bytes | `MaxMachineLabelLen` |
 
-The acceptance-criterion cap is the reason cap by design (`MaxAcceptCriterionLen` is defined as `MaxReasonLen`). `act delete --reason` has its own, larger 4096-byte cap. Caps bind writes and imports only: folding existing ops never re-checks them, so an op written before a cap existed stays readable.
+An over-cap description exits 2 with error `bad_flag` on every `act create`/`act update` path — inline, file and append, the same code and key as an over-cap title. The acceptance-criterion cap is the reason cap by design (`MaxAcceptCriterionLen` is defined as `MaxReasonLen`). `act delete --reason` has its own, larger 4096-byte cap. Caps bind writes and imports only: folding existing ops never re-checks them, so an op written before a cap existed stays readable.
 
 ### ID model
 

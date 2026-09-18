@@ -29,7 +29,7 @@ func TestDocClaim_DescriptionCap_Inline(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("create with a 1048577-byte description accepted: %+v", out)
 	}
-	if e, _ := out.(CreateErrorOutput); !strings.Contains(e.Message, "create.description "+wantMsg) {
+	if e, _ := out.(CreateErrorOutput); !strings.Contains(e.Message, "description "+wantMsg) {
 		t.Errorf("create over-cap error does not name the cap: %+v", out)
 	}
 
@@ -37,7 +37,7 @@ func TestDocClaim_DescriptionCap_Inline(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("update with a 1048577-byte description accepted: %+v", out)
 	}
-	if e, _ := out.(UpdateErrorOutput); !strings.Contains(e.Message, "update_field.description "+wantMsg) {
+	if e, _ := out.(UpdateErrorOutput); !strings.Contains(e.Message, "--description: "+wantMsg) {
 		t.Errorf("update over-cap error does not name the cap: %+v", out)
 	}
 	shorter := atCap[:10]

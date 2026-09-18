@@ -1636,6 +1636,12 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_DescriptionCap_FileAndAppendFlags",
 	},
 	{
+		name:         "description-cap-one-exit-code",
+		docFile:      "docs/spec.md",
+		claimPattern: "An over-cap description exits 2 with error `bad_flag` on every `act create`/`act update` path",
+		testName:     "TestDocClaim_DescriptionCap_OneExitCode",
+	},
+	{
 		name:         "description-cap-spec-row-mcp",
 		docFile:      "docs/spec.md",
 		claimPattern: "MCP `act_create`/`act_update`",

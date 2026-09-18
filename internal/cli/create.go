@@ -161,6 +161,16 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Message: fmt.Sprintf("act create: title length %d > %d bytes", len(opts.Title), op.MaxTitleLen),
 		}, 2
 	}
+	// The description cap is checked here too, not only by the op
+	// validator, so an over-cap inline --description reports exit 2
+	// bad_flag like the title cap and like --description-file does
+	// (act-940461), rather than exit 1 payload_invalid.
+	if len(opts.Description) > op.MaxDescriptionLen {
+		return CreateErrorOutput{
+			Error:   "bad_flag",
+			Message: fmt.Sprintf("act create: description length %d > %d bytes", len(opts.Description), op.MaxDescriptionLen),
+		}, 2
+	}
 	typ := opts.Type
 	if typ == "" {
 		typ = "task"

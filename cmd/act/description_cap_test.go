@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/cli"
 )
 
 // TestDocClaim_DescriptionCap_FileAndAppendFlags pins docs/spec.md "Length
@@ -60,7 +62,72 @@ func TestDocClaim_DescriptionCap_FileAndAppendFlags(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("parse error envelope: %v\n%s", err, out)
 	}
-	if want := "update_field.description length 1048579 > 1048576 bytes"; !strings.Contains(env.Message, want) {
+	if want := "merged description length 1048579 > 1048576 bytes"; !strings.Contains(env.Message, want) {
 		t.Fatalf("--description-append over-cap error does not name the merged length and cap (%q): %s", want, env.Message)
 	}
+}
+
+// TestDocClaim_DescriptionCap_OneExitCode pins docs/spec.md "Length caps":
+// an over-cap description is rejected the same way on every `act create` /
+// `act update` path — exit 2, error "bad_flag", the code and key the title
+// cap already uses (act-940461). Before, --description-file and
+// --description-append-file said exit 2 bad_flag while inline --description
+// and an over-cap merged --description-append fell through to the op
+// validator's exit 1 payload_invalid. The file paths run through the binary;
+// the inline paths through cli.RunCreate/RunUpdate, which is what cmd/act
+// hands the inline flags to (a 1 MiB argv token exceeds ARG_MAX).
+func TestDocClaim_DescriptionCap_OneExitCode(t *testing.T) {
+	dir := blocksSite(t)
+	overCap := strings.Repeat("f", 1048577)
+	overCapFile := writeTempFile(t, "over.md", overCap)
+	const wantCode, wantKey = 2, "bad_flag"
+
+	errKey := func(label, out string) string {
+		t.Helper()
+		var env struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatalf("%s: parse error envelope: %v\n%s", label, err, out)
+		}
+		return env.Error
+	}
+	check := func(label string, code int, key string) {
+		t.Helper()
+		if code != wantCode || key != wantKey {
+			t.Errorf("%s: exit %d error %q, want exit %d error %q", label, code, key, wantCode, wantKey)
+		}
+	}
+
+	out, _, code := runActIn(t, dir, "create", "file over cap", "--description-file", overCapFile, "--json")
+	check("create --description-file", code, errKey("create --description-file", out))
+
+	cout, code := cli.RunCreate(dir, cli.CreateOptions{Title: "inline over cap", Type: "task", Description: overCap})
+	ce, _ := cout.(cli.CreateErrorOutput)
+	check("RunCreate inline description", code, ce.Error)
+
+	id := createBlocksIssue(t, dir, "cap target")
+
+	out, _, code = runActIn(t, dir, "update", id, "--description-file", overCapFile, "--json")
+	check("update --description-file", code, errKey("update --description-file", out))
+
+	out, _, code = runActIn(t, dir, "update", id, "--description-append-file", overCapFile, "--json")
+	check("update --description-append-file", code, errKey("update --description-append-file", out))
+
+	uout, code := cli.RunUpdate(dir, cli.UpdateOptions{ID: id, Description: &overCap})
+	ue, _ := uout.(cli.UpdateErrorOutput)
+	check("RunUpdate inline description", code, ue.Error)
+
+	// --description-append whose MERGED result is over the cap, though the
+	// fragment alone is tiny: 1048576 existing bytes + "\n\n" + "q".
+	atCap := strings.Repeat("s", 1048576)
+	if uout, code = cli.RunUpdate(dir, cli.UpdateOptions{ID: id, Description: &atCap}); code != 0 {
+		t.Fatalf("seed a 1048576-byte description: code=%d out=%+v", code, uout)
+	}
+	frag := "q"
+	uout, code = cli.RunUpdate(dir, cli.UpdateOptions{ID: id, DescriptionAppend: &frag})
+	ue, _ = uout.(cli.UpdateErrorOutput)
+	check("RunUpdate --description-append merged over cap", code, ue.Error)
+	out, _, code = runActIn(t, dir, "update", id, "--description-append", "q", "--json")
+	check("update --description-append merged over cap", code, errKey("update --description-append", out))
 }

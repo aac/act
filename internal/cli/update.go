@@ -403,6 +403,18 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
+	// Step 2f.2: --description is length-capped here as well as by the op
+	// validator, so an over-cap description is exit 2 bad_flag on every
+	// CLI path — the title cap's code and key, and what --description-file
+	// already reports (act-940461). The merged --description-append result
+	// gets the same check once the existing body is read, below.
+	if opts.Description != nil && len(*opts.Description) > op.MaxDescriptionLen {
+		return UpdateErrorOutput{
+			Error:   "bad_flag",
+			Message: fmt.Sprintf("act update: --description: length %d > %d bytes", len(*opts.Description), op.MaxDescriptionLen),
+		}, 2
+	}
+
 	// Step 2g: --type is the same closed enum `act create --type` takes.
 	if opts.Type != nil {
 		switch *opts.Type {
@@ -692,6 +704,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}, 1
 		}
 		merged := appendDescription(row.Description, *opts.DescriptionAppend)
+		if len(merged) > op.MaxDescriptionLen {
+			return UpdateErrorOutput{
+				Error:   "bad_flag",
+				Message: fmt.Sprintf("act update: --description-append: merged description length %d > %d bytes", len(merged), op.MaxDescriptionLen),
+			}, 2
+		}
 		opts.Description = &merged
 	}
 
