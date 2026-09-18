@@ -523,11 +523,13 @@ func copyTreeWithStatsOpts(src, dst string, excludeIndex bool) (copyStats, error
 // (act-915181). The copy omits hooks/ on disk, but the copied .git index
 // still tracks whatever hooks the host committed, so without this the
 // target shows ` D hooks/close`, every worker rebase refuses with
-// unstaged changes, and pushes strand in .pending-pushes. Same remedy as
-// the --from-remote path (act-da2af1): sparse-checkout marks hooks/
-// skip-worktree, so the tree stays clean and rebases over upstream hook
-// changes never re-materialize them. A copy with no nested .git (nothing
-// to reconcile) is a no-op. Returns combined git output on failure.
+// unstaged changes, and pushes strand in .pending-pushes. The
+// --from-remote clone (act-da2af1) uses this same helper: sparse-checkout
+// marks hooks/ skip-worktree, so the tree stays clean and rebases over
+// upstream hook changes never re-materialize them. This is the one place
+// that runs the git command (act-005965). A copy with no nested .git
+// (nothing to reconcile) is a no-op. Returns combined git output on
+// failure.
 func excludeHooksFromCopiedRepo(stagingAct string) (string, error) {
 	if _, err := os.Stat(filepath.Join(stagingAct, ".git")); err != nil {
 		if os.IsNotExist(err) {
@@ -978,15 +980,14 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 	// changes" and strands the worker's pushes in .pending-pushes.
 	// Sparse-checkout marks the paths skip-worktree, so the tree stays
 	// clean and rebases over upstream hook changes never re-materialize
-	// them.
-	sparseCmd := exec.Command("git", "-C", stagingAct, "sparse-checkout", "set", "--no-cone", "/*", "!/hooks/")
-	if out, err := sparseCmd.CombinedOutput(); err != nil {
+	// them. The copy modes share the same helper (act-005965).
+	if out, err := excludeHooksFromCopiedRepo(stagingAct); err != nil {
 		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf(cmd+": exclude hooks/ from clone via sparse-checkout: %v", err),
 			"details": map[string]any{
-				"stderr_tail": CaptureStderrTail(string(out)),
+				"stderr_tail": CaptureStderrTail(out),
 			},
 		}, 3
 	}
