@@ -18,8 +18,9 @@ import (
 // push" needs no extra step here, exactly as callFinish relies on.
 //
 // The result shape mirrors callFinish: {"closed": true, "id", "short_id",
-// "reason"} on a fresh close, {"closed": true, "id", "already_closed": true}
-// for the idempotent already-closed case. Failures use the standard error
+// "reason"} on a fresh close — plus close's "warnings", "push_deferred" and
+// "push_deferred_reason" when close set them (act-7b65b0) — and {"closed":
+// true, "id", "already_closed": true} for the idempotent already-closed case. Failures use the standard error
 // envelope (RunClose's typed error outputs, normalized like the close verb).
 //
 // The function lives in its own file so concurrent edits to main.go's
@@ -87,14 +88,28 @@ func runFinish(args []string) int {
 	switch v := out.(type) {
 	case cli.CloseResult:
 		if *asJSON {
-			emitFinishJSON(map[string]any{
+			body := map[string]any{
 				"closed":   true,
 				"id":       v.ID,
 				"short_id": v.ShortID,
 				"reason":   v.Reason,
-			})
+			}
+			// act-7b65b0: what close reported besides the close itself
+			// reaches finish's caller under close's own keys. This
+			// hand-built body used to drop them, so a finish whose push
+			// did not happen read as one whose push did.
+			if len(v.Warnings) > 0 {
+				body["warnings"] = v.Warnings
+			}
+			if v.PushDeferred {
+				body["push_deferred"] = true
+				body["push_deferred_reason"] = v.PushDeferredReason
+			}
+			emitFinishJSON(body)
 			return 0
 		}
+		warnPushNoRemote("finish", v.Warnings)
+		ixwWarnIndexUpdateFailed("finish", v.Warnings)
 		fmt.Print(cli.FormatCloseHuman(v))
 	case cli.CloseAlreadyClosed:
 		if *asJSON {

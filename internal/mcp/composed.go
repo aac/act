@@ -207,14 +207,26 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 					short = s
 				}
 			}
-			return map[string]any{
+			body := map[string]any{
 				"claimed":       true,
 				"issue":         issueJSON,
 				"commit_marker": cli.WorkCommitTrailerKey + ": " + short,
-			}, false
+			}
+			// act-7b65b0: the claim's warnings and deferred push reach
+			// the client under act_update's own keys; this hand-built
+			// body used to drop them.
+			if won, ok := claimOut.(cli.UpdateClaimResult); ok {
+				if len(won.Warnings) > 0 {
+					body["warnings"] = won.Warnings
+				}
+				if won.PushDeferred {
+					body["push_deferred"] = true
+					body["push_deferred_reason"] = won.PushDeferredReason
+				}
+			}
+			return body, false
 		}
 		// Claim lost (or other non-zero). Mark id as lost and back off.
-		_ = claimOut
 		lost[pick.ID] = true
 		delay := time.Duration(float64(nextBaseDelays[attempt]) * jitter())
 		sleep(delay)
@@ -274,6 +286,17 @@ func (s *Server) callFinish(raw json.RawMessage) (any, bool) {
 		// short_id only when it differs from id (act-8a6536).
 		if r.ShortID != "" && r.ShortID != r.ID {
 			body["short_id"] = r.ShortID
+		}
+		// act-7b65b0: close's warnings (push_no_remote,
+		// index_update_failed) and its deferred push reach the client
+		// under act_close's own keys; this hand-built body used to drop
+		// them. Absent when close set none.
+		if len(r.Warnings) > 0 {
+			body["warnings"] = r.Warnings
+		}
+		if r.PushDeferred {
+			body["push_deferred"] = true
+			body["push_deferred_reason"] = r.PushDeferredReason
 		}
 		return body, false
 	case cli.CloseAlreadyClosed:
@@ -427,10 +450,14 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 	// inline the rollback for the test-injected case.
 	envs := []op.Envelope{envDep}
 	bodies := [][]byte{depEnvBody}
+	// published receives what the publish leg did, so a push:true that
+	// found no origin to push to is reported (act-7b65b0).
+	var published cli.PublishResult
 	opts := cli.WriteOpts{
-		NoCommit: args.NoCommit,
-		Push:     args.Push,
-		Isolated: args.Isolated,
+		NoCommit:  args.NoCommit,
+		Push:      args.Push,
+		Isolated:  args.Isolated,
+		Published: &published,
 	}
 
 	if factory == nil {
@@ -446,12 +473,19 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		}
 	}
 
-	return map[string]any{
+	body := map[string]any{
 		"ok":          true,
 		"id":          full,
 		"blocked_by":  parentFull,
 		"ops_written": []string{"dep-add"},
-	}, false
+	}
+	// act-7b65b0: push:true in a tracker with no origin remote — the edge
+	// is committed and nothing was pushed. Said as a warning, as
+	// act_file_blocker says it; the key is absent otherwise.
+	if args.Push && published.NoRemote {
+		body["warnings"] = []string{cli.WarnPushNoRemote}
+	}
+	return body, false
 }
 
 // blockWriteErrEnvelope maps an act_block write error to its envelope: a

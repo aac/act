@@ -183,12 +183,25 @@ func runNext(args []string) int {
 		}
 		commitMarker := cli.WorkCommitTrailerKey + ": " + short
 
+		// act-7b65b0: what the claim reported besides the claim itself
+		// (its warnings, a deferred push) reaches next's caller under
+		// update's own keys; the result built here used to drop them.
+		won, _ := claimOut.(cli.UpdateClaimResult)
+
 		if *asJSON {
-			data, jerr := json.Marshal(map[string]any{
+			body := map[string]any{
 				"claimed":       true,
 				"issue":         issueJSON,
 				"commit_marker": commitMarker,
-			})
+			}
+			if len(won.Warnings) > 0 {
+				body["warnings"] = won.Warnings
+			}
+			if won.PushDeferred {
+				body["push_deferred"] = true
+				body["push_deferred_reason"] = won.PushDeferredReason
+			}
+			data, jerr := json.Marshal(body)
 			if jerr != nil {
 				fmt.Fprintf(os.Stderr, "act next: json marshal: %v\n", jerr)
 				return 1
@@ -201,6 +214,7 @@ func runNext(args []string) int {
 		// caller who reached for the claiming verb while surveying sees
 		// it on line one rather than several commands later
 		// (act-4ffd57). The ticket render follows.
+		ixwWarnIndexUpdateFailed("next", won.Warnings)
 		fmt.Printf("CLAIMED %s — this session now owns it.\n", short)
 		fmt.Printf("Not what you wanted? Release it: act update %s --unclaim   (or use `act next --peek` to survey without claiming)\n\n", short)
 		fmt.Print(cli.FormatShowHuman(showOut))

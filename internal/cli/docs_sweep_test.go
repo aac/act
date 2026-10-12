@@ -3830,6 +3830,47 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "a close whose index update failed after the commit (`warnings` names `index_update_failed`); 1 if the `close` hook refuses the close (`hook_failed`), if the index cannot be opened or brought up to date before the op is written (`index_open_failed`, `index_rebuild_failed` — no op is written or committed), or if the op cannot be written or committed (including `write_lock_timeout` and `stale_git_lock`)",
 		testName:     "TestDocClaim_Spec_SpxCloseIndexFailureExitCodes",
 	},
+		name:         "help-finish-passes-on-close-warnings-push-no-remote",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act finish' passes on what close reports besides the close:",
+		testName:     "TestDocClaim_FnwFinish_PushNoRemoteWarns",
+	},
+	{
+		name:         "help-finish-json-carries-close-warning-keys",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act finish --json' carries close's warnings, push_deferred and",
+		testName:     "TestDocClaim_FnwFinish_PushDeferredReachesTheCaller",
+	},
+	{
+		name:         "help-finish-human-warning-lines",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "are stderr lines that start 'act finish: warning:'.",
+		testName:     "TestDocClaim_FnwFinish_IndexUpdateFailedWarns",
+	},
+	{
+		name:         "spec-next-carries-the-claims-warnings",
+		docFile:      "docs/spec.md",
+		claimPattern: "The claiming form also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when `act update --claim` set them, under those same keys.",
+		testName:     "TestDocClaim_FnwNext_ClaimWarningsReachTheCaller",
+	},
+	{
+		name:         "spec-mcp-next-carries-the-claims-warnings",
+		docFile:      "docs/spec.md",
+		claimPattern: "A `claimed: true` result also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when the claim set them.",
+		testName:     "TestDocClaim_FnwMCP_NextCarriesTheClaimsWarnings",
+	},
+	{
+		name:         "spec-mcp-finish-carries-closes-warnings-and-deferral",
+		docFile:      "docs/spec.md",
+		claimPattern: "An `act_finish` result also carries `act close`'s `warnings`, `push_deferred` and `push_deferred_reason` when the close set them, under those same keys.",
+		testName:     "TestDocClaim_FnwMCP_FinishCarriesClosesWarningsAndDeferral",
+	},
+	{
+		name:         "spec-mcp-block-push-no-remote-warns",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act_block` with `push: true` in a tracker with no `origin` remote is still a success, and its result adds `\"warnings\":[\"push_no_remote\"]`: the edge is committed and nothing was pushed.",
+		testName:     "TestDocClaim_FnwMCP_BlockPushNoRemoteWarns",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

@@ -513,6 +513,11 @@ THE LOOP IN DETAIL
     'act finish' commit locally and skip the push with no network: the
     close still succeeds (exit 0) and nothing reaches the wire.
 
+    'act finish' passes on what close reports besides the close:
+    'act finish --json' carries close's warnings, push_deferred and
+    push_deferred_reason keys, and without --json the same warnings
+    are stderr lines that start 'act finish: warning:'.
+
     --reason is capped at 500 bytes. The cap is deliberate: reasons
     are audit-trail summaries, intended to be readable at a glance
     from git log and 'act show'. If you want more room, the work

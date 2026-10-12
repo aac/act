@@ -1045,6 +1045,7 @@ release command, so a caller who reaches for the wrong one sees it on line one.
 ```json
 {"claimed": true, "issue": {...}, "commit_marker": "Act-Id: act-XXXX"}
 ```
+The claiming form also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when `act update --claim` set them, under those same keys. Without `--json` an `index_update_failed` warning is a line on stderr that starts `act next: warning:`.
 **JSON output** — `--peek`:
 ```json
 {"claimed": false, "peek": true, "would_claim": {...}}
@@ -1252,7 +1253,7 @@ Input:
   "under":{"type":"string"}
 }}
 ```
-Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming.
+Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming. A `claimed: true` result also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when the claim set them.
 
 Output:
 ```json
@@ -1264,7 +1265,7 @@ Output:
 
 **Composed tool: `act_finish`**
 
-Input: `{"id":"string","reason":{"type":"string"}}`. Behavior: `act close --reason ...`; commit message includes the prefix marker `(act-XXXX)` so `act doctor orphan-close` can grep it. Output: same as `act close`.
+Input: `{"id":"string","reason":{"type":"string"}}`. Behavior: `act close --reason ...`; commit message includes the prefix marker `(act-XXXX)` so `act doctor orphan-close` can grep it. Output: `{"closed":true,"id":"...","reason":"..."}`, with `short_id` when it differs from `id`. An `act_finish` result also carries `act close`'s `warnings`, `push_deferred` and `push_deferred_reason` when the close set them, under those same keys. An issue that was already closed answers `{"closed":true,"id":"...","already_closed":true}`.
 
 **Composed tool: `act_block`**
 
@@ -1272,6 +1273,7 @@ Input: `{"id":"string","blocked_by":"string","reason":{"type":"string"}}`. Behav
 ```json
 {"ok":true,"id":"...","blocked_by":"...","ops_written":["dep-add"]}
 ```
+`act_block` with `push: true` in a tracker with no `origin` remote is still a success, and its result adds `"warnings":["push_no_remote"]`: the edge is committed and nothing was pushed.
 
 All composed tools mark themselves as the recommended path in their tool descriptions, surfacing `act_ready`/`act_update --claim`/`act_close`/`act_dep_add` as escape hatches.
 
