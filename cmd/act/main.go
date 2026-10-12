@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/aac/act/internal/cli"
-	_ "github.com/aac/act/internal/fold" // registers op_version=1 in the op-package dispatch registry
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/mcp"
 	"github.com/aac/act/internal/op"

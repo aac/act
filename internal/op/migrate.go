@@ -8,66 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aac/act/internal/hlc"
 )
-
-// ApplyOpFunc is the per-op-version apply function signature used by the
-// version-dispatch registry. State is intentionally typed `any` to keep this
-// package free of a dependency on the fold package (which itself depends on
-// op). The fold package registers a wrapper at init time that performs the
-// concrete type assertion before delegating to fold.ApplyDispatch.
-//
-// fullHash is the full 64-hex-char op_hash of the envelope; fold dispatch
-// passes it through so apply functions can stamp the LWW gate with the
-// (HLC, op_hash) pair that the spec mandates for tiebreaking.
-type ApplyOpFunc func(state any, env Envelope, payload []byte, fullHash string) error
-
-// opVersionEntry is the value type of OpVersionRegistry. Future op_versions
-// add new entries here; old entries are never removed (per spec §6.4 — old
-// op_versions must keep folding identically forever).
-type opVersionEntry struct {
-	ApplyOp ApplyOpFunc
-}
-
-// OpVersionRegistry maps op_version → apply function. For v0.1 only version
-// 1 is wired; future versions register additional entries via
-// RegisterOpVersion. Reads of this map should go through DispatchByVersion to
-// preserve the unknown-version error contract.
-//
-// The fold package populates the version=1 slot at init time; tests may also
-// register entries directly.
-var OpVersionRegistry = map[int]opVersionEntry{}
-
-var registryMu sync.RWMutex
-
-// RegisterOpVersion installs apply as the dispatch target for op_version v.
-// Re-registering an already-registered version overwrites the previous
-// entry; this is intentional so tests can stub the registry, but production
-// code should treat each (op_version, apply) pair as register-once.
-func RegisterOpVersion(v int, apply ApplyOpFunc) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	OpVersionRegistry[v] = opVersionEntry{ApplyOp: apply}
-}
-
-// DispatchByVersion returns the apply function for opVersion. It returns an
-// error when the version is not registered — the binary cannot fold an op it
-// has no apply rule for. Nothing outside this package's tests calls it yet:
-// the fold never gets this far with an unregistered version, because
-// envelope validation rejects any op_version other than CurrentOpVersion
-// first, and that surfaces as a fold error, not as version_skew.
-func DispatchByVersion(opVersion int) (ApplyOpFunc, error) {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	entry, ok := OpVersionRegistry[opVersion]
-	if !ok || entry.ApplyOp == nil {
-		return nil, fmt.Errorf("op: dispatch: unknown op_version %d", opVersion)
-	}
-	return entry.ApplyOp, nil
-}
 
 // Migration describes how to rewrite an old-version envelope into one or
 // more new-version envelopes. A v1→v2 split (e.g. one op carrying two

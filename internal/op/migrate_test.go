@@ -7,47 +7,6 @@ import (
 	"testing"
 )
 
-// TestDispatchByVersionRegistered installs a stub for op_version=1 and
-// verifies the dispatch returns it. Real wiring lives in the fold package
-// init, but the op-package test sets its own stub so the test does not
-// depend on import side effects.
-func TestDispatchByVersionRegistered(t *testing.T) {
-	prev, hadPrev := OpVersionRegistry[1]
-	t.Cleanup(func() {
-		registryMu.Lock()
-		defer registryMu.Unlock()
-		if hadPrev {
-			OpVersionRegistry[1] = prev
-		} else {
-			delete(OpVersionRegistry, 1)
-		}
-	})
-	called := false
-	RegisterOpVersion(1, func(any, Envelope, []byte, string) error {
-		called = true
-		return nil
-	})
-	fn, err := DispatchByVersion(1)
-	if err != nil {
-		t.Fatalf("DispatchByVersion(1): unexpected error: %v", err)
-	}
-	if fn == nil {
-		t.Fatalf("DispatchByVersion(1): want non-nil apply function")
-	}
-	if err := fn(nil, Envelope{}, nil, ""); err != nil {
-		t.Fatalf("apply: unexpected error: %v", err)
-	}
-	if !called {
-		t.Fatalf("apply: registered function was not invoked")
-	}
-}
-
-func TestDispatchByVersionUnknown(t *testing.T) {
-	if _, err := DispatchByVersion(99); err == nil {
-		t.Fatalf("DispatchByVersion(99): want error, got nil")
-	}
-}
-
 // TestReadMaxOpVersionMixed populates a tmp dir with op files at versions 1
 // and 2 and confirms the max is reported.
 func TestReadMaxOpVersionMixed(t *testing.T) {

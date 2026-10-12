@@ -2497,9 +2497,9 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Fold_DispatchIsByOpTypeOnly",
 	},
 	{
-		name:         "spec-fold-version-registry-unused",
+		name:         "spec-fold-no-dispatch-on-op-version",
 		docFile:      "docs/spec.md",
-		claimPattern: "but nothing in the fold calls it",
+		claimPattern: "There is no dispatch on `op_version`",
 		testName:     "TestDocClaim_Fold_DispatchIsByOpTypeOnly",
 	},
 	{

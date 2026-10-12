@@ -212,50 +212,22 @@ func TestDocClaim_Compaction_NotWiredAndEngineCommitSubject(t *testing.T) {
 
 // TestDocClaim_Fold_DispatchIsByOpTypeOnly asserts the "Fold dispatch"
 // paragraph: fold.ApplyDispatch has an apply function for every op type
-// except the parse-only `redact` and returns nothing for an unknown type; the
-// version-keyed registry exists with version 1 registered, but the fold does
-// not go through it — replacing its version-1 entry with one that always
-// fails changes nothing a read returns. The spec used to call the dispatch
-// "a registry keyed by (op_type, op_version)".
+// except the parse-only `redact` and returns nothing for an unknown type, and
+// the op type is all it is given — there is no op_version to dispatch on. The
+// spec used to call the dispatch "a registry keyed by (op_type, op_version)".
+// That an op at any other op_version never reaches dispatch is asserted by
+// TestDocClaim_NewerOpVersionAbortsFoldWithoutVersionSkew.
 func TestDocClaim_Fold_DispatchIsByOpTypeOnly(t *testing.T) {
+	// The assignment pins the signature: the op type is the only key.
+	var dispatch func(opType string) fold.ApplyFunc = fold.ApplyDispatch
 	for name := range op.ValidOpTypes {
-		got := fold.ApplyDispatch(name) != nil
+		got := dispatch(name) != nil
 		if want := name != "redact"; got != want {
 			t.Errorf("fold.ApplyDispatch(%q) has an apply function = %v, want %v", name, got, want)
 		}
 	}
-	if fold.ApplyDispatch("pass4_no_such_type") != nil {
+	if dispatch("pass4_no_such_type") != nil {
 		t.Errorf("fold.ApplyDispatch returned an apply function for an unknown op type")
-	}
-
-	saved, err := op.DispatchByVersion(op.CurrentOpVersion)
-	if err != nil || saved == nil {
-		t.Fatalf("op.DispatchByVersion(%d): %v; the spec says version %d is registered", op.CurrentOpVersion, err, op.CurrentOpVersion)
-	}
-	if _, err := op.DispatchByVersion(op.CurrentOpVersion + 1); err == nil {
-		t.Errorf("op.DispatchByVersion(%d) succeeded; only version %d should be registered", op.CurrentOpVersion+1, op.CurrentOpVersion)
-	}
-
-	root := listTestRepo(t)
-	before, code := RunList(root, ListOptions{Limit: 200})
-	if code != 0 {
-		t.Fatalf("list: exit = %d, out=%+v", code, before)
-	}
-	op.RegisterOpVersion(op.CurrentOpVersion, func(any, op.Envelope, []byte, string) error {
-		return fmt.Errorf("pass4: the version registry was called")
-	})
-	t.Cleanup(func() { op.RegisterOpVersion(op.CurrentOpVersion, saved) })
-	// A second, empty-index repo so the read has to fold rather than serve a
-	// cached index.
-	root2 := listTestRepo(t)
-	after, code := RunList(root2, ListOptions{Limit: 200})
-	if code != 0 {
-		t.Fatalf("list with a failing version-registry entry: exit = %d, out=%+v; the fold must not dispatch on op_version", code, after)
-	}
-	b, _ := json.Marshal(before)
-	a, _ := json.Marshal(after)
-	if string(a) != string(b) {
-		t.Errorf("list changed when the version registry was replaced\n  before: %s\n  after:  %s", b, a)
 	}
 }
 
