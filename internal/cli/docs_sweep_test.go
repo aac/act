@@ -3981,6 +3981,35 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "(`act create --parent` does try the index before it writes, to see whether the parent is closed, but never fails on it — see `act create`.)",
 		testName:     "TestDocClaim_Spec_CreateParentTriesTheIndexButNeverFailsOnIt",
 	},
+	// act-11d2e2 item 7: the MCP descriptions of the composed tools did
+	// not name the warnings / push_deferred keys their results carry.
+	// Each sentence is tied to the tools/call test that provokes the keys;
+	// TestDocClaim_EdgMCP_ComposedToolDescriptionsNameTheirExtraKeys pins
+	// the three sentences at the wire (tools/list).
+	{
+		name:         "mcp-description-next-names-its-extra-keys",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "A `claimed: true` result may also carry `warnings`, and `push_deferred` with `push_deferred_reason` when the claim commit did not reach origin: the claim stands either way, so do not claim again.",
+		testName:     "TestDocClaim_FnwMCP_NextCarriesTheClaimsWarnings",
+	},
+	{
+		name:         "mcp-description-finish-names-its-extra-keys",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "The result may also carry `warnings`, and `push_deferred` with `push_deferred_reason` when the close commit did not reach origin: the issue is closed either way, so do not retry.",
+		testName:     "TestDocClaim_FnwMCP_FinishCarriesClosesWarningsAndDeferral",
+	},
+	{
+		name:         "mcp-description-block-names-its-warnings",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "The result may also carry `warnings` (`push_no_remote`: the edge is committed and nothing was pushed).",
+		testName:     "TestDocClaim_FnwMCP_BlockPushNoRemoteWarns",
+	},
+	{
+		name:         "mcp-descriptions-name-extra-keys-at-the-wire",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "so do not claim again.",
+		testName:     "TestDocClaim_EdgMCP_ComposedToolDescriptionsNameTheirExtraKeys",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

@@ -1094,14 +1094,14 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_next",
-			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue.",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue. A `claimed: true` result may also carry `warnings`, and `push_deferred` with `push_deferred_reason` when the claim commit did not reach origin: the claim stands either way, so do not claim again.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Optional id prefix; restrict to descendants."),
 			}, nil),
 		},
 		{
 			Name:        "act_finish",
-			Description: "Recommended: close an issue and return its `Act-Id:` commit-marker trailer. Wraps act_close.",
+			Description: "Recommended: close an issue and return its `Act-Id:` commit-marker trailer. Wraps act_close. The result may also carry `warnings`, and `push_deferred` with `push_deferred_reason` when the close commit did not reach origin: the issue is closed either way, so do not retry.",
 			InputSchema: schemaObject(map[string]any{
 				"id":     schemaString("Issue id or prefix (required)."),
 				"reason": schemaString("Optional close reason."),
@@ -1109,7 +1109,7 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_block",
-			Description: "Recommended: mark an issue blocked AND record the blocks-edge in a single commit. Use instead of act_update + act_dep_add.",
+			Description: "Recommended: mark an issue blocked AND record the blocks-edge in a single commit. Use instead of act_update + act_dep_add. The result may also carry `warnings` (`push_no_remote`: the edge is committed and nothing was pushed).",
 			InputSchema: schemaObject(map[string]any{
 				"id":         schemaString("Issue to mark blocked (required)."),
 				"blocked_by": schemaString("Issue that blocks (required)."),
