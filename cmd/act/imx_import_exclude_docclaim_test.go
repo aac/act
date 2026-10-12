@@ -98,6 +98,22 @@ func TestDocClaim_StateImport_WritesNestedExclude(t *testing.T) {
 		}
 		imxAssertClean(t, target)
 	})
+	// The one way left to get a nested repo without the lines on a current
+	// act: cloning the tracker by hand, which act never sees. doctor
+	// reports it and --fix repairs it.
+	t.Run("git clone by hand is left to doctor", func(t *testing.T) {
+		src := imxSource(t, false)
+		target := imxEmptyHost(t)
+		imxGit(t, "", "clone", "-q", filepath.Join(src, ".act", ".git"), filepath.Join(target, ".act"))
+		out, _, code := runActIn(t, target, "doctor", "--check", "nested-exclude")
+		if code != 0 || !strings.Contains(out, "[warn] [nested-exclude]") || !strings.Contains(out, "1 findings") {
+			t.Fatalf("doctor on a hand-cloned store: exit %d, want one warn nested-exclude finding; out=%s", code, out)
+		}
+		if out, _, code := runActIn(t, target, "doctor", "--check", "nested-exclude", "--fix"); code != 0 {
+			t.Fatalf("doctor --fix on a hand-cloned store: exit %d; out=%s", code, out)
+		}
+		imxAssertClean(t, target)
+	})
 	t.Run("copy", func(t *testing.T) {
 		src := imxSource(t, false)
 		target := imxEmptyHost(t)

@@ -3004,6 +3004,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "nothing was probed, so nothing is reported unreachable",
 		testName:     "TestDocClaim_Doctor_RemoteReachableFalseOnlyWhenProbeFailed",
 	},
+	// act-76eaec: `act state import` writes the nested-exclude lines too.
+	// A --from-remote clone started from git's stock info/exclude and a
+	// copy inherited an older source's file, so the imported store listed
+	// .write.lock and index.db as untracked after its first write. Drift
+	// shape: an import mode stops calling EnsureNestedExclude, or a new
+	// mode is added without it, and the test goes red.
+	{
+		name:         "spec-doctor-nested-exclude-state-import-writes-lines",
+		docFile:      "docs/spec.md",
+		claimPattern: "and so does `act state import` in every mode, so only a store made by an older act, or one cloned by hand with `git clone`, lacks them.",
+		testName:     "TestDocClaim_StateImport_WritesNestedExclude",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

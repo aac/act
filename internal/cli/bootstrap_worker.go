@@ -328,6 +328,12 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 			"details": map[string]any{"stderr_tail": CaptureStderrTail(out)},
 		}, 3
 	}
+	if err := ensureImportedNestedExclude(stagingAct); err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": %v", err),
+		}, 3
+	}
 
 	// Stamp the dispatch_hlc / meta file into the staging tree BEFORE the
 	// atomic rename so a successful rename means the meta is in place.
@@ -539,6 +545,20 @@ func excludeHooksFromCopiedRepo(stagingAct string) (string, error) {
 	}
 	out, err := exec.Command("git", "-C", stagingAct, "sparse-checkout", "set", "--no-cone", "/*", "!/hooks/").CombinedOutput()
 	return string(out), err
+}
+
+// ensureImportedNestedExclude lists act's working files in a freshly
+// imported nested repo's info/exclude, as `act init` does (act-76eaec).
+// All three import modes call it on the staging tree: a `--from-remote`
+// clone starts from git's stock exclude file, and the two copy modes
+// inherit the source's, which for a store made by an older act carries
+// none of the lines. On failure the staging tree is removed.
+func ensureImportedNestedExclude(stagingAct string) error {
+	if _, err := EnsureNestedExclude(stagingAct); err != nil {
+		_ = os.RemoveAll(stagingAct)
+		return err
+	}
+	return nil
 }
 
 // copyFile copies the contents of src → dst with the given mode. dst's
@@ -759,6 +779,12 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf(cmd+": --from-cwd exclude hooks/ from copy via sparse-checkout: %v", err),
 			"details": map[string]any{"stderr_tail": CaptureStderrTail(out)},
+		}, 3
+	}
+	if err := ensureImportedNestedExclude(stagingAct); err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": --from-cwd %v", err),
 		}, 3
 	}
 
@@ -989,6 +1015,12 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 			"details": map[string]any{
 				"stderr_tail": CaptureStderrTail(out),
 			},
+		}, 3
+	}
+	if err := ensureImportedNestedExclude(stagingAct); err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": %v", err),
 		}, 3
 	}
 	if err := os.RemoveAll(filepath.Join(stagingAct, "hooks")); err != nil {
