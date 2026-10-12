@@ -3636,8 +3636,28 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-create-json-push-no-remote-warning",
 		docFile:      "docs/spec.md",
-		claimPattern: "`\"push_no_remote\"` is the other warning: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
+		claimPattern: "`\"push_no_remote\"` is the second of three warnings: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
 		testName:     "TestDocClaim_Spec_CreatePushedReportsWhatHappened",
+	},
+	// act-4d7596: create has three warnings, and the doctor section says what
+	// each command does when the index is already malformed.
+	{
+		name:         "spec-create-three-warnings",
+		docFile:      "docs/spec.md",
+		claimPattern: "The third, `\"index_update_failed\"`, is described next.",
+		testName:     "TestDocClaim_Spec_CreateHasThreeWarnings",
+	},
+	{
+		name:         "spec-index-malformed-reads-first-commands-write-nothing",
+		docFile:      "docs/spec.md",
+		claimPattern: "the commands that read the index before they write anything — `act close`, `act dep add`, `act ready`, `act update --claim` — exit 1 with an error whose message carries SQLite's `database disk image is malformed`, and write no op.",
+		testName:     "TestDocClaim_Spec_IndexMalformedBeforeTheCommandStarts",
+	},
+	{
+		name:         "spec-index-malformed-create-and-field-update-write-first",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act create`, and an `act update` that edits a field of an issue named by its full id, do not read the index first: the op is written and committed, and the index failure comes after. `act create` then exits 0 with `\"index_update_failed\"` in `warnings` (see `act create`).",
+		testName:     "TestDocClaim_Spec_IndexMalformedCreateAndFieldUpdateWriteFirst",
 	},
 	// act-e3782c: an index failure after create's commit is a warning.
 	{
