@@ -785,6 +785,56 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
                             tool call, no host git repo)
     import_failed           'act import' wrote nothing usable
     tracker_not_checked_out tracker remote exists; this checkout lacks it
+    act_already_initialized 'act init' on a repo that already has .act/config.json
+    act_state_not_initialized 'act state import' source has no nested .act/.git
+    bad_input               'act migrate' got a --from/--to pair it cannot use
+    blocked_by_external_dep close or claim of an issue with an open external dep
+    blocked_requires_dep    'act update --status blocked' with no blocked-by edge
+    bootstrap_timeout       'act state import --from-remote' clone ran past its budget
+    bootstrap_validation_failed 'act state import' result failed its own check
+    branch_failed           'act close --branch' could not switch to the branch
+    commit_failed           'act close' could not commit its op
+    doctor_failed           'act remote enable' stopped on a doctor error finding
+    file_not_found          --description-file (or its append twin) names no file
+    fts_parse               'act search' query the index rejected
+    has_descendants         'act delete' of an issue with live children, no --cascade
+    hash_failed             'act close' could not hash its op for the hook
+    id_collision            'act create' could not find a free id in 8 tries
+    init_dirs_failed        'act init' could not create the .act/ directories
+    init_hooks_failed       'act init' could not write .act/hooks/close.sample
+    init_ops_failed         'act init' could not write .act/ops/.gitkeep
+    internal                a command got a result of a type it does not handle
+    invalid_flag            'act search' rejected --in, --limit or an empty query
+    io_failure              'act migrate' could not read .act/ops
+    migration_not_found     'act migrate' has no migration for (from, to) (exit 5)
+    nested_init_failed      'act init' could not create the nested .act/ git repo
+    nonce_failed            'act create' could not generate a nonce
+    op_filename_collision   'act state export' found an op file with other content
+    query_failed            'act search' query failed in SQLite
+    record_pending_push_failed 'act close --offline' could not record the deferred push
+    remote_unreachable      'act state import --from-remote' clone failed
+    stage_failed            'act close' could not git-add its op file
+    stale_git_lock          a leftover index.lock / HEAD.lock blocks the write
+    target_not_empty        'act state import' target .act/ is not empty, no --force
+    tombstoned              'act show --commit-marker' of a deleted issue
+    transform_failed        'act migrate' transform returned an error
+    unknown                 a failure that supplied no code of its own
+    upstream_not_configured 'act remote sync' with no origin-upstream
+    upstream_public         'act remote add-upstream' URL matches a public-host pattern
+    worker_state_not_found  'act state export' of a directory with no .act/
+    write_config_failed     'act init' could not write .act/config.json
+    write_lock_timeout      another act process held .act/.write.lock too long
+
+  MCP-only codes (the "error" of an isError tool result; never a CLI exit):
+    bad_args                tool arguments missing or of the wrong type
+    block_failed            act_block could not write its dep op
+    method_not_allowed      write tool called on a --read-only server
+    read_only_violation     composed write tool called with read_only set
+    unknown_tool            tools/call named a tool the server lacks
+
+  These rows are every code the source emits and no other: a constant
+  that nothing emits has no row. docs/spec.md "1. Error handling" gives
+  each code's exit code, message format and details keys.
 
 NO ACT STATE IN THIS CHECKOUT
   .act/ is gitignored, so a fresh clone has no tracker and read commands

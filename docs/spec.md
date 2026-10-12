@@ -703,7 +703,7 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 - `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
 - `4` — not one meaning. Three commands exit 4, each for its own condition: `act version --check-repo` when some op file carries a `writer_version` newer than this binary's (`version_skew`); `act doctor` when `origin` is configured but unreachable (the `remote-reachable` finding); and `act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`). No other command exits 4 — reads and writes apply an op from a newer writer like any other op.
 
-A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has exactly those three keys; the codes are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
+A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has those three keys and no others; the codes, and the two commands that leave `details` out, are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
 
 ### Pre-import id resolution
 
@@ -1263,26 +1263,95 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 {"error": "<code>", "message": "<human>", "details": {...}}
 ```
 
-`details` is optional and per-class. The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4) and `claim_lost` (5) the only rows outside 1–3.
+`details` is always present and is `{}` when the error carries none. Two commands print their failure without that guarantee: `act migrate` prints only `error` and `message`, and so does `act version --check-repo` for `no_repo`.
+
+The table lists every code the CLI emits — every code that some non-test source line under `cmd/` or `internal/` puts in an envelope's `error` field — and no other. A constant that is declared but never emitted has no row. Codes only the MCP server emits are in the second table. `TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet` holds both tables, and `act help errors`, to that rule.
+
+The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4) and `claim_lost`/`migration_not_found` (5) the only rows outside 1–3. Where a row lists two exit codes the command decides which: an index that cannot be opened is exit 1 from `act list` and exit 3 from `act search`. In the message column `<cmd>` is the command as invoked (`act state import`, `act close`, ...), and "the underlying error's text" means the message is whatever the failing library call reported, with no fixed format.
 
 | code                       | exit | human message format                                                       | details keys                                  |
 |----------------------------|------|----------------------------------------------------------------------------|-----------------------------------------------|
-| `not_in_git`               | 3    | `not in a git repository (run from inside a git worktree)`                 | `cwd`                                         |
-| `act_not_initialized`      | 3    | `.act/ not found in <root>; run 'act init'`                                | `repo_root`                                   |
-| `issue_not_found`          | 3    | `no issue matching '<query>'`                                              | `query`                                       |
-| `id_ambiguous`             | 2    | `prefix '<p>' is ambiguous: <id1>, <id2>, ...`                             | `prefix`, `candidates[]`                      |
+| `not_in_git`               | 3    | `gitops: no host git repo found in cwd or any parent` | none |
+| `act_not_initialized`      | 3    | by command, e.g. `act: no act state — run "act init" to bootstrap` | none |
+| `issue_not_found`          | 3    | by command, e.g. `act show: no issue matches "<query>"` | `query` |
+| `id_ambiguous`             | 2    | by command, e.g. `act show: prefix "<prefix>" matches <N> issues` | `prefix`, `candidates` |
 | `version_skew`             | 4    | `repo writer_version <N> exceeds this binary's writer_version <M>; upgrade act` | `max_op_version`, `writer_version`, `binary_version` |
-| `claim_lost`               | 5    | `claim lost; winner=<node_id> at hlc=<hlc>`                                | `winner_node_id`, `winner_hlc`, `issue_id`    |
-| `cycle_detected`           | 2    | `dep would create cycle: <a> -> ... -> <a>`                                | `path[]`                                      |
-| `dep_not_found`            | 1    | `dep target '<id>' not found`                                              | `target`                                      |
-| `hook_failed`              | 1    | `hook '<name>' exited <rc>; op unstaged`                                   | `hook`, `exit_code`, `stderr_tail`            |
-| `import_invalid_jsonl`     | 1    | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
-| `remote_unreachable`       | 3    | `act bootstrap-worker: clone <url>: <reason>`                              | `url`, `stderr_tail`                          |
-| `bootstrap_timeout`        | 4    | `act bootstrap-worker: clone <url> exceeded <N>s budget`                   | `timeout_seconds`, `url`                      |
-| `target_not_empty`         | 2    | `act bootstrap-worker: <path> exists and is non-empty; pass --force to overwrite` | `target`                                |
-| `blocked_by_external_dep`  | 2    | `<cmd>: <id> has <N> open external dep(s); clear with --ext-rm or override with --force` | `external_deps[]`               |
+| `claim_lost`               | 5    | no message: a lost claim prints the claim result shown under `act update`, with `"error":"claim_lost"`, not an envelope | none |
+| `cycle_detected`           | 2    | by case, e.g. `act update: --parent: <id> cannot be its own parent` | none (`path` when the loop runs through other issues) |
+| `dep_not_found`            | 1    | `act update: --dep-rm: no <type>-edge to remove: <child> is blocked by <parent> does not exist` | none |
+| `hook_failed`              | 1    | `hook exited <rc>:<a newline, then the hook's stderr>` | `hook_cause`, `hook_exit_code`, `hook_stderr`, `hook_truncated` |
+| `import_invalid_jsonl`     | 1    | `import_invalid_jsonl: line <N>: <reason>` | none |
+| `remote_unreachable`       | 3    | `act state import: clone <url>: <reason>` | `url`, `stderr_tail` |
+| `bootstrap_timeout`        | 4    | `<cmd>: clone <url> exceeded <N>s budget` | `timeout_seconds`, `url` |
+| `target_not_empty`         | 2    | `act state import: <path> exists and is non-empty; pass --force to overwrite` | none |
+| `blocked_by_external_dep`  | 2    | `<cmd>: <id> has <N> open external dep(s); clear with --ext-rm or override with --force` | `external_deps` |
 | `tracker_not_checked_out`  | 3    | `act: <what is missing>, but this repo's tracker exists at <url> (from <source>) — the queue is not checked out here. Recover with: <command>` | `repo_root`, `tracker_remote`, `source`, `recover` |
-| `blocked_requires_dep`     | 2    | `act update: --status blocked: <id> has no blocked-by dep edge; add one first with \`act dep add <id> <blocker-id> --type blocks\`` | none |
+| `blocked_requires_dep`     | 2    | `act update: --status blocked: <id> has no blocked-by dep edge; add one first with <the act dep add command to run>` | none |
+| `act_already_initialized`  | 1    | `act init: <path> already exists; pass --force to reinitialize` | none |
+| `act_state_not_initialized` | 3    | `act state import: <which source> missing nested .git — run <the init command>` | none |
+| `bad_flag`                 | 2    | by command, e.g. `act list: --sort: unknown field "<field>"` | none |
+| `bad_input`                | 2    | by case, e.g. `from_version=<N> must be < to_version=<M>` | none |
+| `bootstrap_validation_failed` | 3    | `<cmd>: validation against <path> failed: <error>` | none |
+| `branch_failed`            | 1    | the underlying error's text | none |
+| `claim_failed`             | 1    | the underlying error's text | none (`stderr_tail` and `quarantined_op` when there is one) |
+| `commit_failed`            | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
+| `config_read_failed`       | 1, 3 | the underlying error's text, e.g. `config: parse: <error>` | none |
+| `cycle`                    | 1    | `act dep add: cycle detected: <a> -> <b> -> <a>` | `path` |
+| `doctor_failed`            | 1    | `act remote enable: doctor reported <N> error-severity finding(s)` | `doctor_findings`, `doctor_error_findings` |
+| `envelope_invalid`         | 1    | the underlying error's text | none |
+| `file_not_found`           | 3    | `<cmd>: <flag> "<path>": file not found` | none |
+| `fold_failed`              | 1, 3 | the underlying error's text, e.g. `fold: parse <op file>: <error>` | none |
+| `fts_parse`                | 2    | `act search: <error>` | none |
+| `has_descendants`          | 1    | `act delete: <id> has <N> non-tombstoned descendant(s); pass --cascade to also tombstone them` | `id`, `descendants` |
+| `hash_failed`              | 1    | the underlying error's text | none |
+| `id_collision`             | 1    | `act create: 8 nonce retries exhausted` | none |
+| `import_failed`            | 1    | the underlying error's text, e.g. `importer: read <path>: <error>` | none |
+| `index_open_failed`        | 1, 3 | the underlying error's text, e.g. `index: ping <path>: <error>` | none |
+| `index_query_failed`       | 1    | the underlying error's text | none |
+| `index_rebuild_failed`     | 1, 3 | the underlying error's text, e.g. `index: fold for rebuild: <error>` | none |
+| `index_update_failed`      | 1    | the underlying error's text, e.g. `cli: refresh index: <error>` | none |
+| `init_dirs_failed`         | 1    | the underlying error's text | none |
+| `init_hooks_failed`        | 1    | the underlying error's text | none |
+| `init_ops_failed`          | 1    | the underlying error's text | none |
+| `internal`                 | 1    | `act next: ready returned unexpected type <type>` | none |
+| `invalid_flag`             | 2    | by case, e.g. `act search: --in must be <the accepted values>, got "<value>"` | none |
+| `io_failure`               | 1    | the underlying error's text | none |
+| `marshal_failed`           | 1, 3 | the underlying error's text | none |
+| `migration_not_found`      | 5    | `no Migration registered for from=<N> to=<M>` | none |
+| `nested_init_failed`       | 1    | the underlying error's text | none |
+| `no_repo`                  | 3    | by command, e.g. `.act/ directory not found under <repo root>` | none |
+| `nonce_failed`             | 1    | the underlying error's text | none |
+| `op_filename_collision`    | 1    | `<cmd>: op filename <the quoted name> exists at host with divergent content — <what that means>` | `path`, `worker`, `host` |
+| `ops_read_failed`          | 1, 3 | the underlying error's text, e.g. `act log: parse <op file>: <error>` | none |
+| `ops_scan_failed`          | 1    | the underlying error's text | none |
+| `ops_walk_failed`          | 3    | the underlying error's text | none |
+| `payload_invalid`          | 1    | the underlying error's text | none |
+| `push_failed`              | 1, 3 | by command, e.g. `act remote add-upstream: initial push failed: <error>` | `url`, `branch` (none from `act update`) |
+| `query_failed`             | 2    | `act search: <error>` | none |
+| `record_pending_push_failed` | 1    | the underlying error's text | none |
+| `stage_failed`             | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
+| `stale_git_lock`           | 1    | `stale git lock blocks the tracker: <lock file> exists; <how to confirm it is stale, remove it and recover>` | `lock_file`, `remedy`, `quarantined_op` |
+| `stat_failed`              | 1, 3 | by command, e.g. `act state import: target <path>: <error>` | none |
+| `tombstoned`               | 3    | `act show: <id> is tombstoned; no commit marker` | none |
+| `transform_failed`         | 1    | `issue=<id>: <error>` | none |
+| `unknown`                  | varies | whatever text the failing command supplied; the code stands in when it supplied none | none |
+| `upstream_not_configured`  | 2    | `no origin-upstream configured; run 'act remote add-upstream <url>'` | none |
+| `upstream_public`          | 2    | `refusing public upstream; pass --force-public to override` | `url` |
+| `walk_failed`              | 3    | the underlying error's text | none |
+| `worker_state_not_found`   | 2    | `act state export: directory <path> has no .act/ — <what to pass instead>` | none |
+| `write_config_failed`      | 1    | the underlying error's text | none |
+| `write_failed`             | 1, 3 | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
+| `write_lock_timeout`       | 1    | `another act process held <the lock file> for over <duration>; nothing was written — retry the command` | `lock_file` |
+
+**Codes only the MCP server emits.** A tool call has no exit code; these arrive as the `error` of an `isError` tool result.
+
+| code                  | when                                                                                   |
+|-----------------------|----------------------------------------------------------------------------------------|
+| `bad_args`            | a tool call's arguments do not fit the tool: a required one is missing or one has the wrong type |
+| `block_failed`        | `act_block` could not write its dep op (a write-lock timeout is `write_lock_timeout` instead) |
+| `method_not_allowed`  | a write tool was called on a server started with `--read-only`; message `server is read-only; tool "<name>" not permitted` |
+| `read_only_violation` | a composed write tool (`act_next`, `act_finish`, `act_block`, `act_file_blocker`) was called with `read_only` set on the call |
+| `unknown_tool`        | `tools/call` named a tool the server does not have; message `unknown tool "<name>"` |
 
 **No state in this checkout vs. a tracker that is not checked out (act-a025ab).** `.act/` is gitignored, so with no `.act/` read commands print `act: no act state in this repo — this is normal in CI / fresh clones` and exit 0, and write commands exit 3 with `act_not_initialized`. act cannot tell on its own whether a tracker exists elsewhere — the only remote it records lives inside `.act/.git`, which is the missing thing — so an operator who keeps trackers in git remotes names the location once per machine: `$ACT_TRACKER_REMOTE`, else the first non-empty line of `$XDG_CONFIG_HOME/act/tracker-remote` (default `~/.config/act/tracker-remote`). The value is a git URL or path; `{repo}` becomes the host repo's directory name and a leading `~/` is expanded. Inside a linked git worktree `{repo}` is the main repository's directory name (the parent of git's common dir), not the worktree's own folder, so every worktree of a repo resolves to that repo's tracker (act-15ca2b). When that remote exists (a local path holding a git repo, or a URL `git ls-remote` answers within 10s) and this checkout has no `.act/` or no `.act/config.json`, every guarded command, read or write, exits 3 with `tracker_not_checked_out`; the message never calls the state normal. `act mcp` still starts in that state, but its tool calls (all but `act_version`) return an `isError` tool result carrying the same `tracker_not_checked_out` envelope instead of acting on an empty store (act-626391). `act init` in that state — no `.act/` config.json and no `.act/.git` to recover into — refuses with exit 3 and `tracker_not_checked_out`, printing the clone recovery, because a fresh init would start a second, divergent tracker; `act init --force-new` (MCP `act_init` argument `force_new`) starts a new tracker anyway. An `.act/` git repo missing only config.json is still recovered by a plain `act init`, and with no tracker remote configured (or none found) init is unchanged (act-ef5a69). When the remote does not exist the fresh-clone wording is unchanged. Unset, no probe runs. act ships no default location.
 

@@ -3240,7 +3240,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-error-envelope-three-keys",
 		docFile:      "docs/spec.md",
-		claimPattern: "`error` is a string code, not an object, and the envelope has exactly those three keys",
+		claimPattern: "`error` is a string code, not an object, and the envelope has those three keys and no others",
 		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
 	},
 	{
@@ -3406,6 +3406,55 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "- `--to M` (int, required). The target `op_version`. Must be greater than `--from`.",
 		testName:     "TestDocClaim_Spec_FlagBulletsMigrateFromTo",
+	},
+	// The error table and `act help errors`: every emitted code, no other.
+	{
+		name:         "spec-error-table-lists-exactly-the-emitted-codes",
+		docFile:      "docs/spec.md",
+		claimPattern: "The table lists every code the CLI emits — every code that some non-test source line under `cmd/` or `internal/` puts in an envelope's `error` field — and no other.",
+		testName:     "TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet",
+	},
+	{
+		name:         "spec-error-table-mcp-only-codes",
+		docFile:      "docs/spec.md",
+		claimPattern: "**Codes only the MCP server emits.** A tool call has no exit code; these arrive as the `error` of an `isError` tool result.",
+		testName:     "TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet",
+	},
+	{
+		name:         "help-errors-lists-exactly-the-emitted-codes",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "These rows are every code the source emits and no other: a constant\n  that nothing emits has no row.",
+		testName:     "TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet",
+	},
+	{
+		name:         "help-errors-mcp-only-block",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "MCP-only codes (the \"error\" of an isError tool result; never a CLI exit):",
+		testName:     "TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet",
+	},
+	{
+		name:         "spec-error-table-details-always-present-two-exceptions",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act migrate` prints only `error` and `message`, and so does `act version --check-repo` for `no_repo`.",
+		testName:     "TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource",
+	},
+	{
+		name:         "spec-error-table-two-exit-codes-command-decides",
+		docFile:      "docs/spec.md",
+		claimPattern: "Where a row lists two exit codes the command decides which: an index that cannot be opened is exit 1 from `act list` and exit 3 from `act search`.",
+		testName:     "TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource",
+	},
+	{
+		name:         "spec-error-table-state-import-message-prefix",
+		docFile:      "docs/spec.md",
+		claimPattern: "| `remote_unreachable`       | 3    | `act state import: clone <url>: <reason>`",
+		testName:     "TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource",
+	},
+	{
+		name:         "spec-error-table-init-existing-tracker-row",
+		docFile:      "docs/spec.md",
+		claimPattern: "| `act_already_initialized`  | 1    | `act init: <path> already exists; pass --force to reinitialize` | none |",
+		testName:     "TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource",
 	},
 }
 

@@ -597,7 +597,14 @@ func TestDocClaim_Spec_ErrorTableExitCodesMatchBinary(t *testing.T) {
 				}
 				return
 			}
-			t.Errorf("the spec's error table has a row for %s (exit %d) that this test neither provokes nor reads from the source; add one", row.code, row.exit)
+			// The eighth pass (act-0c1c31) added a row for every emitted
+			// code; TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource
+			// checks each of those rows' exit codes, by a provoked run or
+			// from the emit site's return statement.
+			if sp8RowChecked(row.code) {
+				return
+			}
+			t.Errorf("the spec's error table has a row for %s (exit %d) that neither this test nor the eighth pass's row test checks; add a provoker", row.code, row.exit)
 		})
 	}
 	for code := range provoke {
@@ -707,7 +714,14 @@ func TestDocClaim_HelpErrors_EveryRowHasAnEmitter(t *testing.T) {
 	if len(helpRows) < 25 {
 		t.Fatalf("parsed %d code rows from act help errors: %v", len(helpRows), helpRows)
 	}
+	// The eighth pass (act-0c1c31) lists every emitted code, including the
+	// many emitted as bare literals and the two declared outside errors.go;
+	// its scan (sp8EmittedCodes) is the stricter test of "has an emitter".
+	sp8 := sp8EmittedCodes(t)
 	check := func(where, slug string) {
+		if len(sp8.sites[slug]) > 0 {
+			return
+		}
 		if _, declared := consts[slug]; !declared && !literalOnly[slug] {
 			t.Errorf("%s lists %s, which internal/cli/errors.go does not declare", where, slug)
 		}
