@@ -101,12 +101,14 @@ func clrMissingOrigin(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "clr-no-such-origin.git")
 }
 
-// TestClrClaimInAutoPublishedTrackerSeesARivalClaim (act-2bd35b item 4): a
-// tracker that only ever auto-published has no upstream branch, because the
-// auto-publish push passes no `-u`. A claim there must still rebase onto
-// origin before deciding who won: a rival checkout that claimed first and
-// pushed holds the issue, and this checkout's claim is lost.
-func TestClrClaimInAutoPublishedTrackerSeesARivalClaim(t *testing.T) {
+// TestDocClaim_Spec_ClrClaimRebasesWithoutAnUpstream asserts the "The rebase
+// names `origin` and the tracker's branch" paragraph of the atomic claim
+// protocol (act-2bd35b item 4). A tracker that only ever auto-published has
+// no upstream branch, because the publish push passes no `-u`; the claim's
+// rebase used to be a bare `git pull --rebase` gated on an upstream, so it
+// never ran there, and an issue a rival checkout had already claimed and
+// pushed was reported claimed:true in both checkouts.
+func TestDocClaim_Spec_ClrClaimRebasesWithoutAnUpstream(t *testing.T) {
 	dir, bare, id := clrSiteWithOrigin(t)
 	if clrHasUpstream(dir) {
 		t.Fatalf("premise: the auto-published tracker has an upstream branch configured")
@@ -128,6 +130,24 @@ func TestClrClaimInAutoPublishedTrackerSeesARivalClaim(t *testing.T) {
 	if lost.Winner != won.Winner {
 		t.Errorf("winner = %q, want the rival %q", lost.Winner, won.Winner)
 	}
+	if clrHasUpstream(dir) {
+		t.Errorf("the claim configured an upstream branch; the rebase is meant to name origin and the branch itself")
+	}
+
+	// origin without the branch yet: the issue was created before origin
+	// was added, so nothing was ever published. The step is a no-op and
+	// the won claim is published like any other write.
+	fresh := sp6Site(t)
+	freshID := createIssue(t, fresh, "clr claim before any publish")
+	freshBare := wfxAddBareOrigin(t, fresh)
+	first, stdout, stderr, code := clrRunClaim(t, fresh, freshID)
+	if code != 0 || !first.Claimed || first.PushDeferred || strings.Contains(stderr, "WARNING") {
+		t.Errorf("claim with an origin that has no branch yet: exit %d claimed=%v push_deferred=%v; want a plain win\nstdout=%s\nstderr=%s",
+			code, first.Claimed, first.PushDeferred, stdout, stderr)
+	}
+	if !wfxOriginHasHead(t, fresh, freshBare) {
+		t.Errorf("the won claim was not published to the origin that had no branch yet")
+	}
 }
 
 // clrReadFile returns a file's content, "" when it does not exist.
@@ -138,4 +158,143 @@ func clrReadFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// clrBranch is the nested repo's current branch.
+func clrBranch(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := sp7GitOut("-C", clrActDir(dir), "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || b == "" {
+		t.Fatalf("the nested repo's branch: %q, %v", b, err)
+	}
+	return b
+}
+
+// clrStatus is the issue's status as `act show --json` reports it, read
+// without touching origin.
+func clrStatus(t *testing.T, dir, id string) string {
+	t.Helper()
+	out, stderr, code := runActIn(t, dir, "show", id, "--json", "--no-fetch")
+	if code != 0 {
+		t.Fatalf("act show %s --json --no-fetch: exit %d\nstdout=%s\nstderr=%s", id, code, out, stderr)
+	}
+	var res struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil {
+		t.Fatalf("parse act show: %v\n%s", err, out)
+	}
+	return res.Status
+}
+
+// TestDocClaim_Spec_ClrClaimWithUnreachableOriginIsUnconfirmed asserts the
+// "A claim that cannot reach `origin` is unconfirmed, not failed" paragraph
+// of the atomic claim protocol (act-2bd35b item 1). The claim op is
+// committed before the rebase step runs, so a fetch that cannot reach origin
+// used to answer exit 1 `claim_failed` for a write that had landed — and a
+// second claim then answered exit 0, already held, with nothing said about
+// origin. It now exits 0 with `claimed: true` and the deferral reported.
+//
+// Run both with an upstream branch configured (a `git clone`d tracker, the
+// only shape whose claim reached origin before act-2bd35b) and without one
+// (a tracker that only auto-published).
+func TestDocClaim_Spec_ClrClaimWithUnreachableOriginIsUnconfirmed(t *testing.T) {
+	for _, withUpstream := range []bool{true, false} {
+		name := "no upstream branch"
+		if withUpstream {
+			name = "upstream branch configured"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir, _, id := clrSiteWithOrigin(t)
+			if withUpstream {
+				sp6Git(t, "-C", clrActDir(dir), "push", "-q", "-u", "origin", "HEAD")
+			}
+			dplRepoint(t, dir, "origin", clrMissingOrigin(t))
+
+			res, stdout, stderr, code := clrRunClaim(t, dir, id)
+			if code != 0 || !res.Claimed || res.Error != "" {
+				t.Fatalf("claim with an unreachable origin: exit %d claimed=%v error=%q; want exit 0, claimed true\nstdout=%s",
+					code, res.Claimed, res.Error, stdout)
+			}
+			if !res.PushDeferred || res.PushDeferredReason == "" {
+				t.Errorf("claim with an unreachable origin: push_deferred=%v push_deferred_reason=%q; want true and a reason\nstdout=%s",
+					res.PushDeferred, res.PushDeferredReason, stdout)
+			}
+			if n := strings.Count(stderr, "COMMITTED LOCALLY but NOT PUSHED"); n != 1 {
+				t.Errorf("claim with an unreachable origin printed %d not-pushed warning blocks, want one:\n%s", n, stderr)
+			}
+			if pnrPendingPushes(t, dir) == "" {
+				t.Errorf("claim with an unreachable origin queued nothing in .act/.pending-pushes")
+			}
+			if got := clrStatus(t, dir, id); got != "in_progress" {
+				t.Errorf("after the unconfirmed claim the issue's status is %q, want in_progress", got)
+			}
+		})
+	}
+}
+
+// TestDocClaim_Spec_ClrClaimLostToARivalIsNeverAWin asserts the sentences of
+// the same paragraph that keep a lost race lost (act-2bd35b item 1): a claim
+// is the fleet's mutual-exclusion signal, so the deferral is only for a
+// claim that won among every op this checkout can see.
+func TestDocClaim_Spec_ClrClaimLostToARivalIsNeverAWin(t *testing.T) {
+	// The rival's claim is already in this checkout, and origin is then
+	// unreachable: the fetch fails, and the claim is still lost.
+	t.Run("origin unreachable, the rival's claim already fetched", func(t *testing.T) {
+		dir, bare, id := clrSiteWithOrigin(t)
+		sp6Git(t, "-C", clrActDir(dir), "push", "-q", "-u", "origin", "HEAD")
+		rival := clrRival(t, bare)
+		won, _, _, code := clrRunClaim(t, rival, id)
+		if code != 0 || !won.Claimed {
+			t.Fatalf("the rival's claim: exit %d claimed=%v, want a win", code, won.Claimed)
+		}
+		sp6Git(t, "-C", clrActDir(dir), "pull", "-q", "--rebase", "origin", clrBranch(t, dir))
+		dplRepoint(t, dir, "origin", clrMissingOrigin(t))
+
+		lost, stdout, _, code := clrRunClaim(t, dir, id)
+		if code != 5 || lost.Claimed || lost.Error != "claim_lost" || lost.Winner != won.Winner {
+			t.Errorf("claim against a rival's fetched claim, origin unreachable: exit %d claimed=%v error=%q winner=%q; want exit 5, claimed false, claim_lost, winner %q\nstdout=%s",
+				code, lost.Claimed, lost.Error, lost.Winner, won.Winner, stdout)
+		}
+		if lost.PushDeferred {
+			t.Errorf("a lost claim reports push_deferred: %s", stdout)
+		}
+	})
+
+	// origin is reached and holds the rival's claim, but its history
+	// cannot be rebased under ours (both sides committed the same new
+	// file). act cannot see who holds the issue, so it reports no win:
+	// exit 1 claim_failed, the rebase aborted.
+	t.Run("origin fetched but not rebased", func(t *testing.T) {
+		dir, bare, id := clrSiteWithOrigin(t)
+		sp6Git(t, "-C", clrActDir(dir), "push", "-q", "-u", "origin", "HEAD")
+		rival := clrRival(t, bare)
+		won, _, _, code := clrRunClaim(t, rival, id)
+		if code != 0 || !won.Claimed {
+			t.Fatalf("the rival's claim: exit %d claimed=%v, want a win", code, won.Claimed)
+		}
+		for _, side := range []struct{ dir, body string }{{rival, "rival\n"}, {dir, "this checkout\n"}} {
+			if err := os.WriteFile(filepath.Join(clrActDir(side.dir), "clr-conflict.txt"), []byte(side.body), 0o644); err != nil {
+				t.Fatalf("write the conflicting file: %v", err)
+			}
+			sp6Git(t, "-C", clrActDir(side.dir), "add", "clr-conflict.txt")
+			sp6Git(t, "-C", clrActDir(side.dir), "commit", "-q", "--no-verify", "-m", "clr: conflicting file")
+		}
+		sp6Git(t, "-C", clrActDir(rival), "push", "-q", "origin", "HEAD")
+
+		res, stdout, _, code := clrRunClaim(t, dir, id)
+		if code != 1 || res.Claimed || res.Error != "claim_failed" {
+			t.Errorf("claim whose rebase onto origin conflicts: exit %d claimed=%v error=%q; want exit 1, claim_failed and no win\nstdout=%s",
+				code, res.Claimed, res.Error, stdout)
+		}
+		for _, name := range []string{"rebase-merge", "rebase-apply"} {
+			if _, err := os.Stat(filepath.Join(dplNestedGitDir(dir), name)); err == nil {
+				t.Errorf("the failed claim left a rebase in progress (.git/%s exists)", name)
+			}
+		}
+		// Observation only (see the report's follow-ups): what a second
+		// claim answers once the first has failed this way.
+		again, _, _, code := clrRunClaim(t, dir, id)
+		t.Logf("second claim after the conflicted one: exit %d claimed=%v error=%q winner=%q", code, again.Claimed, again.Error, again.Winner)
+	})
 }
