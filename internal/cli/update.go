@@ -1210,7 +1210,12 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// extract the trailing `(output: ...)` blob (set by gitops/claim's
 		// runGit wrapper) into `details.stderr_tail` so JSON consumers get
 		// a clean human message and a separate diagnostic field.
-		message, tail := SplitWrappedError(err.Error())
+		//
+		// act-18bd72: that output is git's, and a failed pull or push can
+		// echo credentials embedded in origin's URL, so the text is
+		// redacted before it is split into either field (act-4a538e
+		// masked every other place it is surfaced).
+		message, tail := SplitWrappedError(gops.RedactRemoteCredentials(err.Error()))
 		details := map[string]any{}
 		if tail != "" {
 			details["stderr_tail"] = CaptureStderrTail(tail)

@@ -32,6 +32,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aac/act/internal/gitops"
 )
 
 // TrackerRemoteEnvVar names the environment override for the tracker-remote
@@ -59,8 +61,15 @@ type TrackerRemote struct {
 	Found bool
 	// Unconfirmed is set when a non-local remote could not be probed
 	// (unreachable, auth failure, or absent — git does not distinguish).
-	// It carries the first line of git's error.
+	// It carries the first line of git's error, with any credentials
+	// from URL masked (act-18bd72): it exists only to be printed.
 	Unconfirmed string
+}
+
+// DisplayURL is URL as act prints it: userinfo (`scheme://user:token@host`)
+// replaced with `***`. URL itself stays the real one (act-18bd72).
+func (tr TrackerRemote) DisplayURL() string {
+	return gitops.RedactURLUserinfo(tr.URL, tr.URL)
 }
 
 // TrackerRemoteConfigPath returns the per-machine tracker-remote file,
@@ -194,6 +203,6 @@ func DetectTrackerRemote(hostRoot string) TrackerRemote {
 	if msg == "" {
 		msg = err.Error()
 	}
-	tr.Unconfirmed = msg
+	tr.Unconfirmed = gitops.RedactURLUserinfo(msg, url)
 	return tr
 }

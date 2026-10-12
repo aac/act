@@ -4039,6 +4039,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Spec_DplDeferredPushRetriedByTheNextWrite",
 	},
 	{
+		name:         "spec-dpl-tracker-remote-credentials-are-masked",
+		docFile:      "docs/spec.md",
+		claimPattern: "So is the tracker remote (`$ACT_TRACKER_REMOTE`, else `~/.config/act/tracker-remote`) wherever `tracker_not_checked_out` prints it — the message, the recovery command and `details.tracker_remote` — and in the `act: could not check tracker remote` line; a recovery command whose URL was masked ends `credentials in the URL are masked here; the real URL is in <source>`.",
+		testName:     "TestDocClaim_Spec_DplTrackerRemoteCredentialsAreMasked",
+	},
+	{
+		name:         "spec-dpl-claim-failed-credentials-are-masked",
+		docFile:      "docs/spec.md",
+		claimPattern: "A `claim_failed` envelope that carries git's output has the credentials in `origin`'s URL masked in `message` and `details.stderr_tail`.",
+		testName:     "TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked",
+	},
+	{
 		name:         "spec-dpl-offline-queue-failure-is-in-warnings",
 		docFile:      "docs/spec.md",
 		claimPattern: "With `--json` the result also names it, as `\"push_queue_failed\"` in `warnings`, on `create`, `update` (with or without `--claim`), `close`, `dep add`, `reopen` and `delete`; the stderr block is printed either way.",

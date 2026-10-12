@@ -74,7 +74,7 @@ func main() {
 					emitTrackerNotCheckedOut(hasJSONFlag(args), root, actDir, noActDir, tr)
 					os.Exit(3)
 				} else if noActDir && tr.Unconfirmed != "" {
-					fmt.Fprintf(os.Stderr, "act: could not check tracker remote %s (from %s): %s\n", tr.URL, tr.Source, tr.Unconfirmed)
+					fmt.Fprintf(os.Stderr, "act: could not check tracker remote %s (from %s): %s\n", tr.DisplayURL(), tr.Source, tr.Unconfirmed)
 				}
 			}
 			if noActDir {

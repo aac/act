@@ -169,6 +169,10 @@ func TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked(t *testing.T) {
 	dir := sp6Site(t)
 	bare := wfxAddBareOrigin(t, dir)
 	id := createIssue(t, dir, "dpl claim target")
+	// A second issue for the human-form call: the first failed claim's
+	// commit stays in the local repo, so claiming that issue again is a
+	// re-claim that never reaches the pull.
+	second := createIssue(t, dir, "dpl second claim target")
 	if !wfxOriginHasHead(t, dir, bare) {
 		t.Fatalf("the create was not pushed to the bare origin")
 	}
@@ -189,9 +193,9 @@ func TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked(t *testing.T) {
 	}
 
 	// Without --json the same envelope is a line on stderr.
-	stdout, stderr, code = runActIn(t, dir, "update", id, "--claim")
-	if code != 1 {
-		t.Errorf("act update --claim (human) with a failing pull: exit %d, want 1\nstderr=%s", code, stderr)
+	stdout, stderr, code = runActIn(t, dir, "update", second, "--claim")
+	if code != 1 || !strings.Contains(stderr, "unable to look up ***@127.0.0.1") {
+		t.Errorf("act update --claim (human) with a failing pull: exit %d, want 1 and git's message with the userinfo masked\nstderr=%s", code, stderr)
 	}
 	dplWantNoSecret(t, "act update --claim (claim_failed, human)", stdout+stderr)
 }
