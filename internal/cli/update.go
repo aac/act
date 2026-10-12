@@ -1081,6 +1081,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	if err := RefreshIndexForIssue(paths, full); err != nil {
 		warnings = append(warnings, WarnIndexUpdateFailed)
 	}
+	// act-18bd72: an --offline update that could not queue its commit.
+	if published.OfflineQueueFailed {
+		warnings = append(warnings, WarnPushQueueFailed)
+	}
 
 	res := UpdateResult{
 		ID:         full,
@@ -1261,7 +1265,11 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// holds committed nothing, so neither publishes again.
 		if !opts.Push && !opts.Isolated && !res.AlreadyHeld {
 			if opts.Offline {
-				QueueOfflinePush(gops, "claim", nil)
+				// act-18bd72: a failed queue append is named on the
+				// result as well as on stderr.
+				if QueueOfflinePush(gops, "claim", nil).OfflineQueueFailed {
+					won.Warnings = append(won.Warnings, WarnPushQueueFailed)
+				}
 			} else if pub := publishClaimCommit(gops, opts.Branch); pub.Deferred {
 				won.PushDeferred = true
 				if pub.Reason != nil {

@@ -60,6 +60,12 @@ type PublishResult struct {
 	// publishes it (push is not sha-scoped), but nothing on disk
 	// notes that a push is owed.
 	Queued bool
+
+	// OfflineQueueFailed is true when the write was --offline, so no push
+	// was attempted, and the append to `.act/.pending-pushes` failed. Set
+	// only by QueueOfflinePush; reported as WarnPushQueueFailed
+	// (act-18bd72).
+	OfflineQueueFailed bool
 }
 
 // PublishCommittedOp runs the publish legs — flush any deferred backlog,
@@ -96,16 +102,20 @@ func PublishCommittedOp(gops *gitops.ActGitOps, opType, branch string, stderr io
 // Pushed reports whether the publish leg put the commit on origin: it ran,
 // there was an origin, and the push was not deferred.
 func (r PublishResult) Pushed() bool {
-	return !r.NoRemote && !r.Deferred
+	return !r.NoRemote && !r.Deferred && !r.OfflineQueueFailed
 }
 
 // pushNoRemoteWarnings is the warnings a write command reports for what its
 // publish leg did: WarnPushNoRemote when the caller passed --push and there
-// was no origin to push to, nil otherwise. pub is the zero value when the
-// leg did not run (--no-commit, --offline, --isolated), and each of those
-// with --push is refused before any write, so the zero value never warns
-// (act-7e8600).
+// was no origin to push to, WarnPushQueueFailed when an --offline write
+// could not queue its commit (act-18bd72), nil otherwise. pub is the zero
+// value when the leg did not run (--no-commit, --isolated, or --offline
+// with the commit queued), and each of those with --push is refused before
+// any write, so the zero value never warns (act-7e8600).
 func pushNoRemoteWarnings(push bool, pub PublishResult) []string {
+	if pub.OfflineQueueFailed {
+		return []string{WarnPushQueueFailed}
+	}
 	if push && pub.NoRemote {
 		return []string{WarnPushNoRemote}
 	}

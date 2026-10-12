@@ -105,7 +105,7 @@ func RecordPendingPush(gops *gitops.ActGitOps, stateRoot, opType string) error {
 }
 
 // QueueOfflinePush is the --offline leg of every write: it records the
-// commit that just landed in `.act/.pending-pushes`. It returns nothing on
+// commit that just landed in `.act/.pending-pushes`. It returns no error on
 // purpose (act-11d2e2). The commit is already durable by the time this
 // runs, so a queue append that fails cannot fail the command — the same
 // boundary publish.go draws for a failed push (act-89a595). The failure is
@@ -121,11 +121,16 @@ func RecordPendingPush(gops *gitops.ActGitOps, stateRoot, opType string) error {
 // Nothing is lost when the append fails: a push is not sha-scoped, so the
 // next write without --offline publishes this commit along with its own.
 //
+// The returned PublishResult is the zero value when the commit was queued,
+// and has OfflineQueueFailed set when it was not, so the caller can name
+// the failure in its result's `warnings` (WarnPushQueueFailed, act-18bd72):
+// the stderr block alone is invisible to a caller reading the JSON result.
+//
 // stderr may be nil, in which case os.Stderr is used.
-func QueueOfflinePush(gops *gitops.ActGitOps, opType string, stderr io.Writer) {
+func QueueOfflinePush(gops *gitops.ActGitOps, opType string, stderr io.Writer) PublishResult {
 	err := RecordPendingPush(gops, gops.RepoRoot, opType)
 	if err == nil {
-		return
+		return PublishResult{}
 	}
 	dst := stderr
 	if dst == nil {
@@ -135,4 +140,5 @@ func QueueOfflinePush(gops *gitops.ActGitOps, opType string, stderr io.Writer) {
 	fmt.Fprintf(dst, "act: WARNING:   queue append failed: %v\n", err)
 	fmt.Fprintf(dst, "act: WARNING:   the next act write without --offline pushes this commit along with its own.\n")
 	fmt.Fprintf(dst, "act: WARNING:   the write itself landed and is durable — exit status is 0 on purpose. Do NOT re-run this command; re-running duplicates the op.\n")
+	return PublishResult{OfflineQueueFailed: true}
 }

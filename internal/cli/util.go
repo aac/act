@@ -168,10 +168,11 @@ type WriteOpts struct {
 	// os.Stderr. Tests inject a buffer to assert the warning fired.
 	Stderr io.Writer
 	// Published, when non-nil, receives what the publish leg did. It is
-	// written only when that leg ran — a commit landed and neither
-	// Offline nor Isolated was set; under NoCommit, Offline or Isolated
-	// it is left untouched and nothing was pushed (act-8c1c05,
-	// act-f4fd34).
+	// written when that leg ran — a commit landed and neither Offline nor
+	// Isolated was set — and under Offline, where it is the zero value
+	// unless the queue append failed (OfflineQueueFailed, act-18bd72).
+	// Under NoCommit or Isolated it is left untouched. Nothing was pushed
+	// under any of the three (act-8c1c05, act-f4fd34).
 	Published *PublishResult
 }
 
@@ -328,14 +329,17 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	if opts.Offline {
 		// A failed queue append is a warning, not an error: the commit
 		// has landed (act-11d2e2; see QueueOfflinePush).
-		QueueOfflinePush(gops, env.OpType, opts.Stderr)
+		queued := QueueOfflinePush(gops, env.OpType, opts.Stderr)
+		if opts.Published != nil {
+			*opts.Published = queued
+		}
 		return nil
 	}
 
 	// --isolated is the strict local-only mode (spec §4: no fetch, no
 	// push, no pending-push tracking). The commit above is the whole
 	// write: nothing is published and nothing is queued, and
-	// opts.Published is left untouched, as under Offline. This leg used
+	// opts.Published is left untouched. This leg used
 	// to run regardless, so an isolated write reached origin
 	// (act-f4fd34). The next non-isolated write's push carries this
 	// commit.
@@ -484,7 +488,10 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// entry for the just-landed commit. Same semantics as the single-op
 	// path; the batch is one local commit so one entry is sufficient.
 	if opts.Offline {
-		QueueOfflinePush(gops, envs[0].OpType, opts.Stderr)
+		queued := QueueOfflinePush(gops, envs[0].OpType, opts.Stderr)
+		if opts.Published != nil {
+			*opts.Published = queued
+		}
 		return nil
 	}
 

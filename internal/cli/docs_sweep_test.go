@@ -3636,7 +3636,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-create-json-push-no-remote-warning",
 		docFile:      "docs/spec.md",
-		claimPattern: "`\"push_no_remote\"` is the second of four warnings: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
+		claimPattern: "`\"push_no_remote\"` is the second of five warnings: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
 		testName:     "TestDocClaim_Spec_CreatePushedReportsWhatHappened",
 	},
 	// act-4d7596: create had three warnings (four since act-11d2e2), and the doctor section says what
@@ -3821,7 +3821,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-spx-close-json-keys-that-appear-when-they-apply",
 		docFile:      "docs/spec.md",
-		claimPattern: "Three more appear only when they apply: `warnings`, a list naming `push_no_remote` (`--push` in a tracker with no `origin`) or `index_update_failed` (the index could not be updated after the commit), and `push_deferred: true` with `push_deferred_reason` when the push did not reach `origin`.",
+		claimPattern: "Three more appear only when they apply: `warnings`, a list naming `push_no_remote` (`--push` in a tracker with no `origin`) `index_update_failed` (the index could not be updated after the commit) or `push_queue_failed` (an `--offline` close that could not queue its commit), and `push_deferred: true` with `push_deferred_reason` when the push did not reach `origin`.",
 		testName:     "TestDocClaim_Spec_SpxCloseJSONKeysThatAppearWhenTheyApply",
 	},
 	{
@@ -4037,6 +4037,18 @@ var docClaimRegistry = []docClaim{
 		docFile:      "cmd/act/help.go",
 		claimPattern: "publishes the backlog; 'act remote sync' does not (it pushes to",
 		testName:     "TestDocClaim_Spec_DplDeferredPushRetriedByTheNextWrite",
+	},
+	{
+		name:         "spec-dpl-offline-queue-failure-is-in-warnings",
+		docFile:      "docs/spec.md",
+		claimPattern: "With `--json` the result also names it, as `\"push_queue_failed\"` in `warnings`, on `create`, `update` (with or without `--claim`), `close`, `dep add`, `reopen` and `delete`; the stderr block is printed either way.",
+		testName:     "TestDocClaim_Spec_DplOfflineQueueFailureIsInWarnings",
+	},
+	{
+		name:         "spec-dpl-create-json-push-queue-failed-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "The fifth, `\"push_queue_failed\"`, is an `--offline` create that could not queue its commit in `.act/.pending-pushes`; see \"Offline mode\".",
+		testName:     "TestDocClaim_Spec_DplOfflineQueueFailureIsInWarnings",
 	},
 	{
 		name:         "spec-dpl-mcp-block-schema-advertises-push",

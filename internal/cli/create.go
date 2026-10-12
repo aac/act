@@ -113,6 +113,14 @@ const WarnPushNoRemote = "push_no_remote"
 // The issue exists; only the derived cache is behind.
 const WarnIndexUpdateFailed = "index_update_failed"
 
+// WarnPushQueueFailed is the warning every write command reports when it was
+// given --offline, its op was committed, and the append to
+// `.act/.pending-pushes` then failed (act-18bd72). The write stands and
+// nothing is lost — the next write without --offline pushes the commit —
+// but the queue does not record that a push is owed. It is the JSON form of
+// the WARNING block QueueOfflinePush prints.
+const WarnPushQueueFailed = "push_queue_failed"
+
 // WarnParentCheckFailed is the CreateResult warning reported when --parent
 // was given and neither the index nor the op log could say whether that
 // issue is closed (act-11d2e2). The create is not stopped by it; the
@@ -579,7 +587,8 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	}
 	// published is what the publish leg did. The leg runs only after a
 	// commit that is neither --offline nor --isolated; otherwise published
-	// stays zero and is not read (act-8c1c05, act-f4fd34).
+	// is read for OfflineQueueFailed alone (act-8c1c05, act-f4fd34,
+	// act-18bd72).
 	var published PublishResult
 	publishRan := !opts.NoCommit && !opts.Offline && !opts.Isolated
 	var werr error
@@ -683,6 +692,10 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	pushed := publishRan && published.Pushed()
 	if opts.Push && publishRan && published.NoRemote {
 		warnings = append(warnings, WarnPushNoRemote)
+	}
+	// act-18bd72: an --offline create that could not queue its commit.
+	if published.OfflineQueueFailed {
+		warnings = append(warnings, WarnPushQueueFailed)
 	}
 	res := CreateResult{
 		Ok:        true,

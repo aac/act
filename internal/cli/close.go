@@ -544,7 +544,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		if opts.Offline {
 			// act-11d2e2: a failed queue append is a warning on a close
 			// that landed, not exit 1 (see QueueOfflinePush).
-			QueueOfflinePush(gops, env.OpType, opts.Stderr)
+			publish = QueueOfflinePush(gops, env.OpType, opts.Stderr)
 		} else if !opts.Isolated {
 			// --isolated (act-7e8600) is the strict local-only mode: the
 			// commit above is the whole write — no push, nothing queued —
