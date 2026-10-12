@@ -769,7 +769,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
   Internal / per-command codes (also stable; tests pin them):
     bad_flag                argparse rejected a flag/value
     cycle                   legacy alias used by 'dep add'
-    claim_failed            claim could not write or push
+    claim_failed            claim could not be written, committed or rebased
+                            (a failed push defers a won claim; it does not fail it)
     config_read_failed      .act/config.json unreadable
     index_open_failed       SQLite open failed
     index_query_failed      SQLite query failed

@@ -3656,7 +3656,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-index-malformed-create-and-field-update-write-first",
 		docFile:      "docs/spec.md",
-		claimPattern: "`act create`, and an `act update` that edits a field of an issue named by its full id, do not read the index first: the op is written and committed, and the index failure comes after. `act create` then exits 0 with `\"index_update_failed\"` in `warnings` (see `act create`).",
+		claimPattern: "`act create`, and an `act update` that edits a field of an issue named by its full id, do not need the index to write: the op is written and committed, and the index failure comes after. `act create` then exits 0 with `\"index_update_failed\"` in `warnings` (see `act create`).",
 		testName:     "TestDocClaim_Spec_IndexMalformedCreateAndFieldUpdateWriteFirst",
 	},
 	// act-e3782c: an index failure after create's commit is a warning.
@@ -3957,6 +3957,29 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "When the op log cannot say either, the create still lands and `warnings` carries the fourth, `\"parent_check_failed\"`, in place of `parent_closed`: the check did not run, so the parent may be closed. Without `--json` it is a line on stderr.",
 		testName:     "TestDocClaim_Spec_CreateParentCheckFailedWarns",
+	},
+	// act-11d2e2 item 5: the claim_failed row said "could not write or
+	// push"; a failed push has deferred a won claim since act-8ffc13.
+	{
+		name:         "help-errors-claim-failed-row-does-not-name-the-push",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "claim_failed            claim could not be written, committed or rebased",
+		testName:     "TestDocClaim_Help_ClaimFailedRowDoesNotNameThePush",
+	},
+	{
+		name:         "help-errors-claim-failed-row-push-defers",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "(a failed push defers a won claim; it does not fail it)",
+		testName:     "TestDocClaim_Help_ClaimFailedRowDoesNotNameThePush",
+	},
+	// act-11d2e2 item 6: the recovery paragraph said create does "not
+	// read the index first"; with --parent it tries the index before
+	// writing, and never fails on it.
+	{
+		name:         "spec-create-parent-tries-the-index-but-never-fails-on-it",
+		docFile:      "docs/spec.md",
+		claimPattern: "(`act create --parent` does try the index before it writes, to see whether the parent is closed, but never fails on it — see `act create`.)",
+		testName:     "TestDocClaim_Spec_CreateParentTriesTheIndexButNeverFailsOnIt",
 	},
 }
 
