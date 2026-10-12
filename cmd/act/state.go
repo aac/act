@@ -35,8 +35,7 @@ func runState(args []string) int {
 		return 0
 	}
 	if strings.HasPrefix(verb, "-") {
-		emitBadFlag(hasJSONFlag(rest), stateUsageMsg())
-		return 2
+		return groupFlagBeforeVerb(args, stateUsageMsg())
 	}
 	switch verb {
 	case "import":

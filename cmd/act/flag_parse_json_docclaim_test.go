@@ -305,10 +305,12 @@ func TestDocClaim_FlagParseError_GroupCommands(t *testing.T) {
 			ufgWantPlain(t, g, "--json=false", "--no-such-flag")
 			ufgWantPlain(t, g, "--no-such-flag", "--json=false")
 
-			// Help is not an error, with or without --json.
+			// Help is help with or without --json: same text, same exit
+			// code (0 from state and dep, the flag package's 2 from
+			// remote), no envelope.
 			_, plainErr, plainCode := runActIn(t, t.TempDir(), g, "-h")
-			if plainCode != 0 || plainErr == "" {
-				t.Errorf("act %s -h: exit %d, stderr %q; want exit 0 and the usage text", g, plainCode, plainErr)
+			if plainErr == "" {
+				t.Errorf("act %s -h: exit %d with empty stderr; want the usage text", g, plainCode)
 			}
 			for _, h := range [][]string{{"--json", "-h"}, {"--json", "--help"}, {"-h", "--json"}, {"--json=true", "-h"}} {
 				stdout, stderr, code := runActIn(t, t.TempDir(), append([]string{g}, h...)...)

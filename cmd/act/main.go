@@ -112,8 +112,7 @@ func main() {
 			os.Exit(0)
 		}
 		if strings.HasPrefix(verb, "-") {
-			emitBadFlag(hasJSONFlag(rest), depUsageMsg())
-			os.Exit(2)
+			os.Exit(groupFlagBeforeVerb(os.Args[2:], depUsageMsg()))
 		}
 		switch verb {
 		case "add":
@@ -483,17 +482,70 @@ func isWriteNoStateCommand(sub string) bool {
 	return writeNoStateCommands[sub]
 }
 
-// hasJSONFlag scans a raw argv tail for "--json" or "-json", which is
-// equivalent to flag.Parse's recognition. Used by pre-dispatch error
-// branches (e.g. unknown `act dep <verb>`) to honour --json before the
-// per-command FlagSet is even constructed.
+// hasJSONFlag reports whether a raw argv tail asks for JSON, reading it the
+// way the flag package reads a bool flag: "--json" / "-json" is true, and
+// "--json=<v>" / "-json=<v>" is whatever strconv.ParseBool makes of <v>
+// ("--json=true" and "--json=1" ask for JSON, "--json=false" asks for plain
+// text). The last occurrence wins, as it does when the flags parse. A value
+// ParseBool rejects ("--json=bogus") is itself a flag-parse failure and asks
+// for nothing, so it leaves the answer as it was.
+//
+// Used wherever an error must be reported before, or because, the
+// per-command FlagSet could not give the parsed value: the pre-dispatch
+// error branches (unknown subcommand, unknown `act dep <verb>`, a flag where
+// a group's verb belongs) and parseFlags, whose parse stops at the first bad
+// token. Matching only the bare spelling left `act list --json=true --zz`
+// with an empty stdout (act-21e07f).
 func hasJSONFlag(args []string) bool {
+	on := false
 	for _, a := range args {
-		if a == "--json" || a == "-json" {
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name, val, hasVal := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+		if name != "json" {
+			continue
+		}
+		if !hasVal {
+			on = true
+		} else if v, err := strconv.ParseBool(val); err == nil {
+			on = v
+		}
+	}
+	return on
+}
+
+// hasHelpFlag reports whether a raw argv tail carries -h or --help.
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
 			return true
 		}
 	}
 	return false
+}
+
+// groupFlagBeforeVerb answers a group command (`act state`, `act dep`) whose
+// first argument is a flag where the verb belongs. It is a bad_flag carrying
+// the group's verb list: an envelope on stdout when --json is anywhere in
+// args, plain text on stderr otherwise, exit 2 either way.
+//
+// args is everything after the group's name, the flag-shaped first token
+// included. The dispatchers used to test only the tokens AFTER that first
+// one, so when the first token was --json itself (`act state --json --zz`)
+// nothing asked for JSON and stdout stayed empty (act-21e07f).
+//
+// Help is not an error: `--json -h` prints what `-h` prints, as it does for
+// every flat command. Without --json a flag before -h is still the usage
+// error it always was.
+func groupFlagBeforeVerb(args []string, usage string) int {
+	asJSON := hasJSONFlag(args)
+	if asJSON && hasHelpFlag(args) {
+		fmt.Fprintln(os.Stderr, usage)
+		return 0
+	}
+	emitBadFlag(asJSON, usage)
+	return 2
 }
 
 // toMap round-trips an arbitrary struct through JSON to recover a string-keyed
