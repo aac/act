@@ -110,6 +110,10 @@ type CloseResult struct {
 	// PushDeferredReason carries the underlying push failure when
 	// PushDeferred is set. Omitted otherwise.
 	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
+	// Warnings names what the caller asked for and did not get although
+	// the write landed: WarnPushNoRemote for --push in a tracker with no
+	// origin remote (act-7e8600). Omitted from JSON when empty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // CloseAlreadyClosed is the JSON-serialisable envelope returned when the
@@ -541,7 +545,12 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 					Message: err.Error(),
 				}, 1
 			}
-		} else {
+		} else if !opts.Isolated {
+			// --isolated (act-7e8600) is the strict local-only mode: the
+			// commit above is the whole write — no push, nothing queued —
+			// as in WriteOpAndAutoCommit. This leg used to run under it,
+			// so an isolated close reached origin.
+			//
 			// Phase 2 ticket 3a/3b: synchronous publish on every close
 			// that commits — flush any prior --offline backlog, then
 			// push this close op.
@@ -598,6 +607,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		Committed:    committed,
 		CommitMarker: WorkCommitMarker(full),
 		Reason:       opts.Reason,
+		Warnings:     pushNoRemoteWarnings(opts.Push, publish),
 	}
 	if publish.Deferred {
 		res.PushDeferred = true

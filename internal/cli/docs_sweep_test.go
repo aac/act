@@ -3701,8 +3701,22 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-isolated-writes-do-not-push",
 		docFile:      "docs/spec.md",
-		claimPattern: "With `origin` configured, an isolated `create`, `update`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`; the next write without `--isolated` pushes the held commits along with its own.",
+		claimPattern: "With `origin` configured, an isolated `create`, `update`, `close`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`; the next write without `--isolated` pushes the held commits along with its own.",
 		testName:     "TestDocClaim_Spec_IsolatedWritesDoNotPush",
+	},
+	// act-7e8600: close, dep add, reopen and delete --push with no remote
+	// warn as create and update do; close --isolated does not push.
+	{
+		name:         "spec-universal-push-no-remote-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "In a tracker with no `origin` remote there is nothing to push to: `create`, `update`, `close`, `dep add`, `reopen` and `delete` given `--push` still write and commit the op and exit 0, and the `--json` result carries `\"warnings\":[\"push_no_remote\"]`; without `--json` the warning is a line on stderr.",
+		testName:     "TestDocClaim_Spec_PushNoRemoteWarnsOnEveryWrite",
+	},
+	{
+		name:         "spec-isolated-close-does-not-push",
+		docFile:      "docs/spec.md",
+		claimPattern: "an isolated `create`, `update`, `close`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`",
+		testName:     "TestDocClaim_Spec_CloseIsolatedDoesNotPush",
 	},
 }
 

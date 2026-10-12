@@ -98,6 +98,19 @@ func (r PublishResult) Pushed() bool {
 	return !r.NoRemote && !r.Deferred
 }
 
+// pushNoRemoteWarnings is the warnings a write command reports for what its
+// publish leg did: WarnPushNoRemote when the caller passed --push and there
+// was no origin to push to, nil otherwise. pub is the zero value when the
+// leg did not run (--no-commit, --offline, --isolated), and each of those
+// with --push is refused before any write, so the zero value never warns
+// (act-7e8600).
+func pushNoRemoteWarnings(push bool, pub PublishResult) []string {
+	if push && pub.NoRemote {
+		return []string{WarnPushNoRemote}
+	}
+	return nil
+}
+
 // deferPublish records the unpushed commit, warns, and reports the
 // deferral. Always returns Deferred=true.
 func deferPublish(gops *gitops.ActGitOps, opType string, stderr io.Writer, reason error) PublishResult {

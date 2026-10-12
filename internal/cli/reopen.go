@@ -50,6 +50,10 @@ type ReopenResult struct {
 	OpsWritten int    `json:"ops_written"`
 	Committed  bool   `json:"committed"`
 	Reason     string `json:"reason,omitempty"`
+	// Warnings names what the caller asked for and did not get although
+	// the write landed: WarnPushNoRemote for --push in a tracker with no
+	// origin remote (act-7e8600). Omitted from JSON when empty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ReopenAlreadyOpen is the JSON-serialisable envelope returned when the
@@ -260,12 +264,14 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		gops = gitops.NewActGitOps(paths.Root)
 		gops.Verify = opts.Verify
 	}
+	var published PublishResult
 	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
-		NoCommit: opts.NoCommit,
-		Push:     opts.Push,
-		Isolated: opts.Isolated,
-		Offline:  opts.Offline,
-		Branch:   opts.Branch,
+		NoCommit:  opts.NoCommit,
+		Push:      opts.Push,
+		Isolated:  opts.Isolated,
+		Offline:   opts.Offline,
+		Branch:    opts.Branch,
+		Published: &published,
 	})
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {
@@ -312,6 +318,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		OpsWritten: 1,
 		Committed:  !opts.NoCommit,
 		Reason:     opts.Reason,
+		Warnings:   pushNoRemoteWarnings(opts.Push, published),
 	}, 0
 }
 

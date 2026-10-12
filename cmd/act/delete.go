@@ -80,6 +80,7 @@ func runDelete(args []string) int {
 		fmt.Fprintf(os.Stderr, "act delete: unexpected output type %T\n", out)
 		return 1
 	}
+	warnPushNoRemote("delete", res.Warnings)
 	fmt.Print(cli.FormatDeleteHuman(res))
 	return 0
 }

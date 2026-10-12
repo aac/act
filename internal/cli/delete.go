@@ -67,6 +67,10 @@ type DeleteResult struct {
 	Committed  bool     `json:"committed"`
 	Tombstoned []string `json:"tombstoned"`
 	Reason     string   `json:"reason,omitempty"`
+	// Warnings names what the caller asked for and did not get although
+	// the write landed: WarnPushNoRemote for --push in a tracker with no
+	// origin remote (act-7e8600). Omitted from JSON when empty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // DeleteErrorOutput is the structured failure envelope. Candidates is
@@ -351,12 +355,14 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		gops.Verify = opts.Verify
 	}
 
+	var published PublishResult
 	werr := WriteOpsAndAutoCommit(envs, bodies, paths, gops, WriteOpts{
-		NoCommit: opts.NoCommit,
-		Push:     opts.Push,
-		Isolated: opts.Isolated,
-		Offline:  opts.Offline,
-		Branch:   opts.Branch,
+		NoCommit:  opts.NoCommit,
+		Push:      opts.Push,
+		Isolated:  opts.Isolated,
+		Offline:   opts.Offline,
+		Branch:    opts.Branch,
+		Published: &published,
 	}, commitMsg)
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {
@@ -404,6 +410,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		Committed:  !opts.NoCommit,
 		Tombstoned: tombstoned,
 		Reason:     opts.Reason,
+		Warnings:   pushNoRemoteWarnings(opts.Push, published),
 	}, 0
 }
 

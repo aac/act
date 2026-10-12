@@ -65,6 +65,10 @@ type DepAddResult struct {
 	// direction signal without re-deriving it. See depDirectionPhrase.
 	Summary   string `json:"summary"`
 	Committed bool   `json:"committed"`
+	// Warnings names what the caller asked for and did not get although
+	// the write landed: WarnPushNoRemote for --push in a tracker with no
+	// origin remote (act-7e8600). Omitted from JSON when empty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // depAddSummary renders the (child, parent, edge_type) triple in its
@@ -355,12 +359,14 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		// Phase 1: writes target the nested .act/ git repo (delta item 2).
 		gops = gitops.NewActGitOps(paths.Root)
 	}
+	var published PublishResult
 	werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
-		NoCommit: opts.NoCommit,
-		Push:     opts.Push,
-		Isolated: opts.Isolated,
-		Offline:  opts.Offline,
-		Branch:   opts.Branch,
+		NoCommit:  opts.NoCommit,
+		Push:      opts.Push,
+		Isolated:  opts.Isolated,
+		Offline:   opts.Offline,
+		Branch:    opts.Branch,
+		Published: &published,
 	})
 	if werr != nil {
 		if errors.Is(werr, ErrInvalidFlags) {
@@ -404,6 +410,7 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		EdgeType:  edgeType,
 		Summary:   depAddSummary(childFull, parentFull, edgeType),
 		Committed: !opts.NoCommit,
+		Warnings:  pushNoRemoteWarnings(opts.Push, published),
 	}, 0
 }
 
@@ -526,6 +533,8 @@ type DepAddExternalResult struct {
 	Issue     string   `json:"issue"`
 	External  []string `json:"external"`
 	Committed bool     `json:"committed"`
+	// Warnings: see DepAddResult.Warnings.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // FormatDepAddExternalHuman renders the external-blocker success line.
@@ -578,6 +587,7 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 	if !opts.NoCommit {
 		gops = gitops.NewActGitOps(paths.Root)
 	}
+	var published PublishResult
 	for i, ref := range refs {
 		bodyPayload, perr := canonicaljson.Marshal(op.AddExternalDepPayload{Ref: ref})
 		if perr != nil {
@@ -605,11 +615,12 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 		// Defer the push until the final op so a multi-ref batch never
 		// pushes partial state mid-batch (mirrors RunUpdate's deferred push).
 		werr := WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
-			NoCommit: opts.NoCommit,
-			Push:     opts.Push && i == len(refs)-1,
-			Isolated: opts.Isolated,
-			Offline:  opts.Offline,
-			Branch:   opts.Branch,
+			NoCommit:  opts.NoCommit,
+			Push:      opts.Push && i == len(refs)-1,
+			Isolated:  opts.Isolated,
+			Offline:   opts.Offline,
+			Branch:    opts.Branch,
+			Published: &published,
 		})
 		if werr != nil {
 			if errors.Is(werr, ErrInvalidFlags) {
@@ -624,5 +635,8 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 			return DepAddErrorOutput{Error: "write_failed", Message: werr.Error()}, 1
 		}
 	}
-	return DepAddExternalResult{OK: true, Issue: full, External: refs, Committed: !opts.NoCommit}, 0
+	return DepAddExternalResult{
+		OK: true, Issue: full, External: refs, Committed: !opts.NoCommit,
+		Warnings: pushNoRemoteWarnings(opts.Push, published),
+	}, 0
 }

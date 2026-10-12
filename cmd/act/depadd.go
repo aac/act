@@ -91,6 +91,7 @@ func runDepAdd(args []string) int {
 			fmt.Fprintf(os.Stderr, "act dep add: unexpected output type %T\n", out)
 			return 1
 		}
+		warnPushNoRemote("dep add", res.Warnings)
 		fmt.Print(cli.FormatDepAddExternalHuman(res))
 		return 0
 	}
@@ -160,6 +161,7 @@ func runDepAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "act dep add: unexpected output type %T\n", out)
 		return 1
 	}
+	warnPushNoRemote("dep add", res.Warnings)
 	fmt.Print(cli.FormatDepAddHuman(res))
 	return 0
 }
