@@ -161,8 +161,12 @@ func TestDocClaim_DoctorCase_F_UnpushedCommitsStderr(t *testing.T) {
 // TestDocClaim_DoctorCase_G_OriginUnreachableStderr asserts the case
 // (g) literal: when origin is configured to an unreachable URL, doctor
 // surfaces a finding whose message is exactly
-// `remote: origin unreachable; run 'act remote sync' from the
-// orchestrator or check connectivity`. Exit is 4. Under --no-fetch the
+// `remote: origin unreachable; check connectivity and the origin URL
+// (unpushed commits publish on the next act write without --offline or
+// --isolated)`. It does not name `act remote sync` (act-2bd35b: it used to,
+// and that command pushes to `origin-upstream` and never touches `origin` —
+// see TestDocClaim_Spec_DplDeferredPushRetriedByTheNextWrite). Exit is 4.
+// Under --no-fetch the
 // same condition yields a warning (exit 0) and the literal is NOT
 // emitted (case-(g) probe was skipped).
 func TestDocClaim_DoctorCase_G_OriginUnreachableStderr(t *testing.T) {
@@ -190,9 +194,12 @@ func TestDocClaim_DoctorCase_G_OriginUnreachableStderr(t *testing.T) {
 	for _, f := range res.Findings {
 		if f.Check == CheckRemoteReachable && f.Severity == "error" {
 			found = true
-			want := "remote: origin unreachable; run 'act remote sync' from the orchestrator or check connectivity"
+			want := "remote: origin unreachable; check connectivity and the origin URL (unpushed commits publish on the next act write without --offline or --isolated)"
 			if f.Message != want {
 				t.Errorf("case (g) message = %q, want %q", f.Message, want)
+			}
+			if strings.Contains(f.Message, "remote sync") {
+				t.Errorf("case (g) message names 'act remote sync', which does not reach origin: %q", f.Message)
 			}
 		}
 	}
