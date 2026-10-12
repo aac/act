@@ -20,9 +20,10 @@
 // CommitOp; do not move a call site earlier, and do not extend the
 // fail-soft treatment to any error raised before the commit lands.
 //
-// Publication is not lost, only deferred: the queued entry means the
-// next non-offline act write (or `act remote sync`) pushes every local
-// commit reachable from HEAD, this one included.
+// Publication is not lost, only deferred: the next act write without
+// --offline or --isolated pushes every local commit reachable from HEAD,
+// this one included. `act remote sync` is NOT a retry: it pushes to
+// origin-upstream and never to origin (act-18bd72).
 package cli
 
 import (
@@ -156,9 +157,9 @@ func emitPublishDeferredWarning(stderr io.Writer, res PublishResult) {
 	fmt.Fprintf(dst, "act: WARNING: the op was COMMITTED LOCALLY but NOT PUSHED to origin.\n")
 	fmt.Fprintf(dst, "act: WARNING:   push failed: %v\n", res.Reason)
 	if res.Queued {
-		fmt.Fprintf(dst, "act: WARNING:   queued in .act/.pending-pushes; the next act write (or 'act remote sync') retries the push.\n")
+		fmt.Fprintf(dst, "act: WARNING:   queued in .act/.pending-pushes; the next act write without --offline or --isolated retries the push.\n")
 	} else {
-		fmt.Fprintf(dst, "act: WARNING:   the queue append ALSO failed; run 'act remote sync' once origin is reachable.\n")
+		fmt.Fprintf(dst, "act: WARNING:   the queue append ALSO failed; nothing is lost — the next act write without --offline or --isolated pushes this commit along with its own.\n")
 	}
 	fmt.Fprintf(dst, "act: WARNING:   the write itself landed and is durable — exit status is 0 on purpose. Do NOT re-run this command; re-running duplicates the op.\n")
 }

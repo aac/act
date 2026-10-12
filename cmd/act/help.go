@@ -911,8 +911,10 @@ EXIT CODES
   exits 0: the commit is queued in .act/.pending-pushes, an
   'act: WARNING:' block on stderr says so, and 'act close --json' and
   'act update --json' set push_deferred: true. Do NOT re-run the command
-  — re-running duplicates the op. The next write (or 'act remote sync')
-  publishes the backlog.
+  — re-running duplicates the op.
+  The next write without --offline or --isolated
+  publishes the backlog; 'act remote sync' does not (it pushes to
+  origin-upstream, never to origin).
   'act create', 'act reopen', 'act dep add' and 'act delete' --json set
   push_deferred: true and push_deferred_reason the same way.
   Failures BEFORE the commit — op write, staging, hook, commit — still

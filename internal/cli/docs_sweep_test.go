@@ -4024,6 +4024,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "The results of the MCP tools (`act_finish`, `act_next`, `act_create`, `act_update`) are masked the same way.",
 		testName:     "TestDocClaim_Spec_RdxMCPRemoteCredentialsNeverReturned",
 	},
+	// act-18bd72: what retries a deferred push is the next ordinary write,
+	// not `act remote sync`.
+	{
+		name:         "spec-dpl-deferred-push-retried-by-the-next-write",
+		docFile:      "docs/spec.md",
+		claimPattern: "The deferred commit publishes on the next write without `--offline` or `--isolated`; a bare push on the nested repo covers every local commit reachable from HEAD, so nothing is lost by waiting. `act remote sync` does not retry it: that command pushes to `origin-upstream` and never to `origin`.",
+		testName:     "TestDocClaim_Spec_DplDeferredPushRetriedByTheNextWrite",
+	},
+	{
+		name:         "help-dpl-deferred-push-retried-by-the-next-write",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "publishes the backlog; 'act remote sync' does not (it pushes to",
+		testName:     "TestDocClaim_Spec_DplDeferredPushRetriedByTheNextWrite",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
