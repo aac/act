@@ -198,3 +198,125 @@ func TestDocClaim_FlagParseError_HelpIsNotAnError(t *testing.T) {
 		}
 	}
 }
+
+// ufgGroups returns every command that dispatches on a verb before any flag
+// set exists (act state, act dep, act remote, …): the first word of each
+// multi-word command the enumeration found. Read from the dispatcher's own
+// flag-set names, so a group added later is covered without editing this file.
+func ufgGroups(t *testing.T) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var out []string
+	for _, sub := range uflJSONCommands(t) {
+		if len(sub) > 1 && !seen[sub[0]] {
+			seen[sub[0]] = true
+			out = append(out, sub[0])
+		}
+	}
+	for _, want := range []string{"state", "dep", "remote"} {
+		if !seen[want] {
+			t.Fatalf("group %q was not enumerated (got %v)", want, out)
+		}
+	}
+	return out
+}
+
+// ufgWantEnvelope asserts one invocation answers exit 2 with exactly one
+// JSON object on stdout whose error is bad_flag and whose message is not
+// empty, and writes nothing to stderr. Unlike uflWantBadFlag it does not pin
+// the message text or require one line: a group answers a missing verb with
+// its multi-line verb list.
+func ufgWantEnvelope(t *testing.T, args ...string) {
+	t.Helper()
+	what := "act " + strings.Join(args, " ")
+	stdout, stderr, code := runActIn(t, t.TempDir(), args...)
+	if code != 2 {
+		t.Errorf("%s: exit %d, want 2", what, code)
+	}
+	if stderr != "" {
+		t.Errorf("%s: stderr is not empty under --json: %q", what, stderr)
+	}
+	env := uflEnvelope(t, what, stdout)
+	if env == nil {
+		return
+	}
+	var slug, msg string
+	_ = json.Unmarshal(env["error"], &slug)
+	_ = json.Unmarshal(env["message"], &msg)
+	if slug != "bad_flag" || msg == "" {
+		t.Errorf("%s: error=%q message=%q, want bad_flag and a message\n  stdout: %s", what, slug, msg, stdout)
+	}
+}
+
+// ufgWantPlain asserts one invocation answers exit 2 with nothing on stdout
+// and something on stderr — the behaviour without --json.
+func ufgWantPlain(t *testing.T, args ...string) {
+	t.Helper()
+	stdout, stderr, code := runActIn(t, t.TempDir(), args...)
+	if code != 2 || stdout != "" || stderr == "" {
+		t.Errorf("act %s: exit %d, stdout %q, stderr %q; want exit 2, empty stdout, a message on stderr",
+			strings.Join(args, " "), code, stdout, stderr)
+	}
+}
+
+// TestDocClaim_FlagParseError_JSONEqualsForm asserts, for every command whose
+// -h lists -json, that --json=true (and the other spellings the flag package
+// reads as true) asks for the envelope exactly as bare --json does, and that
+// --json=false asks for the plain-text behaviour (act-21e07f).
+func TestDocClaim_FlagParseError_JSONEqualsForm(t *testing.T) {
+	const want = "flag provided but not defined: -no-such-flag"
+	for _, sub := range uflJSONCommands(t) {
+		sub := sub
+		t.Run(strings.Join(sub, "_"), func(t *testing.T) {
+			with := func(extra ...string) []string { return append(append([]string{}, sub...), extra...) }
+			uflWantBadFlag(t, want, with("--json=true", "--no-such-flag")...)
+			uflWantBadFlag(t, want, with("--no-such-flag", "--json=true")...)
+			uflWantBadFlag(t, want, with("-json=1", "--no-such-flag")...)
+			ufgWantPlain(t, with("--json=false", "--no-such-flag")...)
+			ufgWantPlain(t, with("--no-such-flag", "--json=false")...)
+			// The last --json wins, as it does when the flags parse.
+			ufgWantPlain(t, with("--json", "--json=false", "--no-such-flag")...)
+			uflWantBadFlag(t, want, with("--json=false", "--json", "--no-such-flag")...)
+		})
+	}
+	// A value --json itself cannot read is a parse failure with no JSON
+	// asked for: plain text.
+	ufgWantPlain(t, "list", "--json=bogus")
+}
+
+// TestDocClaim_FlagParseError_GroupCommands asserts the same contract one
+// level up, for every command that takes a verb (act state, act dep, act
+// remote): a flag where the verb belongs answers with the bad_flag envelope
+// under --json — including when --json is that first flag — and with plain
+// text on stderr without it; and help stays help (act-21e07f).
+func TestDocClaim_FlagParseError_GroupCommands(t *testing.T) {
+	for _, g := range ufgGroups(t) {
+		g := g
+		t.Run(g, func(t *testing.T) {
+			ufgWantEnvelope(t, g, "--json", "--no-such-flag")
+			ufgWantEnvelope(t, g, "--no-such-flag", "--json")
+			ufgWantEnvelope(t, g, "-json", "--no-such-flag")
+			ufgWantEnvelope(t, g, "--json=true", "--no-such-flag")
+			ufgWantEnvelope(t, g, "--no-such-flag", "--json=true")
+			ufgWantEnvelope(t, g, "--json")
+			ufgWantEnvelope(t, g, "no-such-verb", "--json=true")
+
+			ufgWantPlain(t, g, "--no-such-flag")
+			ufgWantPlain(t, g, "--json=false", "--no-such-flag")
+			ufgWantPlain(t, g, "--no-such-flag", "--json=false")
+
+			// Help is not an error, with or without --json.
+			_, plainErr, plainCode := runActIn(t, t.TempDir(), g, "-h")
+			if plainCode != 0 || plainErr == "" {
+				t.Errorf("act %s -h: exit %d, stderr %q; want exit 0 and the usage text", g, plainCode, plainErr)
+			}
+			for _, h := range [][]string{{"--json", "-h"}, {"--json", "--help"}, {"-h", "--json"}, {"--json=true", "-h"}} {
+				stdout, stderr, code := runActIn(t, t.TempDir(), append([]string{g}, h...)...)
+				if stdout != "" || stderr != plainErr || code != plainCode {
+					t.Errorf("act %s %s: exit %d, stdout %q, stderr %q; want what plain -h prints (exit %d, %q)",
+						g, strings.Join(h, " "), code, stdout, stderr, plainCode, plainErr)
+				}
+			}
+		})
+	}
+}
