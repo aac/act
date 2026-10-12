@@ -2458,6 +2458,118 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "is BEHIND the committed op log",
 		testName:     "TestDocClaim_ShowWarnsStatusBehindOplog",
 	},
+	// act-7b9c54: fourth stale pass over docs/spec.md. Six passages
+	// described things the code does not do: a version_skew envelope with
+	// details keys nothing emits, a per-op_version apply registry the fold
+	// never consults, an index schema with the wrong tables and indices, an
+	// `act migrate --dry-run` that was never a flag, a compaction pass no
+	// command runs, and a doctor exit-code line that stopped at 2. Drift
+	// shape for each: the passage is "tidied" back toward the design it
+	// was written from and the test named here goes red.
+	{
+		name:         "spec-version-skew-row-details-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "`max_op_version`, `writer_version`, `binary_version`",
+		testName:     "TestDocClaim_Spec_VersionSkewRowMatchesCheckRepo",
+	},
+	{
+		name:         "spec-version-skew-row-message",
+		docFile:      "docs/spec.md",
+		claimPattern: "`repo writer_version <N> exceeds this binary's writer_version <M>; upgrade act`",
+		testName:     "TestDocClaim_Spec_VersionSkewRowMatchesCheckRepo",
+	},
+	{
+		name:         "spec-compaction-not-wired-in",
+		docFile:      "docs/spec.md",
+		claimPattern: "no command, write path or MCP tool calls it, so a running `act` never compacts",
+		testName:     "TestDocClaim_Compaction_NotWiredAndEngineCommitSubject",
+	},
+	{
+		name:         "spec-compaction-engine-commit-subject",
+		docFile:      "docs/spec.md",
+		claimPattern: "with subject `act-compact: <N> issues`",
+		testName:     "TestDocClaim_Compaction_NotWiredAndEngineCommitSubject",
+	},
+	{
+		name:         "spec-fold-dispatch-by-op-type-only",
+		docFile:      "docs/spec.md",
+		claimPattern: "Dispatch is on `op_type` alone",
+		testName:     "TestDocClaim_Fold_DispatchIsByOpTypeOnly",
+	},
+	{
+		name:         "spec-fold-version-registry-unused",
+		docFile:      "docs/spec.md",
+		claimPattern: "but nothing in the fold calls it",
+		testName:     "TestDocClaim_Fold_DispatchIsByOpTypeOnly",
+	},
+	{
+		// Already asserted by the third pass; the reworded dispatch
+		// paragraph restates it, so it is tracked here too.
+		name:         "spec-fold-unknown-op-version-never-dispatched",
+		docFile:      "docs/spec.md",
+		claimPattern: "never reaches dispatch at all: it fails the envelope's equality check and the fold aborts",
+		testName:     "TestDocClaim_NewerOpVersionAbortsFoldWithoutVersionSkew",
+	},
+	{
+		name:         "spec-index-schema-block",
+		docFile:      "docs/spec.md",
+		claimPattern: "CREATE VIRTUAL TABLE fts USING fts5(",
+		testName:     "TestDocClaim_Spec_IndexSchemaBlockMatchesIndex",
+	},
+	{
+		name:         "spec-index-schema-counts",
+		docFile:      "docs/spec.md",
+		claimPattern: "That block is the whole schema: seven tables, three indices",
+		testName:     "TestDocClaim_Spec_IndexSchemaBlockMatchesIndex",
+	},
+	{
+		name:         "spec-migrate-synopsis",
+		docFile:      "docs/spec.md",
+		claimPattern: "**Synopsis:** `act migrate --from <N> --to <M>`",
+		testName:     "TestDocClaim_Migrate_FlagsAndExitCodes",
+	},
+	{
+		name:         "spec-migrate-no-dry-run",
+		docFile:      "docs/spec.md",
+		claimPattern: "no `--dry-run` and no `--json`",
+		testName:     "TestDocClaim_Migrate_FlagsAndExitCodes",
+	},
+	{
+		name:         "spec-migrate-exits-5-today",
+		docFile:      "docs/spec.md",
+		claimPattern: "every well-formed `act migrate` call today exits 5 and writes nothing",
+		testName:     "TestDocClaim_Migrate_FlagsAndExitCodes",
+	},
+	{
+		name:         "spec-migrate-op-payload",
+		docFile:      "docs/spec.md",
+		claimPattern: `{"from_version": 1, "to_version": 2, "transform_id": "<migration description, or v1-to-v2>"}`,
+		testName:     "TestDocClaim_Migrate_PayloadOutputAndExitCodes",
+	},
+	{
+		name:         "spec-migrate-output-shape",
+		docFile:      "docs/spec.md",
+		claimPattern: `{"migrated_issues": <count>, "wrote_ops": <count>}`,
+		testName:     "TestDocClaim_Migrate_PayloadOutputAndExitCodes",
+	},
+	{
+		name:         "spec-doctor-exit-4-origin-unreachable",
+		docFile:      "docs/spec.md",
+		claimPattern: "4 when `origin` is configured but unreachable",
+		testName:     "TestDocClaim_Doctor_ExitCodes",
+	},
+	{
+		name:         "spec-doctor-exit-3-not-in-git",
+		docFile:      "docs/spec.md",
+		claimPattern: "3 when the working directory is not inside a git working tree (`not_in_git`)",
+		testName:     "TestDocClaim_Doctor_ExitCodes",
+	},
+	{
+		name:         "spec-doctor-no-state-exits-0",
+		docFile:      "docs/spec.md",
+		claimPattern: "it prints the no-state line and exits 0",
+		testName:     "TestDocClaim_Doctor_ExitCodes",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

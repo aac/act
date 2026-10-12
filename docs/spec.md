@@ -254,19 +254,64 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 
 Tables (rebuilt from ops; never source of truth):
 
-```
-issues(
-  id TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT, priority INT,
-  type TEXT, parent TEXT, assignee TEXT, machine TEXT,
-  created_at TEXT, closed_at TEXT, closed_reason TEXT
-)
-issue_deps(issue_id TEXT, parent_id TEXT, edge_type TEXT, PRIMARY KEY(issue_id, parent_id, edge_type))
-accept(issue TEXT, idx INT, text TEXT, done INT, PRIMARY KEY(issue, idx))
-fts USING fts5(id UNINDEXED, title, description, content='')
-index_state(key TEXT PRIMARY KEY, value TEXT)  -- 'ops_build_key'
+```sql
+CREATE TABLE issues (
+    id            TEXT PRIMARY KEY,
+    title         TEXT,
+    description   TEXT,
+    status        TEXT,
+    priority      INTEGER,
+    type          TEXT,
+    parent        TEXT,
+    assignee      TEXT,
+    created_at    TEXT,
+    claimed_at    TEXT,
+    closed_at     TEXT,
+    closed_reason TEXT,
+    machine       TEXT,
+    tombstoned    INTEGER DEFAULT 0
+);
+CREATE TABLE issue_accept (
+    issue_id  TEXT NOT NULL,
+    idx       INTEGER NOT NULL,
+    criterion TEXT,
+    PRIMARY KEY(issue_id, idx)
+);
+CREATE TABLE issue_deps (
+    issue_id  TEXT NOT NULL,
+    parent_id TEXT NOT NULL,
+    edge_type TEXT NOT NULL,
+    PRIMARY KEY(issue_id, parent_id, edge_type)
+);
+CREATE TABLE issue_external_deps (
+    issue_id TEXT NOT NULL,
+    ref      TEXT NOT NULL,
+    PRIMARY KEY(issue_id, ref)
+);
+CREATE TABLE issue_meta (
+    issue_id       TEXT PRIMARY KEY,
+    schema_version INTEGER
+);
+CREATE TABLE index_state (      -- one key today: 'ops_build_key'
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+CREATE TABLE index_issue_sig (  -- per issue: what its ops subtree looked like when its rows were written
+    issue_id TEXT PRIMARY KEY,
+    sig      TEXT NOT NULL
+);
+CREATE INDEX idx_status   ON issues(status);
+CREATE INDEX idx_priority ON issues(priority);
+CREATE INDEX idx_parent   ON issues(parent);
+CREATE VIRTUAL TABLE fts USING fts5(
+    issue_id UNINDEXED,
+    title,
+    description,
+    tokenize = 'unicode61'
+);
 ```
 
-Indices: `idx_issues_status_priority`, `idx_issues_parent`, `idx_deps_parent`, `idx_deps_child`. `index_state.ops_build_key` records what `.act/ops/` looked like when these rows were built — a signature over every op file's path, size and mtime, qualified by the writing binary's version — so a reader can tell a current index from a stale one without refolding. It lives in `index.db` rather than beside it so the key and the rows it describes commit or roll back together; a key in a separate file could outlive a failed rebuild and vouch for rows that were never written.
+That block is the whole schema: seven tables, three indices (`idx_status`, `idx_priority`, `idx_parent`, all on `issues`) and the `fts` full-text table. `index_state.ops_build_key` records what `.act/ops/` looked like when these rows were built — a signature over every op file's path, size and mtime, qualified by the writing binary's version — so a reader can tell a current index from a stale one without refolding. It lives in `index.db` rather than beside it so the key and the rows it describes commit or roll back together; a key in a separate file could outlive a failed rebuild and vouch for rows that were never written.
 
 ### Op file naming
 
@@ -1025,7 +1070,7 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 ], "summary":{"pass":7,"fail":1}}
 ```
 
-**Exit codes:** 0 on all-pass; 1 if any check fails (and `--fix` did not remediate) — an `unknown-op-version` finding exits 1 like any other error finding, not 4; 2 on bad flags.
+**Exit codes:** 0 when no finding has error severity (warnings alone exit 0 unless `--strict` promotes them); 1 if any error finding remains (and `--fix` did not remediate) — an `unknown-op-version` finding exits 1 like any other error finding, not 4; 2 on bad flags, including a `--check` name that is not a check; 3 when the working directory is not inside a git working tree (`not_in_git`), or when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`); 4 when `origin` is configured but unreachable (the `remote-reachable` error finding), which takes precedence over 1. In a git repo with no `.act/` and no tracker remote, `act doctor` is a read command like any other: it prints the no-state line and exits 0.
 
 ---
 
@@ -1147,7 +1192,7 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `act_not_initialized`      | 2    | `.act/ not found in <root>; run 'act init'`                                | `repo_root`                                   |
 | `issue_not_found`          | 3    | `no issue matching '<query>'`                                              | `query`                                       |
 | `id_ambiguous`             | 3    | `prefix '<p>' is ambiguous: <id1>, <id2>, ...`                             | `prefix`, `candidates[]`                      |
-| `version_skew`             | 4    | `op writer_version <N> exceeds binary max <M>; upgrade act`                | `op_writer_version`, `binary_max`, `op_path`  |
+| `version_skew`             | 4    | `repo writer_version <N> exceeds this binary's writer_version <M>; upgrade act` | `max_op_version`, `writer_version`, `binary_version` |
 | `claim_lost`               | 5    | `claim lost; winner=<node_id> at hlc=<hlc>`                                | `winner_node_id`, `winner_hlc`, `issue_id`    |
 | `cycle_detected`           | 6    | `dep would create cycle: <a> -> ... -> <a>`                                | `path[]`                                      |
 | `dep_not_found`            | 6    | `dep target '<id>' not found`                                              | `target`                                      |
@@ -1241,27 +1286,34 @@ There is no reader gate on `writer_version`. The fold never compares it (see "Ve
 Fold dispatch: the fold loop calls
 
 ```
-state = apply_op(state, op, op.op_version)
+state = apply_dispatch(op.op_type)(state, op)
 ```
 
-`apply_op` is a registry keyed by `(op_type, op_version)`. Each entry is a pure function. Adding a new op_version means adding a new registry entry; old entries stay forever so historical ops keep folding identically.
+Dispatch is on `op_type` alone: `fold.ApplyDispatch` maps each type the fold applies to one pure apply function, and returns nothing for a type it has no rule for (an unknown type, or the parse-only legacy `redact`), which the fold skips. There is no dispatch on `op_version`. A version-keyed registry exists in `internal/op` (`OpVersionRegistry`, read through `DispatchByVersion`, with version 1 registered), but nothing in the fold calls it. An op whose `op_version` is not the one this binary writes never reaches dispatch at all: it fails the envelope's equality check and the fold aborts, as described above.
 
-Migration ops: `act migrate` is the only command that writes a `migrate` op. Its payload:
+Migration ops: `act migrate` is the only command that writes a `migrate` op.
+
+**Synopsis:** `act migrate --from <N> --to <M>`
+
+**Flags:** `--from` (int, source `op_version`) and `--to` (int, target `op_version`). There are no others — no `--dry-run` and no `--json`. The command is not listed in `act help`.
+
+**Behavior:** looks up the migration registered for exactly `(from, to)`, then walks `.act/ops/` for ops at `op_version` `<N>`. Each one is passed through the migration's transform, and the ops the transform returns are written as new op files stamped after every existing op. One `migrate` op per affected issue (not one global) is then written to record the transition. Its envelope payload:
 
 ```
-{"op_type": "migrate",
- "from": {"op_version": 1, "schema_version": 1},
- "to":   {"op_version": 2, "schema_version": 2},
- "transform": "<named-transform-id>",
- "applies_to_issue": "<id>",
- "writer_version": "<binary-semver>"}
+{"from_version": 1, "to_version": 2, "transform_id": "<migration description, or v1-to-v2>"}
 ```
 
-One `migrate` op per affected issue (not one global). The transform is referenced by name, not embedded as code; the binary that wrote the migrate op is the authority for what that name means at that `writer_version`. Replays on newer binaries follow the registry. A binary older than the migration does not answer `version_skew`: an op carrying a newer `op_version` fails the envelope check, so the fold aborts with an error naming the op file and `op_version` (`act list` exits 1), exactly as for any other op whose `op_version` is not the one the binary writes.
+The transform is referenced by name, not embedded as code. On fold a `migrate` op changes nothing a reader sees; it only records the transition on the issue's internal state.
 
-`act migrate --dry-run` lists affected issues and the transform that would apply, JSON output, no writes.
+**Output:** always one JSON object on stdout. Success is `{"migrated_issues": <count>, "wrote_ops": <count>}`; a failure is `{"error": "<code>", "message": "..."}`.
+
+**Exit codes:** 0 on success, including nothing to migrate; 1 on a read, transform or write failure; 2 on an unknown flag, or `bad_input` — `--from` or `--to` missing or not positive, or `--from` not less than `--to`; 3 outside a git working tree (`not_in_git`); 5 `migration_not_found` when no migration is registered for `(from, to)`. No migration is registered in this version, so every well-formed `act migrate` call today exits 5 and writes nothing.
+
+A binary older than the migration does not answer `version_skew`: an op carrying a newer `op_version` fails the envelope check, so the fold aborts with an error naming the op file and `op_version` (`act list` exits 1), exactly as for any other op whose `op_version` is not the one the binary writes.
 
 ### 5. Compaction
+
+**Not wired in.** The engine described below exists as `compact.Run` in `internal/compact`, but no command, write path or MCP tool calls it, so a running `act` never compacts: no writer checks the trigger, no snapshot is written, and the fold never seeds from one. `compact` is also not in the `op_type` enum. Read this section as the design the engine was built to, not as behavior.
 
 Trigger conditions (any writer detects on its way out of a successful op):
 - Issue has > 50 ops in `.act/ops/<id>/`, OR
@@ -1286,7 +1338,7 @@ Procedure:
     "snapshot_tree_hash": "<sha>",
     "subsumed_count": N}
    ```
-6. **Commit.** One commit: snapshot file + compact op (+ deletions if step 4 ran). Message: `act-op: <id> compact`. `--no-verify` like other op commits.
+6. **Commit.** One commit: snapshot file + compact op (+ deletions if step 4 ran). The engine makes one commit per run, covering every issue it compacted, with subject `act-compact: <N> issues`.
 7. **Release lock.** `flock` released on process exit; explicit unlock on success.
 
 Concurrency: contention skips silently. Two writers will not both compact the same issue in the same second; the loser's trigger will re-fire on its next op.
