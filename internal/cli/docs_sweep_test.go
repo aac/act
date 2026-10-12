@@ -3664,6 +3664,26 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Never from `act create`, which reports it as a warning and exits 0",
 		testName:     "TestDocClaim_CreateIndexUnopenable_BlocksEdgeStillLands",
 	},
+	// act-f4fd34: update --push with no remote lands and warns; isolated
+	// writes do not push.
+	{
+		name:         "spec-update-json-push-no-remote-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "A `warnings` key (an array of strings) appears only when there is a warning: `[\"push_no_remote\"]` when `--push` was given and the tracker has no `origin` remote — the update is written and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
+		testName:     "TestDocClaim_Spec_UpdatePushNoRemoteWarns",
+	},
+	{
+		name:         "spec-update-claim-push-no-remote-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "A won claim carries `warnings` on the same terms: `--claim --push` in a tracker with no `origin` remote exits 0 with the issue claimed and `\"warnings\":[\"push_no_remote\"]`, and without `--json` the warning is a line on stderr.",
+		testName:     "TestDocClaim_Spec_UpdateClaimPushNoRemoteWarns",
+	},
+	{
+		name:         "spec-isolated-writes-do-not-push",
+		docFile:      "docs/spec.md",
+		claimPattern: "With `origin` configured, an isolated `create`, `update`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`; the next write without `--isolated` pushes the held commits along with its own.",
+		testName:     "TestDocClaim_Spec_IsolatedWritesDoNotPush",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

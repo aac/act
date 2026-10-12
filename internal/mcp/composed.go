@@ -612,5 +612,11 @@ func (s *Server) callFileBlocker(raw json.RawMessage) (any, bool) {
 	if res.Prefix != "" && res.Prefix != res.ID {
 		body["short_id"] = res.Prefix
 	}
+	// act-f4fd34: create's warnings (parent_closed, push_no_remote) reach
+	// the client; this hand-built body used to drop them. Absent when
+	// there is none, as on act_create.
+	if len(res.Warnings) > 0 {
+		body["warnings"] = res.Warnings
+	}
 	return body, false
 }

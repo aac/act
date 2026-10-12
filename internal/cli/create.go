@@ -557,10 +557,10 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		gops = gitops.NewActGitOps(paths.Root)
 	}
 	// published is what the publish leg did. The leg runs only after a
-	// commit that is not --offline; otherwise published stays zero and is
-	// not read (act-8c1c05).
+	// commit that is neither --offline nor --isolated; otherwise published
+	// stays zero and is not read (act-8c1c05, act-f4fd34).
 	var published PublishResult
-	publishRan := !opts.NoCommit && !opts.Offline
+	publishRan := !opts.NoCommit && !opts.Offline && !opts.Isolated
 	var werr error
 	if len(depEnvs) == 0 {
 		werr = WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{

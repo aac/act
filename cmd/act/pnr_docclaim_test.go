@@ -162,6 +162,25 @@ func TestDocClaim_Spec_IsolatedWritesDoNotPush(t *testing.T) {
 		t.Errorf("after update --priority 1 --isolated, show reports priority %s, want 1", p)
 	}
 
+	// dep add, reopen and delete go through the same write helper.
+	pass5Run(t, dir, 0, "", "dep", "add", made.ID, seed.ID, "--isolated")
+	if wfxOriginHasHead(t, dir, bare) {
+		t.Errorf("act dep add --isolated with origin: the op commit is on origin; isolated forbids the push")
+	}
+	pass5Run(t, dir, 0, "", "close", made.ID, "--force", "--no-code") // publishes
+	pass5Run(t, dir, 0, "", "reopen", made.ID, "--isolated")
+	if wfxOriginHasHead(t, dir, bare) {
+		t.Errorf("act reopen --isolated with origin: the op commit is on origin; isolated forbids the push")
+	}
+	wfxCreate(t, dir, "pnr publish before delete") // origin catches up
+	pass5Run(t, dir, 0, "", "delete", made.ID, "--isolated")
+	if wfxOriginHasHead(t, dir, bare) {
+		t.Errorf("act delete --isolated with origin: the op commit is on origin; isolated forbids the push")
+	}
+	if q := pnrPendingPushes(t, dir); q != "" {
+		t.Errorf("isolated dep add / reopen / delete queued a deferred push; want none:\n%s", q)
+	}
+
 	// The next ordinary write publishes everything isolated held back.
 	wfxCreate(t, dir, "pnr after isolated")
 	if !wfxOriginHasHead(t, dir, bare) {

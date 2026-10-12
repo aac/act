@@ -168,6 +168,10 @@ type UpdateResult struct {
 	// the issue is blocked by its existing dep edge, so nothing was written
 	// (act-6ef7b0). Omitted from JSON otherwise.
 	AlreadyBlocked bool `json:"already_blocked,omitempty"`
+	// Warnings names what the caller asked for and did not get although
+	// the update landed. Today only WarnPushNoRemote: --push in a tracker
+	// with no origin remote (act-f4fd34). Omitted from JSON when empty.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // UpdateClaimResult is the JSON shape returned by `act update --claim`.
@@ -185,6 +189,8 @@ type UpdateClaimResult struct {
 	Error      string   `json:"error,omitempty"`
 	Reason     string   `json:"reason,omitempty"`
 	OpsWritten []string `json:"ops_written,omitempty"`
+	// Warnings: see UpdateResult.Warnings. Set only on a win.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // UpdateErrorOutput is the structured failure envelope. Candidates is non-nil
@@ -995,6 +1001,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 	}
 
+	var warnings []string
 	// Step 10: optional push (after all ops committed). When --branch is
 	// supplied (act-5d6a) the explicit push targets that branch on origin
 	// so a stale tracking config can't route the op commit to main.
@@ -1012,6 +1019,14 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 		perr := gops.PushToBranch(opts.Branch)
 		releaseWriteLock()
+		// act-f4fd34: no origin is not a push failure. Every op above is
+		// committed, so the update landed; answering exit 1 push_failed
+		// told the caller it had not. As on create (act-8c1c05), the push
+		// that could not happen is named in warnings and the exit is 0.
+		if errors.Is(perr, gitops.ErrNoRemote) {
+			warnings = append(warnings, WarnPushNoRemote)
+			perr = nil
+		}
 		if perr != nil {
 			return UpdateErrorOutput{
 				Error:   "push_failed",
@@ -1034,6 +1049,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		ID:         full,
 		OpsWritten: len(envelopes),
 		Committed:  !opts.NoCommit,
+		Warnings:   warnings,
 	}, 0
 }
 
@@ -1167,12 +1183,19 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 				Message: rerr.Error(),
 			}, 1
 		}
+		// act-f4fd34: --push with no origin — the claim stands, exit 0,
+		// and the push that did not happen is named.
+		var warnings []string
+		if res.PushNoRemote {
+			warnings = append(warnings, WarnPushNoRemote)
+		}
 		return UpdateClaimResult{
 			OK:         true,
 			Claimed:    true,
 			ID:         res.IssueID,
 			Winner:     res.Winner,
 			OpsWritten: []string{"claim"},
+			Warnings:   warnings,
 		}, 0
 	}
 	// Claim loss: exit 5 with envelope error `claim_lost` per spec

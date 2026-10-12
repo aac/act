@@ -168,9 +168,10 @@ type WriteOpts struct {
 	// os.Stderr. Tests inject a buffer to assert the warning fired.
 	Stderr io.Writer
 	// Published, when non-nil, receives what the publish leg did. It is
-	// written only when that leg ran — a commit landed and Offline was
-	// not set; under NoCommit or Offline it is left untouched and nothing
-	// was pushed (act-8c1c05).
+	// written only when that leg ran — a commit landed and neither
+	// Offline nor Isolated was set; under NoCommit, Offline or Isolated
+	// it is left untouched and nothing was pushed (act-8c1c05,
+	// act-f4fd34).
 	Published *PublishResult
 }
 
@@ -331,6 +332,17 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		return nil
 	}
 
+	// --isolated is the strict local-only mode (spec §4: no fetch, no
+	// push, no pending-push tracking). The commit above is the whole
+	// write: nothing is published and nothing is queued, and
+	// opts.Published is left untouched, as under Offline. This leg used
+	// to run regardless, so an isolated write reached origin
+	// (act-f4fd34). The next non-isolated write's push carries this
+	// commit.
+	if opts.Isolated {
+		return nil
+	}
+
 	// Phase 2 ticket 3a: synchronous publish (flush any prior --offline
 	// backlog, then push this commit). act-89a595: the commit above has
 	// already landed, so a publish failure is DEGRADED, not returned —
@@ -475,6 +487,12 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 		if err := RecordPendingPush(gops, gops.RepoRoot, envs[0].OpType); err != nil {
 			return fmt.Errorf("cli: record pending-push: %w", err)
 		}
+		return nil
+	}
+
+	// --isolated: no publish, no queue — see WriteOpAndAutoCommit
+	// (act-f4fd34).
+	if opts.Isolated {
 		return nil
 	}
 

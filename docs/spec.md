@@ -621,7 +621,7 @@ These flags are accepted by the commands that write an op — `create`, `update`
 
 - `--no-commit` — write the op file and stage it; do not run `git commit`. Useful for batching agents.
 - `--push` — after the op-commit, run `git push` to the configured remote. Implies a successful local commit.
-- `--isolated` — local-only mode. Skips remote fetch (relevant for `--claim`'s pull-rebase step) and refuses `--push`. Mutually exclusive with `--push`.
+- `--isolated` — local-only mode. Skips remote fetch (relevant for `--claim`'s pull-rebase step) and refuses `--push`. Mutually exclusive with `--push`. With `origin` configured, an isolated `create`, `update`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`; the next write without `--isolated` pushes the held commits along with its own.
 - `--verify` — run host git hooks during the op-commit. Default is `--no-verify` (op commits touch only `.act/ops/**`). `create`, `close` and `dep add` do not define this flag: passing it to them is exit 2.
 - `--offline` — commit locally and skip the push; see "Offline mode" below.
 - `--branch NAME` — commit the op on branch `NAME` of the nested `.act/` repo instead of the branch it is on. The branch is created if it does not exist and is left checked out.
@@ -883,13 +883,13 @@ Each non-`--claim` field flag generates one op (so `--priority 0 --assignee "me"
 ```json
 {"id":"act-ecf98c","ops_written":2,"committed":true}
 ```
-Those three keys are always present, and there is no `ok` key. `ops_written` is the number of ops the update wrote, and `committed` is false under `--no-commit` and when no op was written. A fourth key, `already_blocked: true`, appears only on the `--status blocked` result described above.
+Those three keys are always present, and there is no `ok` key. `ops_written` is the number of ops the update wrote, and `committed` is false under `--no-commit` and when no op was written. A fourth key, `already_blocked: true`, appears only on the `--status blocked` result described above. A `warnings` key (an array of strings) appears only when there is a warning: `["push_no_remote"]` when `--push` was given and the tracker has no `origin` remote — the update is written and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.
 
 **JSON output (claim win):**
 ```json
 {"ok":true,"claimed":true,"id":"act-ecf98c","winner":"7bbfbf96","ops_written":["claim"]}
 ```
-Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--machine`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another. `winner` is the `node_id` of the checkout that holds the claim.
+Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--machine`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another. `winner` is the `node_id` of the checkout that holds the claim. A won claim carries `warnings` on the same terms: `--claim --push` in a tracker with no `origin` remote exits 0 with the issue claimed and `"warnings":["push_no_remote"]`, and without `--json` the warning is a line on stderr.
 
 **JSON output (claim loss):**
 ```json

@@ -239,10 +239,21 @@ func runUpdate(args []string) int {
 		return 0
 	}
 
+	// warnPushNoRemote is the human form of the push_no_remote warning
+	// (act-f4fd34), worded as `act create` words it.
+	warnPushNoRemote := func(warnings []string) {
+		for _, w := range warnings {
+			if w == cli.WarnPushNoRemote {
+				fmt.Fprintln(os.Stderr, "act update: warning: --push: no origin remote, nothing was pushed")
+			}
+		}
+	}
 	switch v := out.(type) {
 	case cli.UpdateResult:
+		warnPushNoRemote(v.Warnings)
 		fmt.Print(cli.FormatUpdateHuman(v))
 	case cli.UpdateClaimResult:
+		warnPushNoRemote(v.Warnings)
 		fmt.Print(cli.FormatUpdateClaimHuman(v))
 	default:
 		fmt.Fprintf(os.Stderr, "act update: unexpected output type %T\n", out)

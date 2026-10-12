@@ -41,6 +41,10 @@ type Result struct {
 	IssueID string
 	// HLC is the HLC stamped on our most recent claim op.
 	HLC hlc.HLC
+	// PushNoRemote is true when Options.Push was set, the claim was won,
+	// and there was no remote to push to: the claim stands and nothing
+	// was pushed (act-f4fd34).
+	PushNoRemote bool
 }
 
 // Options configures a RunClaim invocation.
@@ -385,10 +389,16 @@ func singleAttempt(
 		Claimed:    winnerHash == ourHash,
 	}
 
-	// Step 7: push only on win.
+	// Step 7: push only on win. act-f4fd34: no remote to push to is not a
+	// failure of the claim — the claim op is committed and won. It is
+	// reported on the result so the caller can name the push that did not
+	// happen instead of answering non-zero for a write that landed.
 	if res.Claimed && opts.Push {
 		if err := gitOps.Push(); err != nil {
-			return res, fmt.Errorf("claim: push: %w", err)
+			if !errors.Is(err, ErrNoUpstream) {
+				return res, fmt.Errorf("claim: push: %w", err)
+			}
+			res.PushNoRemote = true
 		}
 	}
 	return res, nil
