@@ -74,6 +74,7 @@ func runReopen(args []string) int {
 	switch v := out.(type) {
 	case cli.ReopenResult:
 		warnPushNoRemote("reopen", v.Warnings)
+		ixwWarnIndexUpdateFailed("reopen", v.Warnings)
 		fmt.Print(cli.FormatReopenHuman(v))
 	case cli.ReopenAlreadyOpen:
 		fmt.Print(cli.FormatReopenAlreadyOpenHuman(v))

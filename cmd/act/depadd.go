@@ -162,6 +162,7 @@ func runDepAdd(args []string) int {
 		return 1
 	}
 	warnPushNoRemote("dep add", res.Warnings)
+	ixwWarnIndexUpdateFailed("dep add", res.Warnings)
 	fmt.Print(cli.FormatDepAddHuman(res))
 	return 0
 }

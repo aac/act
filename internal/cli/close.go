@@ -113,6 +113,9 @@ type CloseResult struct {
 	// Warnings names what the caller asked for and did not get although
 	// the write landed: WarnPushNoRemote for --push in a tracker with no
 	// origin remote (act-7e8600). Omitted from JSON when empty.
+	// Warnings names what did not happen although the close landed.
+	// WarnIndexUpdateFailed (act-c3aa0b): the op is committed and the
+	// index refresh after it failed. Omitted from JSON when empty.
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -574,14 +577,15 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 
 	// Refresh the live SQLite index so it reflects the post-close state
 	// without requiring a doctor --fix rebuild. The op log on disk is the
-	// source of truth; a refresh failure here is non-fatal but is surfaced
-	// as a write failure since the contract is that index-divergence is
-	// zero after a successful close.
+	// source of truth.
+	//
+	// act-c3aa0b: a refresh failure here is a warning, not an error, as on
+	// create (act-e3782c). The close op is already written and committed,
+	// so exit 1 told the caller a landed close had failed. The next read
+	// rebuilds the index from the op log, or fails in its own name.
+	var indexWarnings []string
 	if err := RefreshIndexForIssue(paths, full); err != nil {
-		return CloseErrorOutput{
-			Error:   "index_update_failed",
-			Message: err.Error(),
-		}, 1
+		indexWarnings = append(indexWarnings, WarnIndexUpdateFailed)
 	}
 
 	// Step 7 (act-f2ea): single-issue commit-marker correlation check.
@@ -607,7 +611,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		Committed:    committed,
 		CommitMarker: WorkCommitMarker(full),
 		Reason:       opts.Reason,
-		Warnings:     pushNoRemoteWarnings(opts.Push, publish),
+		Warnings:     append(indexWarnings, pushNoRemoteWarnings(opts.Push, publish)...),
 	}
 	if publish.Deferred {
 		res.PushDeferred = true

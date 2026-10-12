@@ -91,6 +91,7 @@ func runClose(args []string) int {
 	switch v := out.(type) {
 	case cli.CloseResult:
 		warnPushNoRemote("close", v.Warnings)
+		ixwWarnIndexUpdateFailed("close", v.Warnings)
 		fmt.Print(cli.FormatCloseHuman(v))
 	case cli.CloseAlreadyClosed:
 		fmt.Print(cli.FormatCloseAlreadyClosedHuman(v))

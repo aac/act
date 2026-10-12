@@ -705,6 +705,12 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 
 A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has those three keys and no others; the codes, and the failures of `act migrate` and `act version --check-repo` that leave `details` out, are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
 
+### Index update after a committed write
+
+`act close`, `act update` (with or without `--claim`), `act dep add`, `act reopen` and `act delete` report an index update that fails after their op is committed the way `act create` does: the exit code is 0, the result is the command's usual one, and it carries `"warnings":["index_update_failed"]`. The write landed: do not retry it. A cascading delete that could not refresh several rows names the warning once. Without `--json` the warning is a line on stderr, beside the command's usual line on stdout.
+
+The index is a cache of the op log, so the next read rebuilds it. While `.act/index.db` still cannot be written, that read fails in its own name (`index_rebuild_failed`) rather than answering from the stale cache. An index that cannot be opened before the op is written still stops `act close`, `act update --claim`, `act dep add` and `act reopen` with `index_open_failed`, exit 1 and nothing written. `index_update_failed` is only ever a warning: no command exits non-zero with it, so it has no row in the error table.
+
 ### Pre-import id resolution
 
 Every command accepting an `<id>` argument resolves the input through this pipeline, in order, and uses the first hit:
@@ -1327,7 +1333,6 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `index_open_failed`        | 1, 3 | the underlying error's text, e.g. `index: ping <path>: <error>` | none |
 | `index_query_failed`       | 1    | the underlying error's text | none |
 | `index_rebuild_failed`     | 1, 3 | the underlying error's text, e.g. `index: fold for rebuild: <error>` | none |
-| `index_update_failed`      | 1    | the underlying error's text, e.g. `cli: refresh index: <error>`. Never from `act create`, which reports it as a warning and exits 0 | none |
 | `init_dirs_failed`         | 1    | the underlying error's text | none |
 | `init_hooks_failed`        | 1    | the underlying error's text | none |
 | `init_ops_failed`          | 1    | the underlying error's text | none |

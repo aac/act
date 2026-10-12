@@ -36,6 +36,9 @@ func ixwFreezeIndex(t *testing.T, dir string) (thaw func()) {
 	}
 	return func() {
 		t.Helper()
+		// Glob again: SQLite creates index.db-wal and index.db-shm with
+		// the main file's mode, so a refused write leaves them read-only.
+		files, _ := filepath.Glob(filepath.Join(dir, ".act", "index.db*"))
 		for _, f := range files {
 			if err := os.Chmod(f, 0o644); err != nil {
 				t.Fatalf("thaw: chmod %s: %v", f, err)
@@ -148,12 +151,20 @@ func TestDocClaim_IxwUpdate_IndexUpdateFailedIsAWarning(t *testing.T) {
 		t.Errorf("priority after thaw = %v, want 1", got)
 	}
 
-	// The refresh also fails when the fold rejects one of the issue's ops.
-	// The update op is committed all the same.
+	// The refresh also fails, with the index writable, when the fold
+	// rejects one of the issue's ops. The update op is committed all the
+	// same, so this is the same warning.
 	dir2 := sp6Site(t)
 	id2 := createIssue(t, dir2, "ixw update unfoldable")
 	sp8BadOpVersion(t, dir2, id2)
-	ixwRunFrozen(t, dir2, "update", "--json", "--priority", "1", id2)
+	before := ixwOpCommits(t, dir2)
+	out2, stderr2, code2 := runActIn(t, dir2, "update", "--json", "--priority", "1", id2)
+	if ixwOpCommits(t, dir2) != before+1 {
+		t.Fatalf("premise: update of an issue with an unfoldable op wrote no op commit\nexit=%d stdout=%s stderr=%s", code2, out2, stderr2)
+	}
+	if code2 != 0 || !strings.Contains(out2, `"warnings":["index_update_failed"]`) || !strings.Contains(out2, `"ops_written":1`) {
+		t.Errorf("update of an issue with an unfoldable op: exit %d, want 0 with ops_written:1 and warnings [index_update_failed]\nstdout=%s\nstderr=%s", code2, out2, stderr2)
+	}
 }
 
 // TestDocClaim_IxwUpdateClaim_IndexUpdateFailedIsAWarning: a won claim.
@@ -257,7 +268,7 @@ func TestDocClaim_IxwHumanWarnsOnStderrAndReadsStillFail(t *testing.T) {
 		{"delete", "Deleted act-", func(t *testing.T, dir string) []string {
 			return []string{"delete", "--reason", "ixw", createIssue(t, dir, "ixw h delete")}
 		}},
-		{"dep add", "act-", func(t *testing.T, dir string) []string {
+		{"dep add", "Added: act-", func(t *testing.T, dir string) []string {
 			return []string{"dep", "add", createIssue(t, dir, "ixw h child"), createIssue(t, dir, "ixw h parent")}
 		}},
 	} {
@@ -286,5 +297,71 @@ func TestDocClaim_IxwHumanWarnsOnStderrAndReadsStillFail(t *testing.T) {
 			// answering from the stale cache.
 			pass5Run(t, dir, 1, "index_rebuild_failed", "list", "--json")
 		})
+	}
+}
+
+// TestDocClaim_IxwUnopenableIndexStopsBeforeTheWrite pins the other half:
+// the commands that read the index before they write are stopped by one
+// that cannot be opened, with no op written — a failure the caller can
+// retry, and so still an error.
+func TestDocClaim_IxwUnopenableIndexStopsBeforeTheWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args func(t *testing.T, dir string) []string
+	}{
+		{"close", func(t *testing.T, dir string) []string {
+			return []string{"close", "--json", "--no-code", createIssue(t, dir, "ixw u close")}
+		}},
+		{"update --claim", func(t *testing.T, dir string) []string {
+			return []string{"update", "--json", "--claim", createIssue(t, dir, "ixw u claim")}
+		}},
+		{"dep add", func(t *testing.T, dir string) []string {
+			return []string{"dep", "add", "--json", createIssue(t, dir, "ixw u child"), createIssue(t, dir, "ixw u parent")}
+		}},
+		{"reopen", func(t *testing.T, dir string) []string {
+			id := createIssue(t, dir, "ixw u reopen")
+			pass5Run(t, dir, 0, "", "close", "--json", "--no-code", id)
+			return []string{"reopen", "--json", id}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := sp6Site(t)
+			args := tc.args(t, dir)
+			idxBreakIndex(t, dir)
+			before := ixwOpCommits(t, dir)
+			pass5Run(t, dir, 1, "index_open_failed", args...)
+			if after := ixwOpCommits(t, dir); after != before {
+				t.Errorf("act %s stopped by an unopenable index still committed an op (%d commits before, %d after)", tc.name, before, after)
+			}
+			st, err := exec.Command("git", "-C", filepath.Join(dir, ".act"), "status", "--porcelain", "--", "ops").CombinedOutput()
+			if err != nil || strings.TrimSpace(string(st)) != "" {
+				t.Errorf("act %s stopped by an unopenable index left an op file behind (err=%v): %s", tc.name, err, st)
+			}
+		})
+	}
+}
+
+// TestDocClaim_IxwIndexUpdateFailedIsNeverAnErrorCode: with every emit site
+// now a warning, the code has no row in the spec's error table and no line
+// in `act help errors`.
+func TestDocClaim_IxwIndexUpdateFailedIsNeverAnErrorCode(t *testing.T) {
+	rows, _ := sp8ErrorTables(t)
+	if len(rows) == 0 {
+		t.Fatal("premise: the spec's error table has no rows")
+	}
+	for _, row := range rows {
+		if row.code == "index_update_failed" {
+			t.Errorf("the spec's error table has an index_update_failed row; no command exits non-zero with it")
+		}
+	}
+	out, stderr, code := runActIn(t, t.TempDir(), "help", "errors")
+	if code != 0 || !strings.Contains(out, "index_rebuild_failed") {
+		t.Fatalf("premise: act help errors: exit %d, want the error list naming index_rebuild_failed\nstdout=%s\nstderr=%s", code, out, stderr)
+	}
+	if strings.Contains(out, "index_update_failed") {
+		t.Errorf("act help errors lists index_update_failed; no command exits non-zero with it")
+	}
+	if sites := sp8EmittedCodes(t).sites["index_update_failed"]; len(sites) != 0 {
+		t.Errorf("source still emits index_update_failed as an error at %v", sites)
 	}
 }

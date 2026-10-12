@@ -70,6 +70,9 @@ type DeleteResult struct {
 	// Warnings names what the caller asked for and did not get although
 	// the write landed: WarnPushNoRemote for --push in a tracker with no
 	// origin remote (act-7e8600). Omitted from JSON when empty.
+	// Warnings: WarnIndexUpdateFailed when the tombstones are committed
+	// and an index refresh after them failed (act-c3aa0b). Omitted when
+	// empty.
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -391,12 +394,14 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	// downstream readers (list/show/doctor) see the post-delete state
 	// without requiring a full rebuild. RefreshIndexForIssue removes the
 	// row for any tombstoned issue (per index.upsertTx).
+	//
+	// act-c3aa0b: the batch is already written and committed, so a refresh
+	// failure is one warning on a successful delete, not exit 1 (see
+	// RunCreate, act-e3782c). Every id is still attempted.
+	var indexWarnings []string
 	for _, id := range ordered {
-		if err := RefreshIndexForIssue(paths, id); err != nil {
-			return DeleteErrorOutput{
-				Error:   "index_update_failed",
-				Message: err.Error(),
-			}, 1
+		if err := RefreshIndexForIssue(paths, id); err != nil && len(indexWarnings) == 0 {
+			indexWarnings = append(indexWarnings, WarnIndexUpdateFailed)
 		}
 	}
 
@@ -410,7 +415,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		Committed:  !opts.NoCommit,
 		Tombstoned: tombstoned,
 		Reason:     opts.Reason,
-		Warnings:   pushNoRemoteWarnings(opts.Push, published),
+		Warnings:   append(indexWarnings, pushNoRemoteWarnings(opts.Push, published)...),
 	}, 0
 }
 

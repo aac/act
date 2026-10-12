@@ -251,9 +251,11 @@ func runUpdate(args []string) int {
 	switch v := out.(type) {
 	case cli.UpdateResult:
 		warnPushNoRemote(v.Warnings)
+		ixwWarnIndexUpdateFailed("update", v.Warnings)
 		fmt.Print(cli.FormatUpdateHuman(v))
 	case cli.UpdateClaimResult:
 		warnPushNoRemote(v.Warnings)
+		ixwWarnIndexUpdateFailed("update", v.Warnings)
 		fmt.Print(cli.FormatUpdateClaimHuman(v))
 	default:
 		fmt.Fprintf(os.Stderr, "act update: unexpected output type %T\n", out)

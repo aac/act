@@ -769,7 +769,6 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     index_open_failed       SQLite open failed
     index_query_failed      SQLite query failed
     index_rebuild_failed    cache rebuild failed
-    index_update_failed     cache write failed
     envelope_invalid        op file's envelope schema invalid
     payload_invalid         op file's payload failed Validate()
     marshal_failed          json.Marshal returned an error

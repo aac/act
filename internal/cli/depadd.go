@@ -68,6 +68,8 @@ type DepAddResult struct {
 	// Warnings names what the caller asked for and did not get although
 	// the write landed: WarnPushNoRemote for --push in a tracker with no
 	// origin remote (act-7e8600). Omitted from JSON when empty.
+	// Warnings: WarnIndexUpdateFailed when the add_dep op is committed and
+	// the index refresh after it failed (act-c3aa0b). Omitted when empty.
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -395,11 +397,13 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 	// index-divergence check passes immediately after a successful
 	// dep add. The earlier idx handle is already closed by the deferred
 	// close above; RefreshIndexForIssue opens a fresh handle.
+	//
+	// act-c3aa0b: the add_dep op is already written and committed, so a
+	// refresh failure is a warning on a successful dep add, not exit 1
+	// (see RunCreate, act-e3782c).
+	var indexWarnings []string
 	if err := RefreshIndexForIssue(paths, childFull); err != nil {
-		return DepAddErrorOutput{
-			Error:   "index_update_failed",
-			Message: err.Error(),
-		}, 1
+		indexWarnings = append(indexWarnings, WarnIndexUpdateFailed)
 	}
 
 	// Step 7: success envelope. committed mirrors !NoCommit.
@@ -410,7 +414,7 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		EdgeType:  edgeType,
 		Summary:   depAddSummary(childFull, parentFull, edgeType),
 		Committed: !opts.NoCommit,
-		Warnings:  pushNoRemoteWarnings(opts.Push, published),
+		Warnings:  append(indexWarnings, pushNoRemoteWarnings(opts.Push, published)...),
 	}, 0
 }
 

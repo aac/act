@@ -3678,12 +3678,6 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "0, including a create whose push was deferred and a create whose index update failed after the commit;",
 		testName:     "TestDocClaim_CreateIndexUnopenable_ReportsTheCreatedIssue",
 	},
-	{
-		name:         "spec-error-table-index-update-failed-never-from-create",
-		docFile:      "docs/spec.md",
-		claimPattern: "Never from `act create`, which reports it as a warning and exits 0",
-		testName:     "TestDocClaim_CreateIndexUnopenable_BlocksEdgeStillLands",
-	},
 	// act-f4fd34: update --push with no remote lands and warns; isolated
 	// writes do not push.
 	{
@@ -3731,6 +3725,78 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `\"claimed\": true`, `\"push_deferred\": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`.",
 		testName:     "TestDocClaim_Spec_UpdateClaimPushUnreachableOriginDefers",
+	},
+	// act-c3aa0b: an index failure after the commit is a warning on every
+	// other write command too. The create tuple that pinned the error-table
+	// row ("Never from `act create`…") went with the row: no command emits
+	// index_update_failed as an error any more.
+	{
+		name:         "spec-index-update-failed-is-a-warning-on-close",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act close`, `act update` (with or without `--claim`), `act dep add`, `act reopen` and `act delete` report an index update that fails after their op is committed the way `act create` does: the exit code is 0, the result is the command's usual one, and it carries `\"warnings\":[\"index_update_failed\"]`.",
+		testName:     "TestDocClaim_IxwClose_IndexUpdateFailedIsAWarning",
+	},
+	{
+		// create's own tail, --blocks refresh included: the behaviour the
+		// sentence holds the other commands to.
+		name:         "spec-index-update-failed-the-way-create-does",
+		docFile:      "docs/spec.md",
+		claimPattern: "report an index update that fails after their op is committed the way `act create` does",
+		testName:     "TestDocClaim_CreateIndexUnopenable_BlocksEdgeStillLands",
+	},
+	{
+		name:         "spec-index-update-failed-is-a-warning-on-update",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act close`, `act update` (with or without `--claim`)",
+		testName:     "TestDocClaim_IxwUpdate_IndexUpdateFailedIsAWarning",
+	},
+	{
+		name:         "spec-index-update-failed-is-a-warning-on-update-claim",
+		docFile:      "docs/spec.md",
+		claimPattern: "(with or without `--claim`), `act dep add`, `act reopen` and `act delete` report an index update",
+		testName:     "TestDocClaim_IxwUpdateClaim_IndexUpdateFailedIsAWarning",
+	},
+	{
+		name:         "spec-index-update-failed-is-a-warning-on-dep-add",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act dep add`, `act reopen` and `act delete` report an index update that fails after their op is committed",
+		testName:     "TestDocClaim_IxwDepAdd_IndexUpdateFailedIsAWarning",
+	},
+	{
+		name:         "spec-index-update-failed-is-a-warning-on-reopen",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act reopen` and `act delete` report an index update that fails after their op is committed the way `act create` does",
+		testName:     "TestDocClaim_IxwReopen_IndexUpdateFailedIsAWarning",
+	},
+	{
+		name:         "spec-index-update-failed-warns-once-on-cascading-delete",
+		docFile:      "docs/spec.md",
+		claimPattern: "The write landed: do not retry it. A cascading delete that could not refresh several rows names the warning once.",
+		testName:     "TestDocClaim_IxwDelete_IndexUpdateFailedIsAWarning",
+	},
+	{
+		name:         "spec-index-update-failed-human-line",
+		docFile:      "docs/spec.md",
+		claimPattern: "Without `--json` the warning is a line on stderr, beside the command's usual line on stdout.",
+		testName:     "TestDocClaim_IxwHumanWarnsOnStderrAndReadsStillFail",
+	},
+	{
+		name:         "spec-index-update-failed-next-read-fails-in-its-own-name",
+		docFile:      "docs/spec.md",
+		claimPattern: "While `.act/index.db` still cannot be written, that read fails in its own name (`index_rebuild_failed`) rather than answering from the stale cache.",
+		testName:     "TestDocClaim_IxwHumanWarnsOnStderrAndReadsStillFail",
+	},
+	{
+		name:         "spec-index-unopenable-before-the-write-still-fails",
+		docFile:      "docs/spec.md",
+		claimPattern: "An index that cannot be opened before the op is written still stops `act close`, `act update --claim`, `act dep add` and `act reopen` with `index_open_failed`, exit 1 and nothing written.",
+		testName:     "TestDocClaim_IxwUnopenableIndexStopsBeforeTheWrite",
+	},
+	{
+		name:         "spec-index-update-failed-has-no-error-row",
+		docFile:      "docs/spec.md",
+		claimPattern: "`index_update_failed` is only ever a warning: no command exits non-zero with it, so it has no row in the error table.",
+		testName:     "TestDocClaim_IxwIndexUpdateFailedIsNeverAnErrorCode",
 	},
 }
 

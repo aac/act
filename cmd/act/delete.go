@@ -81,6 +81,7 @@ func runDelete(args []string) int {
 		return 1
 	}
 	warnPushNoRemote("delete", res.Warnings)
+	ixwWarnIndexUpdateFailed("delete", res.Warnings)
 	fmt.Print(cli.FormatDeleteHuman(res))
 	return 0
 }

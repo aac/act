@@ -169,8 +169,10 @@ type UpdateResult struct {
 	// (act-6ef7b0). Omitted from JSON otherwise.
 	AlreadyBlocked bool `json:"already_blocked,omitempty"`
 	// Warnings names what the caller asked for and did not get although
-	// the update landed. Today only WarnPushNoRemote: --push in a tracker
-	// with no origin remote (act-f4fd34). Omitted from JSON when empty.
+	// the update landed: WarnPushNoRemote, --push in a tracker with no
+	// origin remote (act-f4fd34), and WarnIndexUpdateFailed, the index
+	// refresh after the commit failed (act-c3aa0b). Omitted from JSON
+	// when empty.
 	Warnings []string `json:"warnings,omitempty"`
 	// PushDeferred is true when the update is committed and the push did
 	// not reach origin; PushDeferredReason carries the push failure. The
@@ -1063,11 +1065,12 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// Refresh the live SQLite index so doctor's index-divergence check
 	// passes immediately after a successful update. The op log on disk
 	// remains the source of truth; the index is a derived cache.
+	//
+	// act-c3aa0b: every op above is already written and committed, so a
+	// refresh failure is a warning on a successful update, not exit 1
+	// (see RunCreate, act-e3782c).
 	if err := RefreshIndexForIssue(paths, full); err != nil {
-		return UpdateErrorOutput{
-			Error:   "index_update_failed",
-			Message: err.Error(),
-		}, 1
+		warnings = append(warnings, WarnIndexUpdateFailed)
 	}
 
 	res := UpdateResult{
@@ -1209,15 +1212,15 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// Refresh the live SQLite index so doctor's index-divergence check
 		// passes immediately after a successful claim. Loss path skips the
 		// refresh because no op was written.
+		//
+		// act-c3aa0b: the claim op is already committed, so a refresh
+		// failure is a warning on a won claim, not exit 1.
+		var warnings []string
 		if rerr := RefreshIndexForIssue(paths, res.IssueID); rerr != nil {
-			return UpdateErrorOutput{
-				Error:   "index_update_failed",
-				Message: rerr.Error(),
-			}, 1
+			warnings = append(warnings, WarnIndexUpdateFailed)
 		}
 		// act-f4fd34: --push with no origin — the claim stands, exit 0,
 		// and the push that did not happen is named.
-		var warnings []string
 		if res.PushNoRemote {
 			warnings = append(warnings, WarnPushNoRemote)
 		}

@@ -53,6 +53,8 @@ type ReopenResult struct {
 	// Warnings names what the caller asked for and did not get although
 	// the write landed: WarnPushNoRemote for --push in a tracker with no
 	// origin remote (act-7e8600). Omitted from JSON when empty.
+	// Warnings: WarnIndexUpdateFailed when the reopen op is committed and
+	// the index refresh after it failed (act-c3aa0b). Omitted when empty.
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -304,12 +306,12 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 	}
 
 	// Step 6: refresh the live index so doctor's index-divergence check
-	// passes immediately after a successful reopen.
+	// passes immediately after a successful reopen. act-c3aa0b: the op is
+	// already written and committed, so a refresh failure is a warning on
+	// a successful reopen, not exit 1 (see RunCreate, act-e3782c).
+	var indexWarnings []string
 	if err := RefreshIndexForIssue(paths, full); err != nil {
-		return ReopenErrorOutput{
-			Error:   "index_update_failed",
-			Message: err.Error(),
-		}, 1
+		indexWarnings = append(indexWarnings, WarnIndexUpdateFailed)
 	}
 
 	return ReopenResult{
@@ -318,7 +320,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		OpsWritten: 1,
 		Committed:  !opts.NoCommit,
 		Reason:     opts.Reason,
-		Warnings:   pushNoRemoteWarnings(opts.Push, published),
+		Warnings:   append(indexWarnings, pushNoRemoteWarnings(opts.Push, published)...),
 	}, 0
 }
 

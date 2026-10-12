@@ -1487,12 +1487,6 @@ var sp8Provokers = map[string]sp8Provoker{
 		sp8BadOpVersion(t, dir, createIssue(t, dir, "sp8"))
 		return sp8In(t, dir, "list", "--json")
 	}},
-	"index_update_failed": {run: func(t *testing.T) (string, int) {
-		dir := sp6Site(t)
-		id := createIssue(t, dir, "sp8")
-		sp8BadOpVersion(t, dir, id)
-		return sp8In(t, dir, "update", "--json", "--priority", "1", id)
-	}},
 	"index_open_failed": {run: func(t *testing.T) (string, int) {
 		dir := sp6Site(t)
 		createIssue(t, dir, "sp8")
