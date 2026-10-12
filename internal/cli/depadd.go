@@ -71,6 +71,11 @@ type DepAddResult struct {
 	// Warnings: WarnIndexUpdateFailed when the add_dep op is committed and
 	// the index refresh after it failed (act-c3aa0b). Omitted when empty.
 	Warnings []string `json:"warnings,omitempty"`
+	// PushDeferred is true when the edge is committed and the push did not
+	// reach origin; PushDeferredReason carries the push failure. The two
+	// keys CloseResult uses; both omitted when unset (act-087b2b).
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // depAddSummary renders the (child, parent, edge_type) triple in its
@@ -407,7 +412,7 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 	}
 
 	// Step 7: success envelope. committed mirrors !NoCommit.
-	return DepAddResult{
+	res := DepAddResult{
 		OK:        true,
 		Child:     childFull,
 		Parent:    parentFull,
@@ -415,7 +420,9 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		Summary:   depAddSummary(childFull, parentFull, edgeType),
 		Committed: !opts.NoCommit,
 		Warnings:  append(indexWarnings, pushNoRemoteWarnings(opts.Push, published)...),
-	}, 0
+	}
+	res.PushDeferred, res.PushDeferredReason = pushDeferredFields(published)
+	return res, 0
 }
 
 // resolveDepID resolves a single id (child or parent) via the prefix
@@ -539,6 +546,9 @@ type DepAddExternalResult struct {
 	Committed bool     `json:"committed"`
 	// Warnings: see DepAddResult.Warnings.
 	Warnings []string `json:"warnings,omitempty"`
+	// PushDeferred, PushDeferredReason: see DepAddResult.
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // FormatDepAddExternalHuman renders the external-blocker success line.
@@ -639,8 +649,10 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 			return DepAddErrorOutput{Error: "write_failed", Message: werr.Error()}, 1
 		}
 	}
-	return DepAddExternalResult{
+	res := DepAddExternalResult{
 		OK: true, Issue: full, External: refs, Committed: !opts.NoCommit,
 		Warnings: pushNoRemoteWarnings(opts.Push, published),
-	}, 0
+	}
+	res.PushDeferred, res.PushDeferredReason = pushDeferredFields(published)
+	return res, 0
 }

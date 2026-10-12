@@ -95,6 +95,12 @@ type CreateResult struct {
 	Pushed    bool     `json:"pushed"`
 	Title     string   `json:"title"`
 	Warnings  []string `json:"warnings,omitempty"`
+	// PushDeferred is true when the create is committed and the push did
+	// not reach origin; PushDeferredReason carries the push failure. The
+	// two keys CloseResult uses, beside `pushed: false`; both omitted when
+	// unset (act-087b2b).
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // WarnPushNoRemote is the CreateResult warning for an explicit --push in a
@@ -664,7 +670,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	if opts.Push && publishRan && published.NoRemote {
 		warnings = append(warnings, WarnPushNoRemote)
 	}
-	return CreateResult{
+	res := CreateResult{
 		Ok:        true,
 		ID:        issueID,
 		Prefix:    ShortIssueID(issueID),
@@ -673,7 +679,11 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		Pushed:    pushed,
 		Title:     opts.Title,
 		Warnings:  warnings,
-	}, 0
+	}
+	if publishRan {
+		res.PushDeferred, res.PushDeferredReason = pushDeferredFields(published)
+	}
+	return res, 0
 }
 
 // FormatCreateHuman renders a CreateResult in the human-friendly form:

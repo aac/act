@@ -913,6 +913,8 @@ EXIT CODES
   'act update --json' set push_deferred: true. Do NOT re-run the command
   — re-running duplicates the op. The next write (or 'act remote sync')
   publishes the backlog.
+  'act create', 'act reopen', 'act dep add' and 'act delete' --json set
+  push_deferred: true and push_deferred_reason the same way.
   Failures BEFORE the commit — op write, staging, hook, commit — still
   exit non-zero, because nothing landed. (The old push_exhausted exit-4
   envelope was retired for exactly this reason; see act help errors.)

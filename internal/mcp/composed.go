@@ -485,6 +485,14 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 	if args.Push && published.NoRemote {
 		body["warnings"] = []string{cli.WarnPushNoRemote}
 	}
+	// act-087b2b: the edge is committed and its push did not reach origin
+	// — the two keys act_finish and act_next use, absent otherwise.
+	if published.Deferred {
+		body["push_deferred"] = true
+		if published.Reason != nil {
+			body["push_deferred_reason"] = published.Reason.Error()
+		}
+	}
 	return body, false
 }
 

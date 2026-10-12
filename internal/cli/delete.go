@@ -74,6 +74,11 @@ type DeleteResult struct {
 	// and an index refresh after them failed (act-c3aa0b). Omitted when
 	// empty.
 	Warnings []string `json:"warnings,omitempty"`
+	// PushDeferred is true when the tombstones are committed and the push
+	// did not reach origin; PushDeferredReason carries the push failure.
+	// The two keys CloseResult uses; both omitted when unset (act-087b2b).
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // DeleteErrorOutput is the structured failure envelope. Candidates is
@@ -408,7 +413,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	// Step 7: success envelope.
 	tombstoned := append([]string(nil), ordered...)
 	sort.Strings(tombstoned)
-	return DeleteResult{
+	res := DeleteResult{
 		ID:         full,
 		ShortID:    ShortIssueID(full),
 		OpsWritten: len(envs),
@@ -416,7 +421,9 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 		Tombstoned: tombstoned,
 		Reason:     opts.Reason,
 		Warnings:   append(indexWarnings, pushNoRemoteWarnings(opts.Push, published)...),
-	}, 0
+	}
+	res.PushDeferred, res.PushDeferredReason = pushDeferredFields(published)
+	return res, 0
 }
 
 // formatRFC3339Millis renders unix-ms as the canonical RFC3339Millis

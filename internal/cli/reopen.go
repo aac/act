@@ -56,6 +56,11 @@ type ReopenResult struct {
 	// Warnings: WarnIndexUpdateFailed when the reopen op is committed and
 	// the index refresh after it failed (act-c3aa0b). Omitted when empty.
 	Warnings []string `json:"warnings,omitempty"`
+	// PushDeferred is true when the reopen is committed and the push did
+	// not reach origin; PushDeferredReason carries the push failure. The
+	// two keys CloseResult uses; both omitted when unset (act-087b2b).
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // ReopenAlreadyOpen is the JSON-serialisable envelope returned when the
@@ -314,14 +319,16 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		indexWarnings = append(indexWarnings, WarnIndexUpdateFailed)
 	}
 
-	return ReopenResult{
+	res := ReopenResult{
 		ID:         full,
 		ShortID:    ShortIssueID(full),
 		OpsWritten: 1,
 		Committed:  !opts.NoCommit,
 		Reason:     opts.Reason,
 		Warnings:   append(indexWarnings, pushNoRemoteWarnings(opts.Push, published)...),
-	}, 0
+	}
+	res.PushDeferred, res.PushDeferredReason = pushDeferredFields(published)
+	return res, 0
 }
 
 // FormatReopenHuman renders a ReopenResult as a single human-friendly line.

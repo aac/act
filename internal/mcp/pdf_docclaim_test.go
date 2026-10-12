@@ -63,6 +63,13 @@ func TestDocClaim_Spec_PdfMCPBlockReportsPushDeferred(t *testing.T) {
 	if shown, _ := json.Marshal(fnwShow(t, root, a)["blocked_by"]); !strings.Contains(string(shown), b) {
 		t.Errorf("blocked_by of the blocked issue after act_block = %s, want it to name %s", shown, b)
 	}
+
+	// push:true is the same deferral, not an error.
+	d := seedIssue(t, root, "pdf mcp blocked, push asked for")
+	pushed, pushedText := pdfCall(t, root, "act_block", map[string]any{"id": d, "blocked_by": b, "push": true})
+	if !pushed.OK || !pushed.PushDeferred || pushed.PushDeferredReason == "" {
+		t.Errorf("act_block push:true with an unreachable origin = %s; want ok:true, push_deferred:true and a push_deferred_reason", pushedText)
+	}
 }
 
 // TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred asserts the

@@ -111,6 +111,21 @@ func pushNoRemoteWarnings(push bool, pub PublishResult) []string {
 	return nil
 }
 
+// pushDeferredFields renders a publish result as the two JSON keys every
+// write result uses for a deferral: push_deferred, and push_deferred_reason
+// (the push error's text). Both are zero when the push was not deferred —
+// which includes pub being the zero value because the publish leg did not
+// run — so the `omitempty` keys stay absent (act-087b2b).
+func pushDeferredFields(pub PublishResult) (bool, string) {
+	if !pub.Deferred {
+		return false, ""
+	}
+	if pub.Reason == nil {
+		return true, ""
+	}
+	return true, pub.Reason.Error()
+}
+
 // deferPublish records the unpushed commit, warns, and reports the
 // deferral. Always returns Deferred=true.
 func deferPublish(gops *gitops.ActGitOps, opType string, stderr io.Writer, reason error) PublishResult {

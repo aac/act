@@ -3898,6 +3898,38 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "A won `--claim` without `--push` is deferred and reported identically.",
 		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
 	},
+	// act-087b2b: every write command's JSON result says when its push was
+	// deferred, not only close's and update's.
+	{
+		name:         "spec-pdf-writes-report-push-deferred",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act create --json`, `act reopen --json`, `act dep add --json` (both the edge form and `--external`) and `act delete --json` set the same two keys when their push is deferred, and omit both otherwise; `act create` reports `\"pushed\": false` beside them.",
+		testName:     "TestDocClaim_Spec_PdfWritesReportPushDeferred",
+	},
+	{
+		name:         "help-pdf-writes-report-push-deferred",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act create', 'act reopen', 'act dep add' and 'act delete' --json set",
+		testName:     "TestDocClaim_Spec_PdfWritesReportPushDeferred",
+	},
+	{
+		name:         "spec-pdf-mcp-block-reports-push-deferred",
+		docFile:      "docs/spec.md",
+		claimPattern: "When the tracker has an `origin` and the push of the edge does not reach it, `act_block` still succeeds and its result adds `\"push_deferred\": true` and `push_deferred_reason`, with or without `push: true`.",
+		testName:     "TestDocClaim_Spec_PdfMCPBlockReportsPushDeferred",
+	},
+	{
+		name:         "spec-pdf-next-carries-the-claims-push-deferred",
+		docFile:      "docs/spec.md",
+		claimPattern: "The claiming form also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason`",
+		testName:     "TestDocClaim_Spec_PdfNextCarriesTheClaimsPushDeferred",
+	},
+	{
+		name:         "spec-pdf-mcp-next-carries-the-claims-push-deferred",
+		docFile:      "docs/spec.md",
+		claimPattern: "A `claimed: true` result also carries the claim's `warnings`, `push_deferred`",
+		testName:     "TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
