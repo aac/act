@@ -135,9 +135,8 @@ func withdrawOpFile(gops *gitops.ActGitOps, stateRoot, opPath string, env op.Env
 		// Deliberately NOT the `act-op: (act-XXXX) <type>` subject every
 		// real op commit carries: this commit retracts an op rather than
 		// recording one. Doctor's orphan-close check treats a `(act-XXXX`
-		// marker as evidence that work exists for an issue, and the
-		// compaction pass groups contiguous `act-op:` commits — a
-		// retraction belongs in neither.
+		// marker as evidence that work exists for an issue, which a
+		// retraction is not.
 		msg := fmt.Sprintf("act: withdraw %s op for %s (commit failed)",
 			env.OpType, ShortIssueID(env.IssueID))
 		_ = gops.CommitOpFileRemoval(opPath, msg)

@@ -195,57 +195,6 @@ func TestPullRebase_DirtyTreeReturnsSoftFail(t *testing.T) {
 	}
 }
 
-func TestContiguousActOpRange(t *testing.T) {
-	dir := initRepo(t)
-	g := NewGitOps(dir)
-
-	// Make a couple of non-act commits, then 3 contiguous act-op commits at HEAD.
-	for i := 0; i < 2; i++ {
-		writeFile(t, filepath.Join(dir, "pre"+string(rune('0'+i))), "p")
-		runGit(t, dir, "add", ".")
-		runGit(t, dir, "commit", "-q", "--no-verify", "-m", "regular commit")
-	}
-	var firstExpected, lastExpected string
-	for i := 0; i < 3; i++ {
-		writeFile(t, filepath.Join(dir, ".act", "ops", "f"+string(rune('0'+i))+".json"), "{}")
-		runGit(t, dir, "add", ".")
-		runGit(t, dir, "commit", "-q", "--no-verify", "-m", "act-op: deadbeef create")
-		sha := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
-		if i == 0 {
-			firstExpected = sha
-		}
-		if i == 2 {
-			lastExpected = sha
-		}
-	}
-
-	first, last, count, err := g.ContiguousActOpRange()
-	if err != nil {
-		t.Fatalf("ContiguousActOpRange: %v", err)
-	}
-	if count != 3 {
-		t.Fatalf("count: want 3, got %d", count)
-	}
-	if first != firstExpected {
-		t.Fatalf("first: want %s, got %s", firstExpected, first)
-	}
-	if last != lastExpected {
-		t.Fatalf("last: want %s, got %s", lastExpected, last)
-	}
-}
-
-func TestContiguousActOpRangeHeadIsNotActOp(t *testing.T) {
-	dir := initRepo(t)
-	g := NewGitOps(dir)
-	first, last, count, err := g.ContiguousActOpRange()
-	if err != nil {
-		t.Fatalf("ContiguousActOpRange: %v", err)
-	}
-	if count != 0 || first != "" || last != "" {
-		t.Fatalf("expected empty range, got first=%q last=%q count=%d", first, last, count)
-	}
-}
-
 func TestCurrentBranch(t *testing.T) {
 	dir := initRepo(t)
 	g := NewGitOps(dir)

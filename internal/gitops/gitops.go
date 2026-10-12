@@ -1236,45 +1236,6 @@ func (g *GitOps) hasOriginRemote() bool {
 	return false
 }
 
-// ContiguousActOpRange walks `git log` from HEAD looking back for a
-// maximal contiguous run of commits whose subject starts with "act-op:".
-// Returns (firstSHA, lastSHA, count, nil): firstSHA is the OLDEST act-op
-// commit in the run; lastSHA is HEAD if HEAD itself is an act-op commit;
-// count is the run length. If HEAD is not an act-op commit the run is
-// empty and (\"\", \"\", 0, nil) is returned.
-func (g *GitOps) ContiguousActOpRange() (string, string, int, error) {
-	// `git log --format=%H%x00%s` emits SHA<NUL>SUBJECT<LF> so a NUL split
-	// makes subject parsing unambiguous even if the subject contains tabs.
-	out, err := g.run("log", "--format=%H%x09%s", "HEAD")
-	if err != nil {
-		return "", "", 0, err
-	}
-	var first, last string
-	count := 0
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		// Format: "<sha>\t<subject>".
-		tab := strings.IndexByte(line, '\t')
-		if tab < 0 {
-			break
-		}
-		sha := line[:tab]
-		subject := line[tab+1:]
-		if !strings.HasPrefix(subject, "act-op:") {
-			break
-		}
-		if last == "" {
-			last = sha
-		}
-		first = sha
-		count++
-	}
-	return first, last, count, nil
-}
-
 // WorkCommit is a single git commit attributed to an issue via the
 // `(act-XXXX)` marker convention.
 type WorkCommit struct {
