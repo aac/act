@@ -167,6 +167,11 @@ type WriteOpts struct {
 	// the act-89a595 "committed but not pushed" notice. Nil means
 	// os.Stderr. Tests inject a buffer to assert the warning fired.
 	Stderr io.Writer
+	// Published, when non-nil, receives what the publish leg did. It is
+	// written only when that leg ran — a commit landed and Offline was
+	// not set; under NoCommit or Offline it is left untouched and nothing
+	// was pushed (act-8c1c05).
+	Published *PublishResult
 }
 
 // ErrInvalidFlags is returned when WriteOpts contains an illegal flag
@@ -339,7 +344,10 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	// (auto-publish covers it); we keep the field on WriteOpts for
 	// callers that haven't migrated, but the publish happens regardless
 	// of opts.Push.
-	PublishCommittedOp(gops, env.OpType, opts.Branch, opts.Stderr)
+	pub := PublishCommittedOp(gops, env.OpType, opts.Branch, opts.Stderr)
+	if opts.Published != nil {
+		*opts.Published = pub
+	}
 	return nil
 }
 
@@ -475,7 +483,10 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// fail-soft boundary applies identically here — the batch commit
 	// landed, so the rollback path is NOT triggered and the publish
 	// failure degrades to a queued push plus a stderr warning.
-	PublishCommittedOp(gops, envs[0].OpType, opts.Branch, opts.Stderr)
+	pub := PublishCommittedOp(gops, envs[0].OpType, opts.Branch, opts.Stderr)
+	if opts.Published != nil {
+		*opts.Published = pub
+	}
 	return nil
 }
 

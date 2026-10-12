@@ -36,6 +36,13 @@ import (
 // PublishResult reports what the post-commit publish leg did. The zero
 // value means "pushed cleanly" — the overwhelmingly common case.
 type PublishResult struct {
+	// NoRemote is true when the nested repo has no `origin` remote, so
+	// the publish leg had nowhere to push and did nothing. Not a
+	// failure and not a deferral — the tracker is local-only — but not
+	// a push either: a caller reporting "pushed" must read this
+	// (act-8c1c05).
+	NoRemote bool
+
 	// Deferred is true when the push did not reach origin and the
 	// commit was left for a later push instead. The command still
 	// succeeds (exit 0): the op is durably committed.
@@ -76,7 +83,19 @@ func PublishCommittedOp(gops *gitops.ActGitOps, opType, branch string, stderr io
 	if err := gops.AutoPushAfterCommitToBranch(branch); err != nil {
 		return deferPublish(gops, opType, stderr, err)
 	}
+	// AutoPushAfterCommitToBranch returns nil both when it pushed and
+	// when there is no origin to push to; tell the two apart for callers
+	// that report the push (act-8c1c05).
+	if _, err := gops.RemoteURL("origin"); err != nil {
+		return PublishResult{NoRemote: true}
+	}
 	return PublishResult{}
+}
+
+// Pushed reports whether the publish leg put the commit on origin: it ran,
+// there was an origin, and the push was not deferred.
+func (r PublishResult) Pushed() bool {
+	return !r.NoRemote && !r.Deferred
 }
 
 // deferPublish records the unpushed commit, warns, and reports the

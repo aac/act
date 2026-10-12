@@ -3626,6 +3626,19 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another.",
 		testName:     "TestDocClaim_Spec_UpdateClaimRefusesEveryFieldFlag",
 	},
+	// act-8c1c05: create's pushed reports the push, not the --push flag.
+	{
+		name:         "spec-create-json-pushed-reports-the-push",
+		docFile:      "docs/spec.md",
+		claimPattern: "`pushed` says what happened to the op commit, not which flag was passed: it is true only when this call pushed the commit to `origin`. In a tracker with `origin` that is every create, with or without `--push`, except under `--no-commit` or `--offline` or when the push was deferred; in a tracker with no `origin` remote — the one in the example — it is always false.",
+		testName:     "TestDocClaim_Spec_CreatePushedReportsWhatHappened",
+	},
+	{
+		name:         "spec-create-json-push-no-remote-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "`\"push_no_remote\"` is the other warning: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
+		testName:     "TestDocClaim_Spec_CreatePushedReportsWhatHappened",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

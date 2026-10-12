@@ -96,6 +96,11 @@ type CreateResult struct {
 	Warnings  []string `json:"warnings,omitempty"`
 }
 
+// WarnPushNoRemote is the CreateResult warning for an explicit --push in a
+// tracker whose nested repo has no `origin` remote: the issue was created
+// and committed, and nothing was pushed (act-8c1c05).
+const WarnPushNoRemote = "push_no_remote"
+
 // CreateErrorOutput is the structured shape returned on failure. Candidates
 // is non-nil only on the id_ambiguous path (resolving --parent); it is also
 // mirrored under Details["candidates"] so the on-the-wire JSON envelope
@@ -546,25 +551,32 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		// by act init.
 		gops = gitops.NewActGitOps(paths.Root)
 	}
+	// published is what the publish leg did. The leg runs only after a
+	// commit that is not --offline; otherwise published stays zero and is
+	// not read (act-8c1c05).
+	var published PublishResult
+	publishRan := !opts.NoCommit && !opts.Offline
 	var werr error
 	if len(depEnvs) == 0 {
 		werr = WriteOpAndAutoCommit(env, body, paths, gops, WriteOpts{
-			NoCommit: opts.NoCommit,
-			Push:     opts.Push,
-			Isolated: opts.Isolated,
-			Offline:  opts.Offline,
-			Branch:   opts.Branch,
+			NoCommit:  opts.NoCommit,
+			Push:      opts.Push,
+			Isolated:  opts.Isolated,
+			Offline:   opts.Offline,
+			Branch:    opts.Branch,
+			Published: &published,
 		})
 	} else {
 		envs := append([]op.Envelope{env}, depEnvs...)
 		bodies := append([][]byte{body}, depBodies...)
 		commitMsg := BuildBatchCommitMessage(env, len(envs))
 		werr = WriteOpsAndAutoCommit(envs, bodies, paths, gops, WriteOpts{
-			NoCommit: opts.NoCommit,
-			Push:     opts.Push,
-			Isolated: opts.Isolated,
-			Offline:  opts.Offline,
-			Branch:   opts.Branch,
+			NoCommit:  opts.NoCommit,
+			Push:      opts.Push,
+			Isolated:  opts.Isolated,
+			Offline:   opts.Offline,
+			Branch:    opts.Branch,
+			Published: &published,
 		}, commitMsg)
 	}
 	if werr != nil {
@@ -628,13 +640,24 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	// short hash form (env.Hash); for the full sha256, callers can refold
 	// the op file.
 	opID, _ := env.Hash()
+	// act-8c1c05: pushed says what happened to the op commit, not which
+	// flag was passed. It used to be `opts.Push && !opts.Isolated`, which
+	// answered true for --push in a tracker with no remote and false for
+	// an auto-published write. An explicit --push with nowhere to push is
+	// not an error — the issue is created and committed, as on every
+	// other write command — but it is named, so the caller's intent is
+	// not dropped without a word.
+	pushed := publishRan && published.Pushed()
+	if opts.Push && publishRan && published.NoRemote {
+		warnings = append(warnings, WarnPushNoRemote)
+	}
 	return CreateResult{
 		Ok:        true,
 		ID:        issueID,
 		Prefix:    ShortIssueID(issueID),
 		OpID:      opID,
 		Committed: !opts.NoCommit,
-		Pushed:    opts.Push && !opts.Isolated,
+		Pushed:    pushed,
 		Title:     opts.Title,
 		Warnings:  warnings,
 	}, 0

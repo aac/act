@@ -159,6 +159,9 @@ func runCreate(args []string) int {
 		if w == "parent_closed" {
 			fmt.Fprintln(os.Stderr, "act create: warning: parent issue is closed")
 		}
+		if w == cli.WarnPushNoRemote {
+			fmt.Fprintln(os.Stderr, "act create: warning: --push: no origin remote, nothing was pushed")
+		}
 	}
 	fmt.Print(cli.FormatCreateHuman(res))
 	return 0
