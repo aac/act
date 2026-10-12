@@ -55,7 +55,10 @@ func RegisterOpVersion(v int, apply ApplyOpFunc) {
 
 // DispatchByVersion returns the apply function for opVersion. It returns an
 // error when the version is not registered — the binary cannot fold an op it
-// has no apply rule for, which the caller surfaces as version_skew per spec.
+// has no apply rule for. Nothing outside this package's tests calls it yet:
+// the fold never gets this far with an unregistered version, because
+// envelope validation rejects any op_version other than CurrentOpVersion
+// first, and that surfaces as a fold error, not as version_skew.
 func DispatchByVersion(opVersion int) (ApplyOpFunc, error) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()

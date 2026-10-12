@@ -1282,11 +1282,11 @@ func (g *GitOps) ContiguousActOpRange() (string, string, int, error) {
 //
 // Returns nil with no side effects when count == 1 (single commit).
 //
-// maxWriterVersion is supplied by the caller (typically the writer that
-// inspected envelopes inside the range). The caller is responsible for the
-// version_skew gate per spec §5.B "Squash-and-push refused on version_skew";
-// this method is a pure git-level squash and does not consult writer
-// versions on its own.
+// maxWriterVersion is supplied by the caller; this method is a pure
+// git-level squash and does not consult writer versions on its own. Nothing
+// outside this package's tests calls it: no command squashes before a push,
+// and there is no version_skew gate on squash-and-push in the spec or the
+// code.
 func (g *GitOps) SquashActOpRange(firstSHA, lastSHA, maxWriterVersion string) error {
 	if firstSHA == "" || lastSHA == "" {
 		return fmt.Errorf("gitops: empty SHA")

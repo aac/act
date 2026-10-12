@@ -545,11 +545,11 @@ func applyUnclaim(state *IssueState, env op.Envelope, payload []byte, fullHash s
 // (see applyClaim docstring; act-b7ad).
 //
 // closed_by_tree (the git tree hash at close time) is intentionally NOT
-// surfaced here: the envelope does not carry it, and the SQLite index's
-// closed_by_tree column is populated post-commit by the close writer.
-// Surfacing it through the fold path is deferred until the envelope
-// schema carries it; for now `act show` reads closed_by_node from the
-// op stream (which is sufficient for the audit acceptance criteria).
+// surfaced here, or anywhere: the envelope does not carry it, nothing
+// computes it, and the SQLite index has no such column. Surfacing it
+// through the fold path would first need the envelope schema to carry
+// it; for now `act show` reads closed_by_node from the op stream (which
+// is sufficient for the audit acceptance criteria).
 func applyClose(state *IssueState, env op.Envelope, payload []byte, fullHash string) error {
 	var p op.ClosePayload
 	if err := json.Unmarshal(payload, &p); err != nil {
