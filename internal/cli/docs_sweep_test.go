@@ -86,6 +86,67 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`op_type` enum (all of v1):",
 		testName:     "TestDocClaim_Spec_OpTypeEnumMatchesValidOpTypes",
 	},
+	// act-549a7e: second stale pass over the spec. The create and close
+	// Behavior lines said the op file is written and THEN the hook runs,
+	// against the Hooks contract and the code; three places named a
+	// `dep-add` op (and one a `set-status` op) that no writer emits; the
+	// fold pseudocode named two errors the code never had; and the golden
+	// paragraph required cases under a directory that does not exist. The
+	// close line reuses the act-8ee085 test; the rest are new.
+	{
+		name:         "spec-create-hook-runs-before-op-write",
+		docFile:      "docs/spec.md",
+		claimPattern: "The `create` hook runs before the create op file is written",
+		testName:     "TestDocClaim_CreateHookRunsBeforeOpFileIsWritten",
+	},
+	{
+		name:         "spec-create-no-commit-runs-no-hook",
+		docFile:      "docs/spec.md",
+		claimPattern: "Under `--no-commit` the op file is written, no hook runs and nothing is committed",
+		testName:     "TestDocClaim_CreateHookRunsBeforeOpFileIsWritten",
+	},
+	{
+		name:         "spec-close-hook-runs-before-op-write",
+		docFile:      "docs/spec.md",
+		claimPattern: "The `close` hook runs before the close op file is written",
+		testName:     "TestDocClaim_HookRunsBeforeOpFileIsWritten",
+	},
+	{
+		name:         "spec-dep-add-writes-add-dep-op",
+		docFile:      "docs/spec.md",
+		claimPattern: "Writes one `add_dep` op on the child issue",
+		testName:     "TestDocClaim_DepAdd_WritesOneAddDepOp",
+	},
+	{
+		name:         "spec-act-block-tool-writes-one-add-dep-op",
+		docFile:      "docs/spec.md",
+		claimPattern: "write one `add_dep` op with `type=blocks` from `id` to `blocked_by`",
+		testName:     "TestDocClaim_MCP_BlockWritesOneAddDepOpInOneCommit",
+	},
+	{
+		name:         "spec-act-block-single-op-single-commit",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act_block` writes exactly one op — an `add_dep` op with `type=blocks` — and no status op",
+		testName:     "TestDocClaim_MCP_BlockWritesOneAddDepOpInOneCommit",
+	},
+	{
+		name:         "spec-fold-schema-version-mismatch-aborts",
+		docFile:      "docs/spec.md",
+		claimPattern: "An op whose schema_version is not the one this binary writes aborts the fold",
+		testName:     "TestDocClaim_Fold_VersionFieldsOnRead",
+	},
+	{
+		name:         "spec-fold-newer-writer-version-not-fatal",
+		docFile:      "docs/spec.md",
+		claimPattern: "a newer writer_version does not stop the fold",
+		testName:     "TestDocClaim_Fold_VersionFieldsOnRead",
+	},
+	{
+		name:         "spec-golden-case-list-matches-fixtures",
+		docFile:      "docs/spec.md",
+		claimPattern: "Golden cases:",
+		testName:     "TestDocClaim_Spec_GoldenCaseListMatchesFixtures",
+	},
 	// act-2c7be3: machine affinity. Eight claims across five surfaces —
 	// the exclusion itself, the write path (including the clearing
 	// form), the fail-open rule, the always-emitted JSON contract, the

@@ -366,8 +366,11 @@ fold(ops_root) -> {issues, index}:
   parsed = []
   for f in files:
     op = json.load(f)
-    require(op.schema_version <= READER_SCHEMA_MAX) else E_SCHEMA_TOO_NEW
-    require(op.writer_version <= READER_WRITER_MAX) else E_UPGRADE_REQUIRED
+    # Envelope checks. Any failure aborts the whole fold with an error
+    # naming the op file and the field; there is no named error code.
+    require(op.op_version == 1)
+    require(op.schema_version == 1)             # equality, not a ceiling
+    require(is_semver(op.writer_version))       # shape only, no upper bound
     # An unrecognised op_type is NOT an error here: the op parses, sorts,
     # and is skipped at step (5). Only an empty op_type is rejected.
     op.op_hash = sha256(canonical_json(op.payload || op.hlc || op.node_id))
@@ -397,6 +400,17 @@ it, and every other op folds as usual. A tracker that holds ops written by a
 newer `act` therefore stays readable by an older binary — `act list`, `act
 show` and `act ready` keep answering, minus the effect of the ops they do not
 understand. The same skip covers the legacy parse-only `redact` type.
+
+**Version fields on read.** An op whose schema_version is not the one this binary writes aborts the fold with an
+error naming the op file and `schema_version`. `act list` and `act ready` fold
+the whole op log and exit 1; `act show` folds one issue, so it exits 3 on the
+issue carrying the op and still answers for the others. The same check applies
+to `op_version`.
+The check is equality, so it rejects an older value as well as a newer one.
+The fold does not compare `writer_version` at all — it only requires a
+well-formed semver — so a newer writer_version does not stop the fold, and
+that op is applied like any other. Writer-version skew is reported by
+`act version --check-repo`, which exits 4 with `version_skew`.
 
 `empty_issue` has all scalar fields nil, sets `deps={}`, `acceptance={}`,
 `tombstoned=false`, and a per-field `last_hlc` map used for LWW.
@@ -1107,7 +1121,7 @@ Input: `{"id":"string","reason":{"type":"string"}}`. Behavior: `act close --reas
 
 **Composed tool: `act_block`**
 
-Input: `{"id":"string","blocked_by":"string","reason":{"type":"string"}}`. Behavior: write a `dep-add` op with `type=blocks` from `id` to `blocked_by`. The "blocked" display state is derived automatically once the dep edge is present — no separate `set-status=blocked` op is written (that op was removed in act-018cb3). Output:
+Input: `{"id":"string","blocked_by":"string","reason":{"type":"string"}}`. Behavior: write one `add_dep` op with `type=blocks` from `id` to `blocked_by`. The "blocked" display state is derived automatically once the dep edge is present — no separate status op is written (that op was removed in act-018cb3). The `ops_written` label in the response is the literal string `dep-add`; the op type on disk is `add_dep`. Output:
 ```json
 {"ok":true,"id":"...","blocked_by":"...","ops_written":["dep-add"]}
 ```
@@ -1295,7 +1309,7 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 
 ### 7. Test plan
 
-Test code lives under `internal/.../*_test.go` (or equivalent if the Bun spike flips the language). Goldens live under `testdata/golden/`. Fuzz corpora under `testdata/fuzz/`. CI runs all tiers on every PR.
+Test code lives under `internal/.../*_test.go` (or equivalent if the Bun spike flips the language). Goldens live under `internal/fold/testdata/golden/`. Fuzz corpora under `internal/fold/testdata/fuzz/`. CI runs all tiers on every PR.
 
 #### 7.1 Property tests
 
@@ -1304,7 +1318,15 @@ Test code lives under `internal/.../*_test.go` (or equivalent if the Bun spike f
 
 #### 7.2 Golden tests
 
-One file per `(op_type, op_version)` pair under `testdata/golden/<op_type>/<version>/<case>.json`. Each case has `prior_state.json`, `op.json`, `expected_state.json`. The test loads prior, applies op, compares expected. Required cases: `create`, `update-status`, `update-priority`, `update-assignee`, `update-description`, `update-accept`, `claim`, `close`, `dep-add`, `dep-rm`, `redact`, `migrate`, `compact`. Adding a new op_version requires adding a new golden directory; CI fails if the directory is missing.
+One directory per case under `internal/fold/testdata/golden/<case>/`, each holding `before.json`, `op.json` and `after.json`. `TestGoldenApply` (`internal/fold/golden_test.go`) loads the before-state, applies the op through the real apply dispatch, and compares the rendered state to `after.json` byte-for-byte as canonical JSON. A case is named for its op type. Golden cases:
+
+```
+add_accept, add_dep, add_external_dep, claim, close, create, import, migrate,
+remove_accept, remove_dep, remove_external_dep, reopen, set_accept, tombstone,
+unclaim, update_field, update_field-stale
+```
+
+That is every op type in the `op_type` enum except `redact` (parse-only, no apply path to exercise), plus `update_field-stale`, an extra case for an `update_field` that loses last-writer-wins. `TestGoldenApply` fails if an op type in `op.ValidOpTypes` other than `redact` has no case directory, so adding an op type requires adding its golden. There is one op_version (1), so cases are not split by version.
 
 #### 7.3 Fuzz
 
@@ -1397,7 +1419,7 @@ The duplicate-edge idempotency key for `act dep add` is `(child, parent, type)`.
 The `act_next` claim-loss backoff jitter MUST be uniform random in `[0.75x, 1.25x]` of the base delay (100ms, 400ms, 1.6s). The jitter MUST be re-rolled independently for each attempt.
 
 ### 5.D.2 `act_block` atomicity uses staged writes with single-commit semantics
-`act_block` MUST write both the `set-status` and `dep-add` ops to a staging area, then `git add` and commit both in a single git commit. On any failure, both staged ops MUST be unstaged and deleted, and the underlying error class MUST be surfaced to the caller.
+`act_block` writes exactly one op — an `add_dep` op with `type=blocks` — and no status op (blocked is derived from the edge; see the `act_block` tool above). It MUST `git add` and commit that op in a single git commit. If the stage or commit fails, the op file MUST be unstaged and deleted so no op is left in the op log, and the underlying error class MUST be surfaced to the caller.
 
 ### 5.D.3 `stderr_tail` is last 4096 bytes UTF-8-trimmed; `truncated` reflects only the 64KB cap
 `stderr_tail` is the last 4096 bytes of captured stderr, trimmed to the nearest valid UTF-8 boundary. `details.truncated` MUST be `true` if and only if the 64KB capture cap was hit, independent of the 4KB tail trim.
