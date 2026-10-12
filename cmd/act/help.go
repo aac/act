@@ -751,11 +751,12 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     act_not_initialized     .act/ missing in this repo
     issue_not_found         id resolved to nothing
     id_ambiguous            short id matched 2+ issues
-    version_skew            on-disk schema newer than this binary
+    version_skew            an op's writer_version is newer than this binary's;
+                            reported only by 'act version --check-repo' (exit 4)
     claim_lost              concurrent claim won the race
     cycle_detected          dep edge would close a cycle
     dep_not_found           dep target id resolved to nothing
-    hook_failed             user pre-commit / pre-push hook returned non-zero
+    hook_failed             a .act/hooks/<event> script exited non-zero or timed out
     op_invalid              op-file payload failed validation
     hlc_drift               clock moved backwards beyond tolerance
     index_corrupt           SQLite cache failed integrity check
@@ -782,7 +783,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     write_failed            os.WriteFile failed
     stat_failed             os.Stat failed
     walk_failed             generic filepath.Walk failure
-    no_repo                 git rev-parse showed no repo (subset of not_in_git)
+    no_repo                 no .act/ where the command looked (or, from an MCP
+                            tool call, no host git repo)
     import_failed           'act import' wrote nothing usable
     tracker_not_checked_out tracker remote exists; this checkout lacks it
 

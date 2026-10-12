@@ -738,7 +738,7 @@ Resolution happens before any op is written, so a write command never partially 
  "op_id": "7f3a...", "committed": true, "pushed": false}
 ```
 
-**Exit codes:** 0; 1 if hook rejects; 2 on bad flags or unknown parent; 3 if `.act/` missing; 4 on writer-version skew encountered during the implicit fold.
+**Exit codes:** 0, including a create whose push was deferred; 1 if the `create` hook refuses the create (`hook_failed`), or the op cannot be written, committed or indexed (including `write_lock_timeout` and `stale_git_lock`); 2 on a usage error — an unknown flag, a missing or empty title, a value outside a flag's range or cap, a conflicting flag pair, or an ambiguous `--parent`/`--blocked-by`/`--blocks` prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), in a repo with no `.act/` (`act_not_initialized`, or `tracker_not_checked_out` when a configured tracker remote holds this repo's tracker), when a `--parent`/`--blocked-by`/`--blocks` id matches no issue (`issue_not_found`), or when `--description-file` names a file that does not exist (`file_not_found`). `act create` never exits 4: an op from a newer writer already in the tracker does not stop the write.
 
 **Edge cases:** `--parent` to a closed/redacted issue is allowed with a stderr warning; empty title or title >256 bytes → exit 2; hash collision with an existing id retries the nonce up to 8 times before exit 1.
 
@@ -771,7 +771,7 @@ Resolution happens before any op is written, so a write command never partially 
 ]}
 ```
 
-**Exit codes:** 0; 2 on bad flag; 3 if `.act/` missing; 4 on version skew during rebuild.
+**Exit codes:** 0, including an empty result; 1 when the index cannot be opened, brought up to date with the op log, or queried (`index_open_failed`, `index_rebuild_failed`, `index_query_failed`) — an op file the fold rejects, such as one with an unknown `op_version`, lands here; 2 on a usage error — an unknown flag, a positional argument, `--all` with `--status`, an unknown `--status` value or `--sort` field; 3 outside a git working tree (`not_in_git`), or when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`). In a git repo with no `.act/` and no tracker remote, `act list` prints the no-state line and exits 0. `act list` never exits 4: an op with a newer `writer_version` is applied like any other, and a refresh from `origin` that fails is a stderr warning, not a failure.
 
 **Edge cases:** empty result returns `count: 0` and exit 0; unknown sort field or `--all` combined with `--status` → exit 2. `--limit 0` means "no limit" (every match). `claimed_at` is present on rows that have been claimed and omitted on the rest, so claim age is readable from a listing without one `act show` per in-progress id.
 
@@ -801,7 +801,7 @@ Resolution happens before any op is written, so a write command never partially 
 }, "ops": [/* present iff --include-ops */]}
 ```
 
-**Exit codes:** 0; 2 on ambiguous prefix or unknown flag; 3 if id not found or `.act/` missing; 4 on writer-version skew.
+**Exit codes:** 0, including a tombstoned issue; 2 on a usage error — an unknown flag, a missing `<id>`, a second positional argument, or an ambiguous prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), when the id matches no issue (`issue_not_found`), when the issue's op stream cannot be read or folded (`fold_failed` — an op with an unknown `op_version` lands here), or when `--commit-marker` is asked of a tombstoned issue. In a git repo with no `.act/` and no tracker remote, `act show` prints the no-state line and exits 0. `act show` never exits 4: an op with a newer `writer_version` is applied like any other.
 
 ---
 
@@ -868,7 +868,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
  "closed_reason":"shipped", "committed":true, "pushed":false}
 ```
 
-**Exit codes:** 0; 1 if already closed (idempotent close re-emits no op and exits 0; only true conflict returns 1); 2 on bad flags; 3 missing `.act/`; 4 on skew.
+**Exit codes:** 0, including a close of an issue that is already closed (no op is written; `--json` answers `already_closed: true`) and a close whose push was deferred; 1 if the `close` hook refuses the close (`hook_failed`), or the op cannot be written, committed or indexed (including `write_lock_timeout`, `stale_git_lock`, and an index the op log cannot rebuild); 2 on a usage error — an unknown flag, a missing `<id>`, a `--reason` over the cap, a conflicting flag pair, an ambiguous prefix (`id_ambiguous`), or an open external dep without `--force` (`blocked_by_external_dep`); 3 outside a git working tree (`not_in_git`), in a repo with no `.act/` (`act_not_initialized`, or `tracker_not_checked_out` when a configured tracker remote holds this repo's tracker), or when the id matches no issue (`issue_not_found`). `act close` never exits 4: an op from a newer writer already in the tracker does not stop the close.
 
 **Edge cases:** closing an issue with open children is allowed and surfaced by `doctor orphan-close`; reason >500 bytes → exit 2 (see Length caps).
 
@@ -926,7 +926,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 The top-level `machine` object is **always emitted**, so its ABSENCE is how a consumer detects an act that predates machine affinity. `label` and `source` are this machine's identity; `filtered` says whether pinned-elsewhere rows were actually excluded; `pinned_elsewhere` counts rows needing another machine **either way** — dropped when `filtered`, still present in `ready` when not. `filtered: false` with `source: "hostname"` means the machine was never named; with any other source it means `--all-machines`. The per-row `machine` key appears on pinned rows in both modes.
 
-**Exit codes:** 0; 2 bad flags; 3 missing `.act/`; 4 on skew.
+**Exit codes:** 0, including an empty ready set; 1 when the index cannot be opened, brought up to date with the op log, or queried (`index_open_failed`, `index_rebuild_failed`, `index_query_failed`) — an op file the fold rejects, such as one with an unknown `op_version`, lands here; 2 on a usage error — an unknown flag, a positional argument, `--as` without `--mine`, `--no-fetch` with `--fresh`/`--no-cache`, or an ambiguous `--under` prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), when `--under` matches no issue (`issue_not_found`), or when `--mine` cannot read `.act/config.json`. In a git repo with no `.act/` and no tracker remote, `act ready` prints the no-state line and exits 0. `act ready` never exits 4: an op with a newer `writer_version` is applied like any other.
 
 ---
 
@@ -1004,7 +1004,7 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 ]}
 ```
 
-**Exit codes:** 0; 2 on bad query syntax (FTS5 parse error surfaced as usage); 3 missing index; 4 on skew.
+**Exit codes:** 0, including no matches; 2 on a usage error — an unknown flag, a missing or empty query, a second positional argument (quote a multi-word query), an `--in` value other than `title|desc|all`, a negative `--limit` — and on any error SQLite returns for the query itself; 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), or when the index cannot be opened or brought up to date with the op log (`index_open_failed`, `index_rebuild_failed` — the failures `act list` reports as exit 1 are exit 3 here). The query is quoted token by token before it reaches FTS5, so FTS5 operators and unbalanced quotes are searched for literally, not rejected as syntax. In a git repo with no `.act/` and no tracker remote, `act search` prints the no-state line and exits 0. `act search` never exits 4: an op with a newer `writer_version` is indexed like any other.
 
 ---
 
@@ -1022,7 +1022,7 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 ]}
 ```
 
-**Exit codes:** 0; 2 on ambiguous prefix; 3 on unknown id; 4 on skew.
+**Exit codes:** 0; 2 on a usage error — an unknown flag, no `<id>` and no filter flag, a second positional argument, an unparseable `--since`, an unknown `--type`, a positional id that disagrees with `--by-issue`, or an ambiguous prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), when the id matches no issue (`issue_not_found`), or when an op file in scope cannot be read or parsed (`ops_read_failed` — an op with an unknown `op_version` lands here). In a git repo with no `.act/` and no tracker remote, `act log` prints the no-state line and exits 0. `act log` never exits 4: an op with a newer `writer_version` is printed like any other.
 
 ---
 
@@ -1089,7 +1089,7 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 
 **Host-repo resolution.** Each `tools/call` resolves the host repo independently. If the client names a workspace out-of-band on the call — Codex sends `_meta."x-codex-turn-metadata".workspaces` (a map keyed by absolute workspace path), since it launches the server with cwd = the plugin install dir and advertises no MCP `roots` capability — that workspace is authoritative: the server resolves the host repo from it rather than from its own process cwd. Absent any client workspace hint (Claude Code, which launches the server in the project dir; or the direct CLI), the server falls back to cwd-based resolution. This keeps repo-relative tools operating on the user's project regardless of where the plugin host launches the long-lived server process.
 
-**Exit codes:** 0 on clean shutdown; 2 bad flag; 3 missing `.act/`; 4 on skew.
+**Exit codes:** 0 on clean shutdown (the client closes stdin); 1 on a transport error while serving; 2 on an unknown flag, or a `--workdir` the server cannot change into. A missing git repo or a missing `.act/` is not a startup failure: the server starts in any directory, and a tool call that needs tracker state answers with an error result (`no_repo`) while the server keeps running. The `act mcp` process never exits 3 or 4.
 
 ---
 
@@ -1128,7 +1128,7 @@ Layers 1 and 2 are **explicit**; only they cause `act ready`/`act next` to filte
  "schema_version":1, "repo_max_writer_version":"0.1.0"}
 ```
 
-**Exit codes:** 0; 4 on skew (with `--check-repo`); 3 on missing `.act/` (with `--check-repo` only).
+**Exit codes:** 0; 2 on an unknown flag. With `--check-repo` only: 3 when the working directory itself has no `.act/` (`no_repo` — the check looks in the current directory and does not walk up to the repo root) or `.act/` cannot be read; 4 on skew, meaning some op file carries a `writer_version` newer than this binary's (`version_skew`). `act version --check-repo` is the only command that reports `version_skew`; without the flag `act version` reads no repo and exits 0 anywhere.
 
 ---
 

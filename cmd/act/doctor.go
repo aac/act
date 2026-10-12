@@ -12,8 +12,15 @@ import (
 // runDoctor dispatches `act doctor`. The repo root is resolved from cwd;
 // flag parsing follows the universal pattern used by other commands.
 //
-// Exit codes mirror cli.RunDoctor: 0 success, 1 error finding,
-// 2 bad flags, 3 missing repo / .act/.
+// Exit codes, matching the doctor "Exit codes" line in docs/spec.md:
+// 0 no error-severity finding (warnings alone, unless --strict); 1 an error
+// finding remains; 2 bad flags, including an unknown --check name; 3 not
+// inside a git working tree (not_in_git, returned here) or a configured
+// tracker remote holds a tracker this checkout has not cloned
+// (tracker_not_checked_out, from the no-state guard in main.go); 4 origin
+// configured but unreachable, which takes precedence over 1. A git repo
+// with no .act/ and no tracker remote never reaches this function: the
+// guard in main.go treats doctor as a read command and exits 0.
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	check := fs.String("check", "", "run a single named check (default: all)")
