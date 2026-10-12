@@ -70,6 +70,154 @@ type docClaim struct {
 // Order is alphabetical by `name` for readability; the sweep does not
 // depend on it.
 var docClaimRegistry = []docClaim{
+	// act-675b59: fifth stale pass over docs/spec.md. Nine per-command
+	// "Exit codes" lines promised exit 4 on version skew; only
+	// `act version --check-repo` reports version_skew. Each line now lists
+	// what its command returns, asserted against the real binary in
+	// cmd/act/spec_pass5_docclaim_test.go. Three rows of the `act help
+	// errors` table described codes by something other than what emits
+	// them. Drift shape: a line regains "4 on skew", or loses a code the
+	// command returns, and the test named here goes red.
+	{
+		name:         "spec-exit-codes-create-hook-refusal",
+		docFile:      "docs/spec.md",
+		claimPattern: "1 if the `create` hook refuses the create (`hook_failed`)",
+		testName:     "TestDocClaim_ExitCodes_Create",
+	},
+	{
+		name:         "spec-exit-codes-create-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act create` never exits 4: an op from a newer writer already in the tracker does not stop the write",
+		testName:     "TestDocClaim_ExitCodes_Create",
+	},
+	{
+		name:         "spec-exit-codes-list-no-state-exits-0",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act list` prints the no-state line and exits 0",
+		testName:     "TestDocClaim_ExitCodes_List",
+	},
+	{
+		name:         "spec-exit-codes-list-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act list` never exits 4: an op with a newer `writer_version` is applied like any other",
+		testName:     "TestDocClaim_ExitCodes_List",
+	},
+	{
+		name:         "spec-exit-codes-show-fold-failed-is-3",
+		docFile:      "docs/spec.md",
+		claimPattern: "(`fold_failed` — an op with an unknown `op_version` lands here)",
+		testName:     "TestDocClaim_ExitCodes_Show",
+	},
+	{
+		name:         "spec-exit-codes-show-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act show` never exits 4: an op with a newer `writer_version` is applied like any other",
+		testName:     "TestDocClaim_ExitCodes_Show",
+	},
+	{
+		name:         "spec-exit-codes-close-already-closed-is-0",
+		docFile:      "docs/spec.md",
+		claimPattern: "0, including a close of an issue that is already closed (no op is written; `--json` answers `already_closed: true`)",
+		testName:     "TestDocClaim_ExitCodes_Close",
+	},
+	{
+		name:         "spec-exit-codes-close-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act close` never exits 4: an op from a newer writer already in the tracker does not stop the close",
+		testName:     "TestDocClaim_ExitCodes_Close",
+	},
+	{
+		name:         "spec-exit-codes-ready-mine-config-unreadable",
+		docFile:      "docs/spec.md",
+		claimPattern: "when `--mine` cannot read `.act/config.json`",
+		testName:     "TestDocClaim_ExitCodes_Ready",
+	},
+	{
+		name:         "spec-exit-codes-ready-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act ready` never exits 4: an op with a newer `writer_version` is applied like any other",
+		testName:     "TestDocClaim_ExitCodes_Ready",
+	},
+	{
+		name:         "spec-exit-codes-search-query-is-literal",
+		docFile:      "docs/spec.md",
+		claimPattern: "FTS5 operators and unbalanced quotes are searched for literally, not rejected as syntax",
+		testName:     "TestDocClaim_ExitCodes_Search",
+	},
+	{
+		name:         "spec-exit-codes-search-index-failure-is-3",
+		docFile:      "docs/spec.md",
+		claimPattern: "the failures `act list` reports as exit 1 are exit 3 here",
+		testName:     "TestDocClaim_ExitCodes_Search",
+	},
+	{
+		name:         "spec-exit-codes-search-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act search` never exits 4: an op with a newer `writer_version` is indexed like any other",
+		testName:     "TestDocClaim_ExitCodes_Search",
+	},
+	{
+		name:         "spec-exit-codes-log-unparseable-op-is-3",
+		docFile:      "docs/spec.md",
+		claimPattern: "(`ops_read_failed` — an op with an unknown `op_version` lands here)",
+		testName:     "TestDocClaim_ExitCodes_Log",
+	},
+	{
+		name:         "spec-exit-codes-log-never-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act log` never exits 4: an op with a newer `writer_version` is printed like any other",
+		testName:     "TestDocClaim_ExitCodes_Log",
+	},
+	{
+		name:         "spec-exit-codes-mcp-missing-repo-is-a-tool-error",
+		docFile:      "docs/spec.md",
+		claimPattern: "a tool call that needs tracker state answers with an error result (`no_repo`) while the server keeps running",
+		testName:     "TestDocClaim_ExitCodes_MCP",
+	},
+	{
+		name:         "spec-exit-codes-mcp-never-3-or-4",
+		docFile:      "docs/spec.md",
+		claimPattern: "The `act mcp` process never exits 3 or 4",
+		testName:     "TestDocClaim_ExitCodes_MCP",
+	},
+	{
+		name:         "spec-exit-codes-version-check-repo-does-not-walk-up",
+		docFile:      "docs/spec.md",
+		claimPattern: "the check looks in the current directory and does not walk up to the repo root",
+		testName:     "TestDocClaim_ExitCodes_Version",
+	},
+	{
+		name:         "spec-exit-codes-version-only-reporter-of-skew",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act version --check-repo` is the only command that reports `version_skew`",
+		testName:     "TestDocClaim_ExitCodes_Version",
+	},
+	{
+		// The write half of "only command that reports version_skew" was
+		// already asserted by the third pass for update and close.
+		name:         "spec-exit-codes-version-skew-does-not-refuse-writes",
+		docFile:      "docs/spec.md",
+		claimPattern: "4 on skew, meaning some op file carries a `writer_version` newer than this binary's (`version_skew`)",
+		testName:     "TestDocClaim_NewerWriterOpDoesNotBlockWritesAndNothingSquashes",
+	},
+	{
+		name:         "help-errors-version-skew-row",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "reported only by 'act version --check-repo' (exit 4)",
+		testName:     "TestDocClaim_HelpErrors_VersionSkewHookFailedNoRepoRows",
+	},
+	{
+		name:         "help-errors-hook-failed-row",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "a .act/hooks/<event> script exited non-zero or timed out",
+		testName:     "TestDocClaim_HelpErrors_VersionSkewHookFailedNoRepoRows",
+	},
+	{
+		name:         "help-errors-no-repo-row",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "no .act/ where the command looked (or, from an MCP",
+		testName:     "TestDocClaim_HelpErrors_VersionSkewHookFailedNoRepoRows",
+	},
 	// act-0be17c: the spec said an unknown op_type hard-fails the fold
 	// (E_UNKNOWN_OP); the fold has skipped such ops since act-20e87c. The
 	// corrected claim is asserted on the real read path, and the op_type
