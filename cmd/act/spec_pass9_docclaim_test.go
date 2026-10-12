@@ -534,3 +534,110 @@ func TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary(t *te
 		}
 	})
 }
+
+// sp9Bare asserts that stdout is a failure with exactly the keys error and
+// message — no details — and the given code.
+func sp9Bare(t *testing.T, what, stdout, code string) {
+	t.Helper()
+	obj := sp8Object(t, what, stdout)
+	if got := sp7Keys(obj); got != "error,message" || sp8Str(obj["error"]) != code || sp8Str(obj["message"]) == "" {
+		t.Errorf("%s: keys %q, error %s; want exactly error and message, the code %q and a message\n%s", what, got, obj["error"], code, stdout)
+	}
+}
+
+// TestDocClaim_Spec_EnvelopeKeysAlwaysPresent asserts the paragraph under
+// the envelope shape in "1. Error handling" and the "Output" line of the
+// `act migrate` section: error and message are in every envelope; details is
+// too, except in the failures `act migrate` reports and in four of the
+// failures of `act version --check-repo`; and a flag error from `act migrate`
+// prints no JSON at all.
+func TestDocClaim_Spec_EnvelopeKeysAlwaysPresent(t *testing.T) {
+	dir := sp6Site(t)
+	id := createIssue(t, dir, "sp9 first")
+	noAct := brokencoHostRepo(t) // a git repo with no .act/
+	notGit := t.TempDir()
+
+	// The rule: three keys, details an object, {} when there is nothing.
+	out, _ := pass5Run(t, dir, 3, "issue_not_found", "show", "--json", pass5NoSuchID)
+	sp8Envelope(t, "act show of an unknown id", out, "issue_not_found")
+	out, _ = pass5Run(t, dir, 2, "bad_flag", "list", "--json", "--sort", "sp9-no-such-field")
+	if _, keys := sp8Envelope(t, "act list --sort <unknown>", out, "bad_flag"); keys != "" || !strings.Contains(out, `"details":{}`) {
+		t.Errorf("an envelope with nothing to add: details keys %q; want \"details\":{}\n%s", keys, out)
+	}
+	out, _ = pass5Run(t, notGit, 3, "not_in_git", "list", "--json")
+	sp8Envelope(t, "act list outside a git repo", out, "not_in_git")
+
+	// act migrate: error and message alone, on one stdout line, no --json.
+	for _, tc := range []struct {
+		where string
+		exit  int
+		code  string
+		args  []string
+	}{
+		{notGit, 3, "not_in_git", []string{"--from", "1", "--to", "2"}},
+		{dir, 2, "bad_input", []string{"--from", "2", "--to", "1"}},
+		{dir, 2, "bad_input", nil},
+		{dir, 5, "migration_not_found", []string{"--from", "1", "--to", "2"}},
+	} {
+		out, stderr := pass5Run(t, tc.where, tc.exit, tc.code, append([]string{"migrate"}, tc.args...)...)
+		sp9Bare(t, "act migrate "+strings.Join(tc.args, " "), out, tc.code)
+		if len(linesOf(out)) != 1 || stderr != "" {
+			t.Errorf("act migrate %v: want one stdout line and an empty stderr\nstdout=%s\nstderr=%s", tc.args, out, stderr)
+		}
+	}
+	// Every failure RunMigrate returns is the two-field MigrateError.
+	src, err := os.ReadFile(filepath.Join(sp6RepoRoot(t), "internal", "op", "migrate.go"))
+	if err != nil {
+		t.Fatalf("read internal/op/migrate.go: %v", err)
+	}
+	if !strings.Contains(string(src), "type MigrateError struct {\n\tError   string `json:\"error\"`\n\tMessage string `json:\"message\"`\n}") {
+		t.Errorf("internal/op/migrate.go: MigrateError is no longer the two fields error and message; the spec says act migrate prints no details")
+	}
+	// A flag error prints no JSON.
+	for _, args := range [][]string{{"--sp9-no-such-flag"}, {"--from", "sp9", "--to", "2"}} {
+		out, stderr, code := runActIn(t, dir, append([]string{"migrate"}, args...)...)
+		if code != 2 || out != "" || !strings.Contains(stderr, "Usage of migrate:") {
+			t.Errorf("act migrate %v: exit %d; want 2, an empty stdout and the flag usage text on stderr\nstdout=%s\nstderr=%s", args, code, out, stderr)
+		}
+	}
+
+	// act version --check-repo: not_in_git and no_repo without details.
+	out, _ = pass5Run(t, notGit, 3, "not_in_git", "version", "--check-repo", "--json")
+	sp9Bare(t, "act version --check-repo outside a git repo", out, "not_in_git")
+	out, _ = pass5Run(t, noAct, 3, "no_repo", "version", "--check-repo", "--json")
+	sp9Bare(t, "act version --check-repo in a repo with no .act/", out, "no_repo")
+	// walk_failed: an op directory that cannot be read.
+	if os.Geteuid() != 0 {
+		shard := filepath.Join(dir, ".act", "ops", id)
+		if err := os.Chmod(shard, 0); err != nil {
+			t.Fatalf("chmod %s: %v", shard, err)
+		}
+		out, _ = pass5Run(t, dir, 3, "walk_failed", "version", "--check-repo", "--json")
+		if err := os.Chmod(shard, 0o755); err != nil {
+			t.Fatalf("chmod %s back: %v", shard, err)
+		}
+		sp9Bare(t, "act version --check-repo over an unreadable op directory", out, "walk_failed")
+	}
+	// stat_failed is not provoked; hold the spec to the source that builds it.
+	vsrc, err := os.ReadFile(filepath.Join(sp6RepoRoot(t), "internal", "cli", "version.go"))
+	if err != nil {
+		t.Fatalf("read internal/cli/version.go: %v", err)
+	}
+	if !strings.Contains(string(vsrc), "return map[string]any{\n\t\t\t\"error\":   \"stat_failed\",\n\t\t\t\"message\": err.Error(),\n\t\t}, 3") {
+		t.Errorf("internal/cli/version.go no longer returns stat_failed as error and message alone")
+	}
+
+	// ... and its other two failures with details.
+	pass5Rewrite(t, pass5CreateOp(t, dir, id), pass5WriterRe, `"writer_version":"99.0.0"`)
+	out, _ = pass5Run(t, dir, 4, "version_skew", "version", "--check-repo", "--json")
+	if _, keys := sp8Envelope(t, "act version --check-repo on skew", out, "version_skew"); keys != "binary_version,max_op_version,writer_version" {
+		t.Errorf("version_skew details keys %q\n%s", keys, out)
+	}
+	bares := t.TempDir()
+	brokencoTrackerBare(t, bares)
+	t.Setenv("ACT_TRACKER_REMOTE", filepath.Join(bares, "{repo}.git"))
+	out, _ = pass5Run(t, noAct, 3, "tracker_not_checked_out", "version", "--check-repo", "--json")
+	if _, keys := sp8Envelope(t, "act version --check-repo with an uncloned tracker", out, "tracker_not_checked_out"); keys != "recover,repo_root,source,tracker_remote" {
+		t.Errorf("tracker_not_checked_out details keys %q\n%s", keys, out)
+	}
+}

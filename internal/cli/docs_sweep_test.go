@@ -3435,7 +3435,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-error-table-details-always-present-two-exceptions",
 		docFile:      "docs/spec.md",
-		claimPattern: "`act migrate` prints only `error` and `message`, and so does `act version --check-repo` for `no_repo`.",
+		claimPattern: "Two commands print failures with `error` and `message` alone:",
 		testName:     "TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource",
 	},
 	{
@@ -3594,6 +3594,36 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "With `--check-repo` a fifth key, `max_op_version`, carries the highest `writer_version` found in the op files — `\"\"` when the tracker has no op yet. There is no `ok`, `schema_version` or `repo_max_writer_version` key.",
 		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-envelope-error-and-message-always",
+		docFile:      "docs/spec.md",
+		claimPattern: "`error` and `message` are present in every envelope. `details` is present in every envelope but the ones named here, and is `{}` when the error carries none.",
+		testName:     "TestDocClaim_Spec_EnvelopeKeysAlwaysPresent",
+	},
+	{
+		name:         "spec-pass9-envelope-which-failures-omit-details",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act migrate` leaves `details` out of every failure it reports (`not_in_git`, `bad_input`, `migration_not_found`, and a read, transform or write failure), and `act version --check-repo` leaves it out of `not_in_git`, `no_repo`, `stat_failed` and `walk_failed`.",
+		testName:     "TestDocClaim_Spec_EnvelopeKeysAlwaysPresent",
+	},
+	{
+		name:         "spec-pass9-envelope-version-failures-with-details",
+		docFile:      "docs/spec.md",
+		claimPattern: "The other two failures of `act version --check-repo`, `version_skew` and `tracker_not_checked_out`, carry `details` like any other envelope.",
+		testName:     "TestDocClaim_Spec_EnvelopeKeysAlwaysPresent",
+	},
+	{
+		name:         "spec-pass9-envelope-universal-pointer",
+		docFile:      "docs/spec.md",
+		claimPattern: "the failures of `act migrate` and `act version --check-repo` that leave `details` out, are listed under \"1. Error handling\".",
+		testName:     "TestDocClaim_Spec_EnvelopeKeysAlwaysPresent",
+	},
+	{
+		name:         "spec-pass9-migrate-output-two-keys-and-flag-errors",
+		docFile:      "docs/spec.md",
+		claimPattern: "those two keys and no `details`. The one case that prints no JSON is a flag error (an unknown flag, or a `--from`/`--to` value that is not an integer): exit 2 with the flag usage text on stderr and nothing on stdout.",
+		testName:     "TestDocClaim_Spec_EnvelopeKeysAlwaysPresent",
 	},
 }
 

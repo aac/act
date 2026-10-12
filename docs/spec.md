@@ -703,7 +703,7 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 - `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
 - `4` — not one meaning. Three commands exit 4, each for its own condition: `act version --check-repo` when some op file carries a `writer_version` newer than this binary's (`version_skew`); `act doctor` when `origin` is configured but unreachable (the `remote-reachable` finding); and `act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`). No other command exits 4 — reads and writes apply an op from a newer writer like any other op.
 
-A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has those three keys and no others; the codes, and the two commands that leave `details` out, are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
+A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has those three keys and no others; the codes, and the failures of `act migrate` and `act version --check-repo` that leave `details` out, are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
 
 ### Pre-import id resolution
 
@@ -1277,7 +1277,7 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 {"error": "<code>", "message": "<human>", "details": {...}}
 ```
 
-`details` is always present and is `{}` when the error carries none. Two commands print their failure without that guarantee: `act migrate` prints only `error` and `message`, and so does `act version --check-repo` for `no_repo`.
+`error` and `message` are present in every envelope. `details` is present in every envelope but the ones named here, and is `{}` when the error carries none. Two commands print failures with `error` and `message` alone: `act migrate` leaves `details` out of every failure it reports (`not_in_git`, `bad_input`, `migration_not_found`, and a read, transform or write failure), and `act version --check-repo` leaves it out of `not_in_git`, `no_repo`, `stat_failed` and `walk_failed`. The other two failures of `act version --check-repo`, `version_skew` and `tracker_not_checked_out`, carry `details` like any other envelope.
 
 The table lists every code the CLI emits — every code that some non-test source line under `cmd/` or `internal/` puts in an envelope's `error` field — and no other. A constant that is declared but never emitted has no row. Codes only the MCP server emits are in the second table. `TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet` holds both tables, and `act help errors`, to that rule.
 
@@ -1468,7 +1468,7 @@ There are no others — no `--dry-run` and no `--json`. The command is not liste
 
 The transform is referenced by name, not embedded as code. On fold a `migrate` op changes nothing a reader sees; it only records the transition on the issue's internal state.
 
-**Output:** always one JSON object on stdout. Success is `{"migrated_issues": <count>, "wrote_ops": <count>}`; a failure is `{"error": "<code>", "message": "..."}`.
+**Output:** one JSON object on stdout, on one line. Success is `{"migrated_issues": <count>, "wrote_ops": <count>}`; a failure is `{"error": "<code>", "message": "..."}` — those two keys and no `details`. The one case that prints no JSON is a flag error (an unknown flag, or a `--from`/`--to` value that is not an integer): exit 2 with the flag usage text on stderr and nothing on stdout.
 
 **Exit codes:** 0 on success, including nothing to migrate; 1 on a read, transform or write failure; 2 on an unknown flag, or `bad_input` — `--from` or `--to` missing or not positive, or `--from` not less than `--to`; 3 outside a git working tree (`not_in_git`); 5 `migration_not_found` when no migration is registered for `(from, to)`. No migration is registered in this version, so every well-formed `act migrate` call today exits 5 and writes nothing.
 
