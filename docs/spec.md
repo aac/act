@@ -815,7 +815,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 - `--reason TEXT` (string, default ""). Stored as `closed_reason`.
 - `--json` (bool).
 
-**Behavior:** Builds a `close` op carrying `closed_at` and `closed_reason`; runs the `close` hook, and only once the hook passes writes the op file. The `close` hook runs before the close op file is written (§Hooks contract), so a refused close leaves no op file behind. It then commits the op file on its own in the nested `.act/` repo. The close commit subject is `act-op: (<short-id>) close`, where `<short-id>` is `act-` plus the first six hex characters of the issue id — the parenthesized marker is what `act doctor`'s `orphan-close` check greps for. The close writes one op file and nothing else: there is no `closed_by_tree` value, and the index has no `closed_by_tree` column.
+**Behavior:** Builds a `close` op carrying `closed_at` and `closed_reason`; runs the `close` hook, and only once the hook passes writes the op file. The `close` hook runs before the close op file is written (§Hooks contract), so a refused close leaves no op file behind. It then commits the op file on its own in the nested `.act/` repo. The close commit subject is `act-op: (<short-id>) close`, where `<short-id>` is the issue id, cut to `act-` plus six hex characters when it is longer — the parenthesized marker is what `act doctor`'s `orphan-close` check greps for. The close writes one op file and nothing else: there is no `closed_by_tree` value, and the index has no `closed_by_tree` column.
 
 **JSON output:**
 ```json

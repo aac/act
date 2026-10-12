@@ -147,6 +147,85 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Golden cases:",
 		testName:     "TestDocClaim_Spec_GoldenCaseListMatchesFixtures",
 	},
+	// act-9c9a85: third stale pass over the spec. It described a
+	// writer_version "reader gate" and a squash-and-push refusal the code
+	// never had, a closed_by_tree reverse index nothing computes, a doctor
+	// check on writer_version that really tests op_version (and exits 1,
+	// not 4), and two property/fuzz tests that were never written. The
+	// reader-gate rewording reuses the act-549a7e fold test; the rest are
+	// new, in spec_pass3_docclaim_test.go.
+	{
+		name:         "spec-no-writer-version-reader-gate",
+		docFile:      "docs/spec.md",
+		claimPattern: "There is no reader gate on `writer_version`.",
+		testName:     "TestDocClaim_Fold_VersionFieldsOnRead",
+	},
+	{
+		name:         "spec-version-check-repo-reports-writer-skew",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act version --check-repo` walks `.act/ops/` and exits 4 with `version_skew`",
+		testName:     "TestDocClaim_Fold_VersionFieldsOnRead",
+	},
+	{
+		name:         "spec-no-version-skew-refusal-on-read-or-write",
+		docFile:      "docs/spec.md",
+		claimPattern: "no read or write command refuses with `version_skew`",
+		testName:     "TestDocClaim_NewerWriterOpDoesNotBlockWritesAndNothingSquashes",
+	},
+	{
+		name:         "spec-no-squash-of-act-op-commits",
+		docFile:      "docs/spec.md",
+		claimPattern: "No command squashes `act-op:` commits",
+		testName:     "TestDocClaim_NewerWriterOpDoesNotBlockWritesAndNothingSquashes",
+	},
+	{
+		name:         "spec-newer-op-version-aborts-fold-not-version-skew",
+		docFile:      "docs/spec.md",
+		claimPattern: "A binary older than the migration does not answer `version_skew`",
+		testName:     "TestDocClaim_NewerOpVersionAbortsFoldWithoutVersionSkew",
+	},
+	{
+		name:         "spec-close-commit-subject",
+		docFile:      "docs/spec.md",
+		claimPattern: "The close commit subject is `act-op: (<short-id>) close`",
+		testName:     "TestDocClaim_Close_CommitSubjectAndNoClosedByTree",
+	},
+	{
+		name:         "spec-close-no-closed-by-tree",
+		docFile:      "docs/spec.md",
+		claimPattern: "the index has no `closed_by_tree` column",
+		testName:     "TestDocClaim_Close_CommitSubjectAndNoClosedByTree",
+	},
+	{
+		name:         "spec-doctor-unknown-op-version-tests-op-version",
+		docFile:      "docs/spec.md",
+		claimPattern: "Any op file whose `op_version` is greater than the one this binary writes (1)",
+		testName:     "TestDocClaim_Doctor_UnknownOpVersionChecksOpVersion",
+	},
+	{
+		name:         "spec-doctor-unknown-op-version-exits-1",
+		docFile:      "docs/spec.md",
+		claimPattern: "an `unknown-op-version` finding exits 1 like any other error finding",
+		testName:     "TestDocClaim_Doctor_UnknownOpVersionChecksOpVersion",
+	},
+	{
+		name:         "spec-doctor-unknown-op-version-edge-case-bullet",
+		docFile:      "docs/spec.md",
+		claimPattern: "it emits one finding per op file with a newer `op_version`, naming the file",
+		testName:     "TestDocClaim_Doctor_UnknownOpVersionChecksOpVersion",
+	},
+	{
+		name:         "spec-property-tier-names-real-tests",
+		docFile:      "docs/spec.md",
+		claimPattern: "- **`TestPropertyLWWPermutationInvariance`**",
+		testName:     "TestDocClaim_Spec_PropertyAndFuzzTestsExist",
+	},
+	{
+		name:         "spec-fuzz-tier-names-real-test",
+		docFile:      "docs/spec.md",
+		claimPattern: "- **`FuzzFoldDeterminism`**",
+		testName:     "TestDocClaim_Spec_PropertyAndFuzzTestsExist",
+	},
 	// act-2c7be3: machine affinity. Eight claims across five surfaces —
 	// the exclusion itself, the write path (including the clearing
 	// form), the fail-open rule, the always-emitted JSON contract, the
