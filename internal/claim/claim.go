@@ -41,6 +41,10 @@ type Result struct {
 	IssueID string
 	// HLC is the HLC stamped on our most recent claim op.
 	HLC hlc.HLC
+	// AlreadyHeld is true when the issue was already claimed by Assignee:
+	// the run wrote no op and made no commit, so there is nothing new for
+	// the caller to publish (act-2cfc30).
+	AlreadyHeld bool
 	// PushNoRemote is true when Options.Push was set, the claim was won,
 	// and there was no remote to push to: the claim stands and nothing
 	// was pushed (act-f4fd34).
@@ -287,11 +291,12 @@ func singleAttempt(
 		return Result{IssueID: issueID, HLC: stamp}, fmt.Errorf("claim: idempotence-check winner: %w", err)
 	} else if winnerHash != "" && winnerAssignee == opts.Assignee {
 		return Result{
-			IssueID:    issueID,
-			YourOpHash: winnerHash,
-			Winner:     winnerAssignee,
-			HLC:        stamp,
-			Claimed:    true,
+			IssueID:     issueID,
+			YourOpHash:  winnerHash,
+			Winner:      winnerAssignee,
+			HLC:         stamp,
+			Claimed:     true,
+			AlreadyHeld: true,
 		}, nil
 	}
 

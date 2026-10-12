@@ -1240,6 +1240,26 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 			won.PushDeferred = true
 			won.PushDeferredReason = deferred.Reason.Error()
 		}
+		// act-2cfc30: a claim is a write like any other, and it is the
+		// one other checkouts most need to see — it is what tells them
+		// the issue is taken. Without --push it used to stay local and
+		// unqueued until the next write happened to push it. It now takes
+		// the same publish leg as every other write (see
+		// WriteOpAndAutoCommit): --isolated publishes and queues nothing,
+		// --offline queues, otherwise flush and push, and a push that does
+		// not reach origin is a deferral. --push already pushed inside the
+		// claim protocol, and a re-claim of an issue this node already
+		// holds committed nothing, so neither publishes again.
+		if !opts.Push && !opts.Isolated && !res.AlreadyHeld {
+			if opts.Offline {
+				_ = RecordPendingPush(gops, gops.RepoRoot, "claim")
+			} else if pub := publishClaimCommit(gops, opts.Branch); pub.Deferred {
+				won.PushDeferred = true
+				if pub.Reason != nil {
+					won.PushDeferredReason = pub.Reason.Error()
+				}
+			}
+		}
 		return won, 0
 	}
 	// Claim loss: exit 5 with envelope error `claim_lost` per spec
@@ -1442,6 +1462,20 @@ func (c *claimGitOps) Push() error {
 	}
 	defer release()
 	return c.inner.PushToBranch(c.branch)
+}
+
+// publishClaimCommit runs the publish leg for a won claim's commit under
+// the write lock, as claimGitOps.Push does (act-94bbea): the claim's commit
+// step released the lock, and the push must not run while a sibling is
+// mid-rebase. Not getting the lock in time defers the push like any other
+// publish failure — the claim is already committed.
+func publishClaimCommit(gops *gitops.ActGitOps, branch string) PublishResult {
+	release, err := gitops.AcquireWriteLock(gops.RepoRoot)
+	if err != nil {
+		return deferPublish(gops, "claim", nil, err)
+	}
+	defer release()
+	return PublishCommittedOp(gops, "claim", branch, nil)
 }
 
 // FormatUpdateClaimHuman renders an UpdateClaimResult as a single

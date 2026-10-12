@@ -3873,6 +3873,31 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`act_block` with `push: true` in a tracker with no `origin` remote is still a success, and its result adds `\"warnings\":[\"push_no_remote\"]`: the edge is committed and nothing was pushed.",
 		testName:     "TestDocClaim_FnwMCP_BlockPushNoRemoteWarns",
 	},
+	// act-2cfc30: a won claim is auto-published like every other write.
+	{
+		name:         "spec-claim-is-auto-published",
+		docFile:      "docs/spec.md",
+		claimPattern: "In a tracker with `origin`, the claim commit of a won `act update --claim`, `act next` or MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing; `--offline` queues the claim commit in `.act/.pending-pushes` instead of pushing; a claim push that does not reach `origin` is a deferral like any other, reported on `act update --claim --json` as `push_deferred`. Re-claiming an issue the checkout already holds writes no op and pushes nothing.",
+		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
+	},
+	{
+		name:         "spec-claim-is-auto-published-mcp-next",
+		docFile:      "docs/spec.md",
+		claimPattern: "MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing",
+		testName:     "TestDocClaim_ClpMCPNextPublishesItsClaim",
+	},
+	{
+		name:         "spec-update-claim-flag-publishes-on-win",
+		docFile:      "docs/spec.md",
+		claimPattern: "On win the claim commit is published like any other write (see \"Auto-publish on write\"); `--push` is redundant when `origin` is set.",
+		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
+	},
+	{
+		name:         "spec-update-claim-without-push-defers",
+		docFile:      "docs/spec.md",
+		claimPattern: "A won `--claim` without `--push` is deferred and reported identically.",
+		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

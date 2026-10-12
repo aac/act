@@ -526,7 +526,8 @@ is *not* used for tiebreaking — it is already mixed into `op_hash`.
    (hlc.wall, hlc.logical, op_hash). That op's assignee is the winner.
 
    If winner.op_hash == our_op_hash:
-     if --push: git push
+     unless --isolated or --offline: git push
+       (see "Auto-publish on write"; --push is not needed)
      emit {"claimed": true, "issue": <id>, "op_hash": <hash>}
      exit 0
    else:
@@ -633,6 +634,8 @@ Precedence rules:
 4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set.
 
 Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony.
+
+**A won claim is published too (act-2cfc30).** The claim is the write other checkouts most need to see, since it is what tells them the issue is taken. In a tracker with `origin`, the claim commit of a won `act update --claim`, `act next` or MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing; `--offline` queues the claim commit in `.act/.pending-pushes` instead of pushing; a claim push that does not reach `origin` is a deferral like any other, reported on `act update --claim --json` as `push_deferred`. Re-claiming an issue the checkout already holds writes no op and pushes nothing.
 
 **Publish failure is a deferral, not an error (act-89a595).** Once the auto-commit lands, the op is durable, so the publish leg can no longer fail the command. When the push does not reach origin — retry exhaustion, an unreachable remote, a rejecting receive — the command **exits 0**, appends the commit to `.act/.pending-pushes`, and writes an unmissable `act: WARNING:` block to stderr saying the op was committed but not pushed. `act close --json` and `act update --json` additionally set `push_deferred: true` (and `push_deferred_reason`) on their results, so JSON consumers can tell "peers can't see it yet" from "it didn't land". The deferred commit publishes on the next non-offline write, or on `act remote sync`; a bare push on the nested repo covers every local commit reachable from HEAD, so nothing is lost by waiting. The `push_exhausted` envelope (exit 4) that this path used to emit is **retired** — it reported failure on a write that had already landed, and callers applying the ordinary `rc != 0 ⇒ the write didn't happen` rule retried and duplicated the op.
 
@@ -878,7 +881,7 @@ The issue's fields are the top-level keys: there is no `ok` key, no `issue` wrap
 - `--ext-rm REF` (repeatable). Clears an external dep — an opaque external-tracker ref attached with `act dep add --external`. Each `REF` writes one `remove_external_dep` op. Clearing a ref the issue does not carry is not an error: the op is written and changes nothing. An empty `REF` is exit 2, and so is `--ext-rm` together with `--claim`.
 - `--unclaim` (bool). Releases a claim: an `in_progress` issue returns to `open` and its assignee is cleared. It writes one `unclaim` op, on an issue that is not `in_progress` too, where the op changes nothing. Mutually exclusive with `--claim` (the pair is exit 2).
 - `--force` (bool). With `--claim` only: claim an issue even though it has open external deps. Without it that claim is exit 2 with `blocked_by_external_dep`; with it the claim goes ahead and a `WARNING` naming each bypassed dep is written to stderr. It has no effect on any other update, and is not a field flag: `--force` alone is exit 2 like an update that names nothing to change.
-- `--claim` (bool). Atomic claim protocol: write `claim` op, `git pull --rebase` (skipped under `--isolated`), refold, report win/loss. On win, optionally push if `--push`.
+- `--claim` (bool). Atomic claim protocol: write `claim` op, `git pull --rebase` (skipped under `--isolated`), refold, report win/loss. On win the claim commit is published like any other write (see "Auto-publish on write"); `--push` is redundant when `origin` is set.
 - `--wait` (bool, only with `--claim`). On loss, poll until the issue becomes claimable again or status becomes terminal.
 - `--wait-timeout D` (Go duration such as `90s`, default `30s`). Bound on `--wait`. A bare number such as `60` is not a duration and is exit 2.
 - `--json` (bool).
@@ -905,7 +908,7 @@ Here `ops_written` is a list of op types, not a count, and it is always `["claim
 A lost claim has no `ops_written` key.
 Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
 
-**A push that does not reach `origin`.** When the tracker has an `origin` that cannot be reached or that rejects the push, the update is still written and committed and `act update` exits 0, with or without `--push`: the result carries `"push_deferred": true` and `push_deferred_reason` (the push error's text), the commit is queued in `.act/.pending-pushes`, and the `act: WARNING:` block goes to stderr. A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `"claimed": true`, `"push_deferred": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`. Both keys are absent when nothing was deferred. `act update` never answers `push_failed`.
+**A push that does not reach `origin`.** When the tracker has an `origin` that cannot be reached or that rejects the push, the update is still written and committed and `act update` exits 0, with or without `--push`: the result carries `"push_deferred": true` and `push_deferred_reason` (the push error's text), the commit is queued in `.act/.pending-pushes`, and the `act: WARNING:` block goes to stderr. A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `"claimed": true`, `"push_deferred": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`. A won `--claim` without `--push` is deferred and reported identically. Both keys are absent when nothing was deferred. `act update` never answers `push_failed`.
 
 **Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
 
