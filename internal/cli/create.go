@@ -113,6 +113,12 @@ const WarnPushNoRemote = "push_no_remote"
 // The issue exists; only the derived cache is behind.
 const WarnIndexUpdateFailed = "index_update_failed"
 
+// WarnParentCheckFailed is the CreateResult warning reported when --parent
+// was given and neither the index nor the op log could say whether that
+// issue is closed (act-11d2e2). The create is not stopped by it; the
+// parent_closed check simply did not run.
+const WarnParentCheckFailed = "parent_check_failed"
+
 // CreateErrorOutput is the structured shape returned on failure. Candidates
 // is non-nil only on the id_ambiguous path (resolving --parent); it is also
 // mirrored under Details["candidates"] so the on-the-wire JSON envelope
@@ -291,7 +297,15 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}
 		parentFull = full
 		// Probe the parent's status via a freshly built index.
-		if closed, perr := parentIsClosed(paths, full); perr == nil && closed {
+		//
+		// act-11d2e2: when neither the index nor the op log can answer,
+		// the create still goes ahead — the parent exists, and whether it
+		// is closed only ever earned a warning — but it says the check
+		// did not run. Dropping the error read the same as "the parent
+		// is open".
+		if closed, perr := parentIsClosed(paths, full); perr != nil {
+			warnings = append(warnings, WarnParentCheckFailed)
+		} else if closed {
 			warnings = append(warnings, "parent_closed")
 		}
 	}

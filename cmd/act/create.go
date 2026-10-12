@@ -159,6 +159,9 @@ func runCreate(args []string) int {
 		if w == "parent_closed" {
 			fmt.Fprintln(os.Stderr, "act create: warning: parent issue is closed")
 		}
+		if w == cli.WarnParentCheckFailed {
+			fmt.Fprintln(os.Stderr, "act create: warning: could not check whether the parent issue is closed")
+		}
 		if w == cli.WarnIndexUpdateFailed {
 			fmt.Fprintln(os.Stderr, "act create: warning: the issue is created and committed, but .act/index.db could not be updated; do not retry the create")
 		}

@@ -3636,10 +3636,10 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-create-json-push-no-remote-warning",
 		docFile:      "docs/spec.md",
-		claimPattern: "`\"push_no_remote\"` is the second of three warnings: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
+		claimPattern: "`\"push_no_remote\"` is the second of four warnings: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
 		testName:     "TestDocClaim_Spec_CreatePushedReportsWhatHappened",
 	},
-	// act-4d7596: create has three warnings, and the doctor section says what
+	// act-4d7596: create had three warnings (four since act-11d2e2), and the doctor section says what
 	// each command does when the index is already malformed.
 	{
 		name:         "spec-create-three-warnings",
@@ -3948,6 +3948,15 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "An `--offline` write whose append to `.act/.pending-pushes` fails still stands. The op is committed by then, so the command exits 0 and prints a WARNING block on stderr that starts `act: WARNING: the op was COMMITTED LOCALLY but could NOT be queued in .act/.pending-pushes.`",
 		testName:     "TestDocClaim_Spec_OfflineQueueFailureIsAWarning",
+	},
+	// act-11d2e2 item 4: create --parent used to drop the error when
+	// neither the index nor the op log could say whether the parent is
+	// closed, which read the same as "the parent is open".
+	{
+		name:         "spec-create-parent-check-failed-warns",
+		docFile:      "docs/spec.md",
+		claimPattern: "When the op log cannot say either, the create still lands and `warnings` carries the fourth, `\"parent_check_failed\"`, in place of `parent_closed`: the check did not run, so the parent may be closed. Without `--json` it is a line on stderr.",
+		testName:     "TestDocClaim_Spec_CreateParentCheckFailedWarns",
 	},
 }
 
