@@ -2852,6 +2852,158 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "auto-remediate index-divergence/index-schema/nested-exclude findings",
 		testName:     "TestDocClaim_Doctor_NestedExclude",
 	},
+	// act-f7a994: sixth stale pass over docs/spec.md. The universal exit
+	// list gave 4 one meaning; `--check` was called repeatable; four doctor
+	// checks had no table row and the test plan named eight of fifteen; the
+	// show/log synopses left out most flags; `act help errors` listed three
+	// codes nothing emits; the `--check-repo` bullet did not say where it
+	// looks; the remote_status intro said every field defaults to zero.
+	// Drift shape: a check or a flag is added without its doc line, or a
+	// dropped code gains an emitter, and the test named here goes red.
+	{
+		name:         "spec-universal-exit-4-three-uses",
+		docFile:      "docs/spec.md",
+		claimPattern: "Three commands exit 4, each for its own condition",
+		testName:     "TestDocClaim_Spec_ExitCodeFourHasThreeUses",
+	},
+	{
+		name:         "spec-universal-exit-4-no-other-command",
+		docFile:      "docs/spec.md",
+		claimPattern: "No other command exits 4",
+		testName:     "TestDocClaim_Spec_ExitCodeFourHasThreeUses",
+	},
+	{
+		name:         "spec-universal-exit-4-bootstrap-timeout",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`)",
+		testName:     "TestDocClaim_BootstrapFromRemote_TimeoutEnvelope",
+	},
+	{
+		name:         "spec-doctor-check-table-lists-all-checks",
+		docFile:      "docs/spec.md",
+		claimPattern: "| `phase2-reconciliation` |",
+		testName:     "TestDocClaim_Spec_DoctorCheckTableListsExactlyAllChecks",
+	},
+	{
+		name:         "spec-test-plan-doctor-check-list",
+		docFile:      "docs/spec.md",
+		claimPattern: "and `fold-error`, which has no pass of its own):",
+		testName:     "TestDocClaim_Spec_TestPlanDoctorCheckListMatchesAllChecks",
+	},
+	{
+		name:         "spec-doctor-check-flag-single-value",
+		docFile:      "docs/spec.md",
+		claimPattern: "The flag is not repeatable: passed twice, the last value is the one that runs.",
+		testName:     "TestDocClaim_Doctor_CheckFlagTakesOneName",
+	},
+	{
+		name:         "spec-doctor-check-flag-names-are-table-rows",
+		docFile:      "docs/spec.md",
+		claimPattern: "The names accepted are the rows of the table below; any other name exits 2.",
+		testName:     "TestDocClaim_Doctor_CheckFlagTakesOneName",
+	},
+	{
+		name:         "spec-doctor-row-stale-git-lock",
+		docFile:      "docs/spec.md",
+		claimPattern: "doctor never removes the lock, because it cannot tell a stale lock from one a running git process holds",
+		testName:     "TestDocClaim_Spec_DoctorRowsGitignorePhase2StatusLock",
+	},
+	{
+		name:         "spec-doctor-row-status-vs-oplog",
+		docFile:      "docs/spec.md",
+		claimPattern: "Error findings exit 1; the warn finding exits 0 unless `--strict`.",
+		testName:     "TestDocClaim_Spec_DoctorRowsGitignorePhase2StatusLock",
+	},
+	{
+		name:         "spec-doctor-row-gitignore-effective",
+		docFile:      "docs/spec.md",
+		claimPattern: "Read-only: `--fix` does not edit `.gitignore`. A finding exits 1.",
+		testName:     "TestDocClaim_Spec_DoctorRowsGitignorePhase2StatusLock",
+	},
+	{
+		name:         "spec-doctor-row-phase2-umbrella",
+		docFile:      "docs/spec.md",
+		claimPattern: "Findings carry those five names, never `phase2-reconciliation`, and `--check` takes only the umbrella name",
+		testName:     "TestDocClaim_Spec_DoctorRowsGitignorePhase2StatusLock",
+	},
+	{
+		name:         "spec-show-synopsis-names-every-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "**Synopsis:** `act show <id> [--json] [--include-ops] [--commit-marker] [--full] [--no-fetch]`",
+		testName:     "TestDocClaim_Spec_ShowLogSynopsesNameEveryFlag",
+	},
+	{
+		name:         "spec-log-synopsis-names-every-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "**Synopsis:** `act log [<id>] [--since D] [--by-issue ID] [--type T[,T...]] [--summary] [--no-fetch] [--json]`",
+		testName:     "TestDocClaim_Spec_ShowLogSynopsesNameEveryFlag",
+	},
+	{
+		name:         "spec-show-commit-marker-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "Print only the commit-message trailer for the issue",
+		testName:     "TestDocClaim_Show_CommitMarkerFullAndNoFetchFlags",
+	},
+	{
+		name:         "spec-show-full-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "Without it each is cut at 5 lines or 400 characters, whichever comes first",
+		testName:     "TestDocClaim_Show_CommitMarkerFullAndNoFetchFlags",
+	},
+	{
+		name:         "spec-log-id-optional-bare-log-exits-2",
+		docFile:      "docs/spec.md",
+		claimPattern: "a bare `act log` exits 2",
+		testName:     "TestDocClaim_Log_ScopeAndFilterFlags",
+	},
+	{
+		name:         "spec-log-summary-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--summary` adds a short note of what the op did",
+		testName:     "TestDocClaim_Log_ScopeAndFilterFlags",
+	},
+	{
+		name:         "log-summary-flag-help",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "human format only: add a short note of what each op did",
+		testName:     "TestDocClaim_Log_ScopeAndFilterFlags",
+	},
+	{
+		name:         "help-errors-not-in-git-row-mcp-reads",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "act_log and act_search MCP tools answer when the",
+		testName:     "TestDocClaim_HelpErrors_NotInGitAlsoFromMCPReadsWithNoActDir",
+	},
+	{
+		name:         "help-errors-no-row-for-codes-nothing-emits",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "    hook_failed             a .act/hooks/<event> script exited non-zero or timed out\n    import_invalid_jsonl    'act import' could not parse a line",
+		testName:     "TestDocClaim_HelpErrors_NoRowForCodesNothingEmits",
+	},
+	{
+		name:         "spec-version-check-repo-bullet-where-it-looks",
+		docFile:      "docs/spec.md",
+		claimPattern: "the repo root is found from any subdirectory, so the flag need not be run from the root",
+		testName:     "TestDocClaim_VersionCheckRepo_ResolvesRepoRootFromSubdirectory",
+	},
+	{
+		name:         "spec-version-check-repo-bullet-exit-3",
+		docFile:      "docs/spec.md",
+		claimPattern: "Outside a git working tree, or in a repo with no `.act/`, it exits 3 (see the exit codes below).",
+		testName:     "TestDocClaim_Spec_VersionCheckRepoBulletSaysWhereItLooks",
+	},
+	{
+		name:         "spec-doctor-remote-status-defaults-when-phase2-did-not-run",
+		docFile:      "docs/spec.md",
+		claimPattern: "is `true` and the other four fields hold their zero values",
+		testName:     "TestDocClaim_Doctor_RemoteStatusWhenPhase2DidNotRun",
+	},
+	{
+		name:         "spec-doctor-remote-status-remote-reachable-default-true",
+		docFile:      "docs/spec.md",
+		claimPattern: "nothing was probed, so nothing is reported unreachable",
+		testName:     "TestDocClaim_Doctor_RemoteReachableFalseOnlyWhenProbeFailed",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
