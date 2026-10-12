@@ -3639,6 +3639,31 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`\"push_no_remote\"` is the other warning: `--push` was given and the tracker has no `origin` remote, so the issue is created and committed, exit 0, and nothing was pushed. Without `--json` it is a line on stderr.",
 		testName:     "TestDocClaim_Spec_CreatePushedReportsWhatHappened",
 	},
+	// act-e3782c: an index failure after create's commit is a warning.
+	{
+		name:         "spec-create-index-update-failed-is-a-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "`\"index_update_failed\"` in `warnings` means the op was written and committed and `.act/index.db` could not then be updated. The issue exists, the exit code is 0 and `id` is the one to use: do not retry the create.",
+		testName:     "TestDocClaim_CreateIndexUnopenable_ReportsTheCreatedIssue",
+	},
+	{
+		name:         "spec-create-index-update-failed-reads-still-fail",
+		docFile:      "docs/spec.md",
+		claimPattern: "a read that cannot open the index fails in its own name (`index_open_failed`). Without `--json` the warning is a line on stderr, beside the usual `Created` line.",
+		testName:     "TestDocClaim_CreateIndexUnopenable_HumanWarnsAndReadsStillFail",
+	},
+	{
+		name:         "spec-create-exit-0-when-index-update-fails",
+		docFile:      "docs/spec.md",
+		claimPattern: "0, including a create whose push was deferred and a create whose index update failed after the commit;",
+		testName:     "TestDocClaim_CreateIndexUnopenable_ReportsTheCreatedIssue",
+	},
+	{
+		name:         "spec-error-table-index-update-failed-never-from-create",
+		docFile:      "docs/spec.md",
+		claimPattern: "Never from `act create`, which reports it as a warning and exits 0",
+		testName:     "TestDocClaim_CreateIndexUnopenable_BlocksEdgeStillLands",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

@@ -101,6 +101,11 @@ type CreateResult struct {
 // and committed, and nothing was pushed (act-8c1c05).
 const WarnPushNoRemote = "push_no_remote"
 
+// WarnIndexUpdateFailed is the CreateResult warning for a create whose op
+// was written and committed but whose index refresh then failed (act-e3782c).
+// The issue exists; only the derived cache is behind.
+const WarnIndexUpdateFailed = "index_update_failed"
+
 // CreateErrorOutput is the structured shape returned on failure. Candidates
 // is non-nil only on the id_ambiguous path (resolving --parent); it is also
 // mirrored under Details["candidates"] so the on-the-wire JSON envelope
@@ -612,11 +617,18 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	// Refresh the live SQLite index so doctor's index-divergence check
 	// passes immediately after a successful create. The op log on disk is
 	// the source of truth; the index is a derived cache.
+	//
+	// act-e3782c: a refresh failure here is a warning, not an error. The
+	// op is already written and committed, so exit 1 told a caller reading
+	// exit status alone that nothing was created — and its retry filed a
+	// duplicate. The index is rebuilt from the op log by the next read; if
+	// it cannot be opened at all, that read fails in its own name
+	// (index_open_failed / index_rebuild_failed), which is where a command
+	// with no answer without the index should fail. Create's answer — the
+	// id — does not depend on the index.
+	indexStale := false
 	if err := RefreshIndexForIssue(paths, issueID); err != nil {
-		return CreateErrorOutput{
-			Error:   "index_update_failed",
-			Message: err.Error(),
-		}, 1
+		indexStale = true
 	}
 	// --blocks targets' deps[] grew; their cached rows must be refreshed
 	// too or `act ready` will continue to surface them until the next
@@ -626,12 +638,12 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 	if !opts.NoCommit {
 		for _, target := range blocksTargets {
 			if err := RefreshIndexForIssue(paths, target); err != nil {
-				return CreateErrorOutput{
-					Error:   "index_update_failed",
-					Message: err.Error(),
-				}, 1
+				indexStale = true
 			}
 		}
+	}
+	if indexStale {
+		warnings = append(warnings, WarnIndexUpdateFailed)
 	}
 
 	// Step 8: success envelope. Prefix mirrors the marker that
