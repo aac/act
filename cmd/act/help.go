@@ -763,7 +763,6 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
 
   Internal / per-command codes (also stable; tests pin them):
     bad_flag                argparse rejected a flag/value
-    ambiguous_id            legacy alias for id_ambiguous
     cycle                   legacy alias used by 'dep add'
     claim_failed            claim could not write or push
     config_read_failed      .act/config.json unreadable

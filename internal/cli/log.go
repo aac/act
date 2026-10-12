@@ -45,10 +45,11 @@ type LogResult struct {
 //     here are the user-facing names — friendly aliases (update, dep_add,
 //     delete) are translated to spec names (update_field, add_dep,
 //     tombstone) by normalizeOpTypeFilter before matching.
-//   - Summary is a presentation knob, not a filter: when true the human
-//     renderer emits one line per op (timestamp, op_type, 8-char hash,
-//     summary) instead of the full envelope. The JSON shape is
-//     unaffected — JSON callers see the same LogResult either way.
+//   - Summary is a presentation knob, not a filter. The human renderer
+//     emits one line per op either way (timestamp, op_type, 8-char hash,
+//     `[issue=<short id>]`); when true it adds a short note of what the
+//     op did and drops the issue tag on a one-issue log. The JSON shape
+//     is unaffected — JSON callers see the same LogResult either way.
 type LogOptions struct {
 	Since   time.Duration
 	ByIssue string

@@ -617,12 +617,14 @@ This section specifies every v1 CLI command, the universal flag set, exit codes,
 
 ### Universal flags (write commands)
 
-These flags are accepted by every command that produces a new op (`create`, `update`, `close`, `dep add`, `init`):
+These flags are accepted by the commands that write an op — `create`, `update`, `close`, `dep add`, `reopen`, `delete` — except `--verify`, which only `update`, `reopen` and `delete` take. `act init` takes none of them. Each command's Synopsis line names the ones it accepts.
 
 - `--no-commit` — write the op file and stage it; do not run `git commit`. Useful for batching agents.
 - `--push` — after the op-commit, run `git push` to the configured remote. Implies a successful local commit.
 - `--isolated` — local-only mode. Skips remote fetch (relevant for `--claim`'s pull-rebase step) and refuses `--push`. Mutually exclusive with `--push`.
-- `--verify` — run host git hooks during the op-commit. Default is `--no-verify` (op commits touch only `.act/ops/**`).
+- `--verify` — run host git hooks during the op-commit. Default is `--no-verify` (op commits touch only `.act/ops/**`). `create`, `close` and `dep add` do not define this flag: passing it to them is exit 2.
+- `--offline` — commit locally and skip the push; see "Offline mode" below.
+- `--branch NAME` — commit the op on branch `NAME` of the nested `.act/` repo instead of the branch it is on. The branch is created if it does not exist and is left checked out.
 
 Precedence rules:
 1. `--no-commit` + `--push` is a usage error (exit 2): cannot push what wasn't committed.
@@ -709,7 +711,7 @@ Every command accepting an `<id>` argument resolves the input through this pipel
 
 1. **Import maps**: scan `.act/imports/*.json` (sorted by filename, descending) for the input as a key in any `mapping` object. If found, replace with the mapped post-import id and continue.
 2. **Exact full id**: if the input matches a known full id, use it.
-3. **Prefix match**: treat the input as a prefix and find issues whose full id starts with it. Zero matches → exit 3 ("not found"). One match → use it. Multiple matches → exit 2 with `{"error": {"kind": "ambiguous_id", "candidates": ["act-a1b2", "act-a1b9", ...]}}`.
+3. **Prefix match**: treat the input as a prefix and find issues whose full id starts with it. Zero matches → exit 3 ("not found"). One match → use it. Multiple matches → exit 2 with `{"error": "id_ambiguous", "message": "...", "details": {"prefix": "act-a1b", "candidates": ["act-a1b2", "act-a1b9", ...]}}`. Nothing emits the older `ambiguous_id` code.
 
 Resolution happens before any op is written, so a write command never partially applies due to a bad id.
 
@@ -717,7 +719,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act init`
 
-**Synopsis:** `act init [--force]`
+**Synopsis:** `act init [--force] [--force-new] [--contributing] [--commit-host] [--json]`
 
 **Behavior:** Creates `.act/{ops,snapshots,hooks,imports}/`, an empty `index.db`, and `config.json` carrying a freshly generated `node_id = sha256(machine-id || git-config user.email)[0:8]`, `schema_version`, `writer_version`, and an empty `fold-checkpoint` placeholder.
 
@@ -740,7 +742,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act create <title>`
 
-**Synopsis:** `act create <title> [-p N] [--parent ID] [--blocked-by ID]... [--blocks ID]... [--accept "criteria"]... [--type T] [--machine LABEL] [--description "text"] [--json]` plus universal flags.
+**Synopsis:** `act create <title> [-p|--priority N] [--parent ID] [--blocked-by ID]... [--blocks ID]... [--accept "criteria"]... [--type T] [--machine LABEL] [--description "text"] [--description-file PATH] [--json] [--no-commit] [--push] [--isolated] [--offline] [--branch NAME]`
 
 **Flags:**
 - `-p, --priority N` (int 0..3, default 2). 0 is highest.
@@ -768,7 +770,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act list`
 
-**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--json] [--limit N] [--sort field]`
+**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--json] [--limit N] [--sort field] [--no-fetch]`
 
 **Flags:**
 - `--status X` (csv string, e.g. `open,in_progress`). Default: all non-closed — the working set. `--status closed` reaches finished work.
@@ -778,6 +780,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--json` (bool).
 - `--limit N` (int, default 200).
 - `--sort field` (enum priority|created_at|closed_at|id, optionally suffixed `:asc`/`:desc`). Default sort order: priority asc, then created_at desc. Tie-breaker: id asc.
+- `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk; `--json` output then carries `refresh.reason: "no_fetch"`. `ACT_NO_FETCH=1` does the same.
 
 **Ordering:** closed issues sort after every non-closed issue. This grouping is applied ahead of `--sort` and is not overridable — a listing that mixes statuses must not bury live work under finished work. `--sort` orders the rows within each group.
 
@@ -832,7 +835,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act update <id>`
 
-**Synopsis:** `act update <id> [--title T] [--status X] [--priority N] [--type T] [--parent ID] [--assignee Y] [--machine LABEL] [--description T] [--description-append T] [--description-append-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--claim] [--json] [--wait] [--wait-timeout SECS]` plus universal flags.
+**Synopsis:** `act update <id> [--title T] [--status X] [--priority N] [--type T] [--parent ID] [--assignee Y] [--machine LABEL] [--description T] [--description-append T] [--description-append-file PATH] [--description-file PATH] [--accept "..."] [--accept-add "..."] [--accept-rm N] [--dep-rm ID] [--ext-rm REF] [--claim] [--unclaim] [--force] [--json] [--wait] [--wait-timeout D] [--no-commit] [--push] [--isolated] [--offline] [--branch NAME] [--verify]`
 
 `act update` reaches every one of the seven LWW-per-field updatable fields the fold table in §3 names — `title`, `description`, `priority`, `type`, `assignee`, `parent`, `machine`. This is normative: a field the fold merges per-field MUST have a write path on both the CLI and MCP surfaces, or the storage layer supports a state no caller can reach. Title, type and parent were added in act-3e21b8 to close exactly that gap.
 
@@ -854,7 +857,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--dep-rm ID` (repeatable). Removes a dep edge; resolves id.
 - `--claim` (bool). Atomic claim protocol: write `claim` op, `git pull --rebase` (skipped under `--isolated`), refold, report win/loss. On win, optionally push if `--push`.
 - `--wait` (bool, only with `--claim`). On loss, poll until the issue becomes claimable again or status becomes terminal.
-- `--wait-timeout SECS` (int, default 60). Bound on `--wait`.
+- `--wait-timeout D` (Go duration such as `90s`, default `30s`). Bound on `--wait`. A bare number such as `60` is not a duration and is exit 2.
 - `--json` (bool).
 
 Each non-`--claim` field flag generates one op (so `--priority 0 --assignee "me"` writes two ops in one commit).
@@ -879,7 +882,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 ### `act close <id>`
 
-**Synopsis:** `act close <id> [--reason TEXT] [--json]` plus universal flags.
+**Synopsis:** `act close <id> [--reason TEXT] [--force] [--no-code] [--no-doctor] [--json] [--no-commit] [--push] [--isolated] [--offline] [--branch NAME]`
 
 **Flags:**
 - `--reason TEXT` (string, default ""). Stored as `closed_reason`.
@@ -901,7 +904,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 ### `act dep add <child> <parent>`
 
-**Synopsis:** `act dep add <child> <parent> [--type T] [--json]` plus universal flags.
+**Synopsis:** `act dep add <child> <parent> [--type T] [--blocked-by ID] [--blocks ID] [--external REF] [--json] [--no-commit] [--push] [--isolated] [--offline] [--branch NAME]`
 
 **Flags:**
 - `--type T` (enum blocks|relates|supersedes, default blocks).
@@ -926,13 +929,14 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 ### `act ready`
 
-**Synopsis:** `act ready [--under <id>] [--json] [--limit N] [--all-machines]`
+**Synopsis:** `act ready [--under <id>] [--json] [--limit N] [--all-machines] [--mine] [--as NODE] [--fresh] [--no-cache] [--no-fetch]`
 
 **Flags:**
 - `--under <id>` (string, optional). Restrict output to descendants (via `parent` edges) of this id.
 - `--json` (bool).
 - `--limit N` (int, default 50). `--limit 0` means "no limit" (every ready issue), the same meaning it has on `act list`.
 - `--all-machines` (bool). Include issues pinned to another machine.
+- `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk; `--json` output then carries `refresh.reason: "no_fetch"`. `ACT_NO_FETCH=1` does the same.
 
 **Algorithm:** Fold all issues; an issue is **ready** iff `status == open` AND no incoming `blocks` dep points at it from an open/in_progress issue AND it is not pinned to a different machine. Sort by priority asc, created_at desc, id asc.
 
@@ -1012,12 +1016,13 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 
 ### `act search <query>`
 
-**Synopsis:** `act search <query> [--in title|desc|all] [--status X] [--limit N] [--json]`
+**Synopsis:** `act search <query> [--in title|desc|all] [--status X] [--limit N] [--no-fetch] [--json]`
 
 **Flags:**
 - `--in` (enum, default `all`). Restrict FTS5 column scope.
 - `--status X` (csv).
 - `--limit N` (int, default 50).
+- `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk; `--json` output then carries `refresh.reason: "no_fetch"`. `ACT_NO_FETCH=1` does the same.
 - `--json` (bool).
 
 **Behavior:** SQLite FTS5 query; index rebuilt-on-demand if stale.
@@ -1061,12 +1066,14 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 
 ### `act doctor`
 
-**Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--json]`
+**Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--strict] [--no-fetch] [--json]`
 
 **Flags:**
 - `--check NAME` (string, a single value). Run only the named check. The flag is not repeatable: passed twice, the last value is the one that runs. Default: run all. The names accepted are the rows of the table below; any other name exits 2.
 - `--fix` (bool). Auto-remediate where safe (per check, below). Drives `index-divergence`, `index-schema` and `nested-exclude` only.
 - `--fix-index` (bool). Auto-remediate the `index-malformed` check by rebuilding `.act/index.db` from `.act/ops/`. Separate flag from `--fix` so the malformed-image recovery (which moves the broken file aside) is opt-in independent of the routine divergence/schema fixes.
+- `--strict` (bool). Promote every warn-severity finding to error severity, so a run whose only findings are warnings exits 1 instead of 0.
+- `--no-fetch` (bool). Skip the `git fetch --dry-run` probe of `origin` that `phase2-reconciliation` runs; see "`--no-fetch` flag" under "Doctor reconciliation". Not the read-path flag of the same name: `ACT_NO_FETCH=1` does not set it.
 - `--json` (bool).
 
 **Checks and `--fix` behavior:**
@@ -1104,10 +1111,13 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 
 **JSON output:**
 ```json
-{"ok": true|false, "checks":[
-  {"name":"cycle","status":"pass|fail","findings":[...],"fixed":false}
-], "summary":{"pass":7,"fail":1}}
+{"findings":[
+  {"check":"nested-exclude","severity":"warn","message":"the nested .act repo does not ignore act's working files (/.slow-writes): ..."}
+], "count":1,
+ "remote_status":{"remote_reachable":true,"local_unpushed_count":0,"upstream_drift_commits":0,"slow_writes_last_hour":0,"fetch_failure_reason":""}}
 ```
+
+The object has exactly three top-level keys: `findings`, `count` and `remote_status`. There is no `ok` key, no per-check `checks` list and no pass/fail summary — a check that found nothing leaves no trace in the output. `findings` is `null` on a clean run; each finding has `check`, `severity` (`warn` or `error`) and `message`. `count` is the number of findings. `remote_status` is described under "Remote-status JSON block".
 
 **Exit codes:** 0 when no finding has error severity (warnings alone exit 0 unless `--strict` promotes them); 1 if any error finding remains (and `--fix` did not remediate) — an `unknown-op-version` finding exits 1 like any other error finding, not 4; 2 on bad flags, including a `--check` name that is not a check; 3 when the working directory is not inside a git working tree (`not_in_git`), or when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`); 4 when `origin` is configured but unreachable (the `remote-reachable` error finding), which takes precedence over 1. In a git repo with no `.act/` and no tracker remote, `act doctor` is a read command like any other: it prints the no-state line and exits 0.
 
@@ -1223,21 +1233,20 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 {"error": "<code>", "message": "<human>", "details": {...}}
 ```
 
-`details` is optional and per-class. Exit codes are stable; new classes get new codes, never re-used.
+`details` is optional and per-class. The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4) and `claim_lost` (5) the only rows outside 1–3.
 
 | code                       | exit | human message format                                                       | details keys                                  |
 |----------------------------|------|----------------------------------------------------------------------------|-----------------------------------------------|
-| `not_in_git`               | 2    | `not in a git repository (run from inside a git worktree)`                 | `cwd`                                         |
-| `act_not_initialized`      | 2    | `.act/ not found in <root>; run 'act init'`                                | `repo_root`                                   |
+| `not_in_git`               | 3    | `not in a git repository (run from inside a git worktree)`                 | `cwd`                                         |
+| `act_not_initialized`      | 3    | `.act/ not found in <root>; run 'act init'`                                | `repo_root`                                   |
 | `issue_not_found`          | 3    | `no issue matching '<query>'`                                              | `query`                                       |
-| `id_ambiguous`             | 3    | `prefix '<p>' is ambiguous: <id1>, <id2>, ...`                             | `prefix`, `candidates[]`                      |
+| `id_ambiguous`             | 2    | `prefix '<p>' is ambiguous: <id1>, <id2>, ...`                             | `prefix`, `candidates[]`                      |
 | `version_skew`             | 4    | `repo writer_version <N> exceeds this binary's writer_version <M>; upgrade act` | `max_op_version`, `writer_version`, `binary_version` |
 | `claim_lost`               | 5    | `claim lost; winner=<node_id> at hlc=<hlc>`                                | `winner_node_id`, `winner_hlc`, `issue_id`    |
-| `cycle_detected`           | 6    | `dep would create cycle: <a> -> ... -> <a>`                                | `path[]`                                      |
-| `dep_not_found`            | 6    | `dep target '<id>' not found`                                              | `target`                                      |
-| `hook_failed`              | 7    | `hook '<name>' exited <rc>; op unstaged`                                   | `hook`, `exit_code`, `stderr_tail`            |
-| `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
-| `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
+| `cycle_detected`           | 2    | `dep would create cycle: <a> -> ... -> <a>`                                | `path[]`                                      |
+| `dep_not_found`            | 1    | `dep target '<id>' not found`                                              | `target`                                      |
+| `hook_failed`              | 1    | `hook '<name>' exited <rc>; op unstaged`                                   | `hook`, `exit_code`, `stderr_tail`            |
+| `import_invalid_jsonl`     | 1    | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
 | `remote_unreachable`       | 3    | `act bootstrap-worker: clone <url>: <reason>`                              | `url`, `stderr_tail`                          |
 | `bootstrap_timeout`        | 4    | `act bootstrap-worker: clone <url> exceeded <N>s budget`                   | `timeout_seconds`, `url`                      |
 | `target_not_empty`         | 2    | `act bootstrap-worker: <path> exists and is non-empty; pass --force to overwrite` | `target`                                |
@@ -1276,7 +1285,7 @@ Execution:
 4. Env vars set: `ACT_OP_ID`, `ACT_OP_TYPE`, `ACT_ISSUE_ID`, `ACT_HOOK_PHASE=pre-commit-op`. No other `ACT_*` vars are set; future vars are additive.
 5. Stdout and stderr are fully captured (bounded to 64KB each; overflow truncates and tags `details.truncated=true`). On success they are discarded; on failure stderr_tail (last 4KB) is included in the `hook_failed` error.
 6. Timeout: 300s wall-clock by default, overridable per host with the `ACT_HOOK_TIMEOUT` environment variable (a Go duration: `20m`, `90s`; an unparseable or non-positive value falls back to the default rather than failing the write). On timeout `act` sends SIGTERM, waits 1s grace, then SIGKILL. Either way the hook is treated as failed — but it is reported as a TIMEOUT, not as a non-zero exit: the error names the limit that was hit and the variable that changes it, because a hook `act` killed and a hook that refused are different events and only one of them means "your gate said no". The limit is a host property, not a project one — the same gate on the same commit was measured at ~140s on one machine and 15m36s on another (act-8ee085) — which is why it is an environment variable and not a value in the tracker.
-7. Non-zero exit: `act` emits `hook_failed` and writes no op file at all. No commit is created. Caller exits with code 7.
+7. Non-zero exit: `act` emits `hook_failed` and writes no op file at all. No commit is created. Caller exits with code 1.
 
 Why the hook runs before the write (act-8ee085): it used to run with the op file written and `git add`-staged, and a failing hook rolled that back by deleting the file. That rollback is not atomic with respect to anything else reading the working tree — a sweep that commits uncommitted op files (`git add -- ops`, as the fleet's act-sync job does) landing inside the hook's window committed an op the hook was in the middle of refusing, leaving it in HEAD and absent from the working tree, so `act show` and every consumer of committed state disagreed silently. A hook that runs a test suite makes that window minutes wide. Writing after the hook passes removes the window rather than policing it. The hook's own contract is unchanged: it never had access to the op file, only to the op JSON on stdin and the `ACT_*` environment.
 
