@@ -3173,6 +3173,22 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "A flag where the verb of `act state` or `act dep` belongs (`act state --json --nonsense`, `act dep --json`) follows the same rule: `bad_flag` with exit 2, the envelope on stdout under `--json` with the command's verb list as its `message`, the verb list on stderr without it.",
 		testName:     "TestDocClaim_FlagParseError_GroupCommands",
 	},
+	// act-0c1c31: eighth stale pass over docs/spec.md. One contiguous
+	// block; the tests are in cmd/act/spec_pass8_docclaim_test.go and run
+	// the real binary. Drift shape for each: the quoted sentence stops
+	// being what the binary does and the named test goes red.
+	{
+		name:         "spec-list-sort-keys-prefix-and-suffix",
+		docFile:      "docs/spec.md",
+		claimPattern: "A bare key sorts ascending; a `-` prefix makes it descending (`-created_at`). The suffix form does the same thing: `created_at:desc` is `-created_at`, and `:asc` (or a `+` prefix) is the bare key.",
+		testName:     "TestDocClaim_Spec_ListSortSyntax",
+	},
+	{
+		name:         "spec-list-sort-default-and-id-tiebreak",
+		docFile:      "docs/spec.md",
+		claimPattern: "Default: `priority,-created_at`. `id` ascending is added as the last key whenever the keys do not name `id`. An unknown field, an unknown direction suffix or an empty key is exit 2.",
+		testName:     "TestDocClaim_Spec_ListSortSyntax",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

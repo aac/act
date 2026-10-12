@@ -779,7 +779,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--type T` (enum). Default: any.
 - `--json` (bool).
 - `--limit N` (int, default 200).
-- `--sort field` (enum priority|created_at|closed_at|id, optionally suffixed `:asc`/`:desc`). Default sort order: priority asc, then created_at desc. Tie-breaker: id asc.
+- `--sort field` (string). One or more sort keys, comma-separated, each one of `priority`, `created_at`, `closed_at`, `id`. A bare key sorts ascending; a `-` prefix makes it descending (`-created_at`). The suffix form does the same thing: `created_at:desc` is `-created_at`, and `:asc` (or a `+` prefix) is the bare key. Default: `priority,-created_at`. `id` ascending is added as the last key whenever the keys do not name `id`. An unknown field, an unknown direction suffix or an empty key is exit 2.
 - `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk; `--json` output then carries `refresh.reason: "no_fetch"`. `ACT_NO_FETCH=1` does the same.
 
 **Ordering:** closed issues sort after every non-closed issue. This grouping is applied ahead of `--sort` and is not overridable — a listing that mixes statuses must not bury live work under finished work. `--sort` orders the rows within each group.
