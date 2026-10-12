@@ -45,6 +45,11 @@ type Result struct {
 	// and there was no remote to push to: the claim stands and nothing
 	// was pushed (act-f4fd34).
 	PushNoRemote bool
+	// PushErr is non-nil when Options.Push was set, the claim was won, and
+	// the push failed for any other reason (an unreachable or rejecting
+	// origin): the claim stands, RunClaim returns a nil error, and the
+	// caller reports the push as deferred (act-8ffc13).
+	PushErr error
 }
 
 // Options configures a RunClaim invocation.
@@ -393,12 +398,17 @@ func singleAttempt(
 	// failure of the claim — the claim op is committed and won. It is
 	// reported on the result so the caller can name the push that did not
 	// happen instead of answering non-zero for a write that landed.
+	//
+	// act-8ffc13: nor is any other push failure. The claim op is committed
+	// and won, so returning an error made the caller exit non-zero for a
+	// claim that had landed. The failure travels on the result instead.
 	if res.Claimed && opts.Push {
 		if err := gitOps.Push(); err != nil {
-			if !errors.Is(err, ErrNoUpstream) {
-				return res, fmt.Errorf("claim: push: %w", err)
+			if errors.Is(err, ErrNoUpstream) {
+				res.PushNoRemote = true
+			} else {
+				res.PushErr = fmt.Errorf("claim: push: %w", err)
 			}
-			res.PushNoRemote = true
 		}
 	}
 	return res, nil

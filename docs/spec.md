@@ -899,6 +899,8 @@ Here `ops_written` is a list of op types, not a count, and it is always `["claim
 A lost claim has no `ops_written` key.
 Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
 
+**A push that does not reach `origin`.** When the tracker has an `origin` that cannot be reached or that rejects the push, the update is still written and committed and `act update` exits 0, with or without `--push`: the result carries `"push_deferred": true` and `push_deferred_reason` (the push error's text), the commit is queued in `.act/.pending-pushes`, and the `act: WARNING:` block goes to stderr. A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `"claimed": true`, `"push_deferred": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`. Both keys are absent when nothing was deferred. `act update` never answers `push_failed`.
+
 **Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
 
 **Retitling and commit correlation.** A retitle does not disturb commit-marker correlation or `act doctor`'s `orphan-close` check. Both key on the issue **id** — the `Act-Id: act-XXXX` commit-body trailer and the id column in the index — never on the title, which is not an identity key. `act show --json`'s `commits` array and `act doctor --check orphan-close` therefore return the same results before and after `act update --title`.
@@ -1342,7 +1344,7 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `ops_scan_failed`          | 1    | the underlying error's text | none |
 | `ops_walk_failed`          | 3    | the underlying error's text | none |
 | `payload_invalid`          | 1    | the underlying error's text | none |
-| `push_failed`              | 1, 3 | by command, e.g. `act remote add-upstream: initial push failed: <error>` | `url`, `branch` (none from `act update`) |
+| `push_failed`              | 3    | `act remote add-upstream: initial push failed: <error>` | `url`, `branch` |
 | `query_failed`             | 2    | `act search: <error>` | none |
 | `record_pending_push_failed` | 1    | the underlying error's text | none |
 | `stage_failed`             | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |

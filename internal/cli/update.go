@@ -172,6 +172,12 @@ type UpdateResult struct {
 	// the update landed. Today only WarnPushNoRemote: --push in a tracker
 	// with no origin remote (act-f4fd34). Omitted from JSON when empty.
 	Warnings []string `json:"warnings,omitempty"`
+	// PushDeferred is true when the update is committed and the push did
+	// not reach origin; PushDeferredReason carries the push failure. The
+	// same two keys `act close` reports (act-89a595, act-8ffc13). Omitted
+	// from JSON otherwise.
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // UpdateClaimResult is the JSON shape returned by `act update --claim`.
@@ -191,6 +197,10 @@ type UpdateClaimResult struct {
 	OpsWritten []string `json:"ops_written,omitempty"`
 	// Warnings: see UpdateResult.Warnings. Set only on a win.
 	Warnings []string `json:"warnings,omitempty"`
+	// PushDeferred, PushDeferredReason: see UpdateResult. Set only on a
+	// win whose --push did not reach origin.
+	PushDeferred       bool   `json:"push_deferred,omitempty"`
+	PushDeferredReason string `json:"push_deferred_reason,omitempty"`
 }
 
 // UpdateErrorOutput is the structured failure envelope. Candidates is non-nil
@@ -960,15 +970,21 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		gops = gitops.NewActGitOps(paths.Root)
 		gops.Verify = opts.Verify
 	}
+	// published is what the last op's publish leg did (act-8ffc13). A push
+	// covers every commit reachable from HEAD, so the last op's answer is
+	// the answer for the whole update.
+	var published PublishResult
 	for i, env := range envelopes {
+		published = PublishResult{}
 		werr := WriteOpAndAutoCommit(env, bodies[i], paths, gops, WriteOpts{
 			NoCommit: opts.NoCommit,
 			// Defer the push to AFTER all ops are written so we don't push
 			// a partial state mid-batch.
-			Push:     false,
-			Isolated: opts.Isolated,
-			Offline:  opts.Offline,
-			Branch:   opts.Branch,
+			Push:      false,
+			Isolated:  opts.Isolated,
+			Offline:   opts.Offline,
+			Branch:    opts.Branch,
+			Published: &published,
 		})
 		if werr != nil {
 			if errors.Is(werr, ErrInvalidFlags) {
@@ -1010,15 +1026,14 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		// (each op above released it after its commit, leaving pre-commit
 		// hooks outside the lock), so it cannot push a sibling's
 		// half-rebased HEAD.
-		releaseWriteLock, lerr := gitops.AcquireWriteLock(gops.RepoRoot)
-		if lerr != nil {
-			if msg, details, isTimeout := WriteLockTimeoutDetails(lerr); isTimeout {
-				return UpdateErrorOutput{Error: ErrWriteLockTimeout, Message: msg, Details: details}, 1
+		perr := func() error {
+			releaseWriteLock, lerr := gitops.AcquireWriteLock(gops.RepoRoot)
+			if lerr != nil {
+				return lerr
 			}
-			return UpdateErrorOutput{Error: "push_failed", Message: lerr.Error()}, 1
-		}
-		perr := gops.PushToBranch(opts.Branch)
-		releaseWriteLock()
+			defer releaseWriteLock()
+			return gops.PushToBranch(opts.Branch)
+		}()
 		// act-f4fd34: no origin is not a push failure. Every op above is
 		// committed, so the update landed; answering exit 1 push_failed
 		// told the caller it had not. As on create (act-8c1c05), the push
@@ -1027,11 +1042,21 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			warnings = append(warnings, WarnPushNoRemote)
 			perr = nil
 		}
-		if perr != nil {
-			return UpdateErrorOutput{
-				Error:   "push_failed",
-				Message: perr.Error(),
-			}, 1
+		// act-8ffc13: nor is any other failure of this push — an origin
+		// that cannot be reached, a rejecting receive, the write lock not
+		// had in time — an error of the update, for the same reason: it
+		// used to exit 1 push_failed with the fields already changed. It
+		// is a deferral, as on every other write (act-89a595): queued in
+		// .act/.pending-pushes, warned on stderr, reported on the result,
+		// exit 0. When the last op's publish leg already deferred, the
+		// queue entry and the warning exist; only the reason is refreshed.
+		switch {
+		case perr == nil:
+			published = PublishResult{}
+		case published.Deferred:
+			published.Reason = perr
+		default:
+			published = deferPublish(gops, "update", nil, perr)
 		}
 	}
 
@@ -1045,12 +1070,19 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	return UpdateResult{
+	res := UpdateResult{
 		ID:         full,
 		OpsWritten: len(envelopes),
 		Committed:  !opts.NoCommit,
 		Warnings:   warnings,
-	}, 0
+	}
+	if published.Deferred {
+		res.PushDeferred = true
+		if published.Reason != nil {
+			res.PushDeferredReason = published.Reason.Error()
+		}
+	}
+	return res, 0
 }
 
 // runUpdateClaim dispatches the --claim flow via internal/claim.RunClaim.
@@ -1189,14 +1221,23 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		if res.PushNoRemote {
 			warnings = append(warnings, WarnPushNoRemote)
 		}
-		return UpdateClaimResult{
+		won := UpdateClaimResult{
 			OK:         true,
 			Claimed:    true,
 			ID:         res.IssueID,
 			Winner:     res.Winner,
 			OpsWritten: []string{"claim"},
 			Warnings:   warnings,
-		}, 0
+		}
+		// act-8ffc13: --push that did not reach origin — the claim
+		// stands, exit 0, and the push is deferred as on every other
+		// write: queued, warned on stderr, reported on the result.
+		if res.PushErr != nil {
+			deferred := deferPublish(gops, "claim", nil, res.PushErr)
+			won.PushDeferred = true
+			won.PushDeferredReason = deferred.Reason.Error()
+		}
+		return won, 0
 	}
 	// Claim loss: exit 5 with envelope error `claim_lost` per spec
 	// §error-envelope (the universal exit-code table) and §3 `act update`.

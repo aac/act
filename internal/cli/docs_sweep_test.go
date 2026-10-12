@@ -3718,6 +3718,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "an isolated `create`, `update`, `close`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`",
 		testName:     "TestDocClaim_Spec_CloseIsolatedDoesNotPush",
 	},
+	// act-8ffc13: update with an origin that cannot be reached lands, exits
+	// 0 and reports the push as deferred.
+	{
+		name:         "spec-update-push-unreachable-origin-defers",
+		docFile:      "docs/spec.md",
+		claimPattern: "When the tracker has an `origin` that cannot be reached or that rejects the push, the update is still written and committed and `act update` exits 0, with or without `--push`: the result carries `\"push_deferred\": true` and `push_deferred_reason` (the push error's text), the commit is queued in `.act/.pending-pushes`, and the `act: WARNING:` block goes to stderr.",
+		testName:     "TestDocClaim_Spec_UpdatePushUnreachableOriginDefers",
+	},
+	{
+		name:         "spec-update-claim-push-unreachable-origin-defers",
+		docFile:      "docs/spec.md",
+		claimPattern: "A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `\"claimed\": true`, `\"push_deferred\": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`.",
+		testName:     "TestDocClaim_Spec_UpdateClaimPushUnreachableOriginDefers",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
