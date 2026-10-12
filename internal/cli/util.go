@@ -21,7 +21,7 @@ import (
 )
 
 // CommitMarkerLen is the length of the parenthesized short id used in
-// auto-commit subjects (`(act-XXXX)`), counting the `act-` prefix plus the
+// auto-commit subjects (`(act-XXXXXX)`), counting the `act-` prefix plus the
 // first MinShortHexLen hex characters. Doctor's orphan-close grep keys on
 // this exact marker, so the constant is load-bearing across packages.
 // The value is ids.CommitMarkerLen, shared with internal/claim.

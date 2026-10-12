@@ -54,7 +54,8 @@ func assertCanonicalSubject(t *testing.T, root, wantOpType string) string {
 	if !strings.Contains(subj, ") "+wantOpType) {
 		t.Fatalf("subject %q missing op_type %q after `)`", subj, wantOpType)
 	}
-	// Doctor's grep key: literal `(act-XXXX)` for some 4-hex prefix.
+	// Doctor's grep key: a parenthesized `(act-<hex>)` short id — 6 hex for
+	// new ids, 4 for historical ones, longer after collision extension.
 	if !regexp.MustCompile(`\(act-[0-9a-f]{4,}\)`).MatchString(subj) {
 		t.Fatalf("subject %q missing parenthesized `(act-XXXX)` marker", subj)
 	}
