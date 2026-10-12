@@ -27,9 +27,10 @@ import (
 const CheckNestedExclude = "nested-exclude"
 
 // nestedExcludeEntries are the patterns act keeps in the nested repo's
-// info/exclude, one per act-owned working file at the top of `.act/`.
+// info/exclude, covering each act-owned working file at the top of `.act/`.
 // Each is anchored with a leading slash so it matches only the top-level
-// file, never an op file that happens to share the name.
+// file, never an op file that happens to share the name. A few are globs;
+// the check compares whole lines, so a glob is just another line to it.
 //
 // Every name here is machine-local state that act never stages: the two
 // the ticket named (.write.lock, .slow-writes), their siblings written
@@ -37,6 +38,28 @@ const CheckNestedExclude = "nested-exclude"
 // derived SQLite index with its sidecars. A store that already tracks one
 // of these (older layouts tracked index.db) is unaffected — exclude
 // patterns never apply to a tracked path.
+//
+// act-70569e added the rest of what act can write at the top of `.act/`
+// without meaning it to travel: the corrupt-index backup that
+// `doctor --fix-index` keeps, doctor's scratch index (one glob, so its
+// SQLite sidecars are covered), the fold checkpoint (a derived cache,
+// removed alongside index.db when HEAD moves), the stamp
+// `bootstrap-worker` drops in a worker's copy, and the temp files of the
+// atomic rewrites that run in the state root — left behind only if act
+// dies between create and rename.
+//
+// What is deliberately NOT here, so nobody adds it by reflex:
+//   - ops/, config.json, hooks/, snapshots/, imports/ are tracked by
+//     design: the op log, the config and hooks/close.sample that init
+//     commits, the snapshots compaction commits, the import mappings the
+//     importer commits.
+//   - .failed-ops/ and .collisions/ hold op files act moved aside. act
+//     never stages them, but they are left visible in the nested repo's
+//     status: that listing is the only standing sign of a stranded op
+//     for someone who missed the original error.
+//
+// internal/cli/nx2_toplevel_paths_test.go gathers these names from the
+// source and fails when a new one is in neither group.
 var nestedExcludeEntries = []string{
 	"/" + gitops.WriteLockFile,
 	"/.slow-writes",
@@ -47,6 +70,14 @@ var nestedExcludeEntries = []string{
 	"/index.db-wal",
 	"/index.db-shm",
 	"/index.db-journal",
+	"/index.db.malformed-*",
+	"/.doctor-rebuild.db*",
+	"/fold-checkpoint.json",
+	"/fold-checkpoint.json.tmp",
+	"/" + BootstrapMetaFileName,
+	"/" + SyncLogFilename + ".tmp",
+	"/.tmp-*",
+	"/config-*.json.tmp",
 }
 
 // nestedExcludeRel is the exclude file's path as shown to the user.

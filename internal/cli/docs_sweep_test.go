@@ -2825,7 +2825,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-doctor-nested-exclude-entries",
 		docFile:      "docs/spec.md",
-		claimPattern: "`/.write.lock`, `/.slow-writes`, `/.pending-pushes`, `/.sync-log`, `/.compact.lock`, `/index.db`, `/index.db-wal`, `/index.db-shm`, `/index.db-journal`",
+		claimPattern: "`/.write.lock`, `/.slow-writes`, `/.pending-pushes`, `/.sync-log`, `/.compact.lock`, `/index.db`, `/index.db-wal`, `/index.db-shm`, `/index.db-journal`, `/index.db.malformed-*`, `/.doctor-rebuild.db*`, `/fold-checkpoint.json`, `/fold-checkpoint.json.tmp`, `/.bootstrap-meta.json`, `/.sync-log.tmp`, `/.tmp-*`, `/config-*.json.tmp`",
 		testName:     "TestDocClaim_Doctor_NestedExclude",
 	},
 	{

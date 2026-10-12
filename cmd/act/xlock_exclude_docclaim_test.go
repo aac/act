@@ -18,6 +18,9 @@ import (
 var xlockEntries = []string{
 	"/.write.lock", "/.slow-writes", "/.pending-pushes", "/.sync-log", "/.compact.lock",
 	"/index.db", "/index.db-wal", "/index.db-shm", "/index.db-journal",
+	// act-70569e: the rest of what act can leave at the top of .act/.
+	"/index.db.malformed-*", "/.doctor-rebuild.db*", "/fold-checkpoint.json", "/fold-checkpoint.json.tmp",
+	"/.bootstrap-meta.json", "/.sync-log.tmp", "/.tmp-*", "/config-*.json.tmp",
 }
 
 func xlockHostRepo(t *testing.T) string {
