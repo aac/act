@@ -411,12 +411,12 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 // pipeline. Returns the full id on success, or the appropriate error
 // envelope + exit code on failure.
 //
-// NOTE: the comment below once said "exit code (2 for ambiguous)" but the
-// actual implementation has always returned 3 for id_ambiguous, consistent
-// with spec.md §1 universal error table. The discrepancy between exit-2
-// per the old per-section text (spec.md line 529) and exit-3 per the
-// universal table is being resolved by act-8dcd. Do not change the exit codes
-// here without coordinating with that issue.
+// Exit codes: an ambiguous prefix is exit 2 with id_ambiguous (a usage
+// error, as in every other command that resolves an id — see
+// resolve_helpers.go); an id that matches no issue, or any other resolver
+// failure, is exit 3 with issue_not_found. Both match the error table in
+// docs/spec.md ("1. Error handling"), and
+// TestDocClaim_Spec_DepAddAmbiguousPrefixIsExit2 runs both.
 func resolveDepID(arg, label string, knownIDs []string) (string, int, any) {
 	full, rerr := ids.Resolve(arg, knownIDs)
 	if rerr == nil {

@@ -3456,6 +3456,19 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "| `act_already_initialized`  | 1    | `act init: <path> already exists; pass --force to reinitialize` | none |",
 		testName:     "TestDocClaim_Spec_ErrorTableRowsMatchBinaryAndSource",
 	},
+	// ---- act-74cf82: spec.md ninth stale pass. ----
+	{
+		name:         "spec-pass9-error-table-id-ambiguous-row",
+		docFile:      "docs/spec.md",
+		claimPattern: "| `id_ambiguous`             | 2    | by command, e.g. `act show: prefix \"<prefix>\" matches <N> issues` | `prefix`, `candidates` |",
+		testName:     "TestDocClaim_Spec_DepAddAmbiguousPrefixIsExit2",
+	},
+	{
+		name:         "spec-pass9-depadd-comment-ambiguous-is-exit-2",
+		docFile:      "internal/cli/depadd.go",
+		claimPattern: "an ambiguous prefix is exit 2 with id_ambiguous",
+		testName:     "TestDocClaim_Spec_DepAddAmbiguousPrefixIsExit2",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
