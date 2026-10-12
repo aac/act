@@ -2570,6 +2570,12 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "it prints the no-state line and exits 0",
 		testName:     "TestDocClaim_Doctor_ExitCodes",
 	},
+	{
+		name:         "spec-claim-commit-subject-short-id",
+		docFile:      "docs/spec.md",
+		claimPattern: `git commit --no-verify -m "act-op: (<short-id>) claim"`,
+		testName:     "TestDocClaim_Spec_ClaimCommitSubjectUsesSixHexShortID",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

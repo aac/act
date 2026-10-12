@@ -490,7 +490,7 @@ is *not* used for tiebreaking — it is already mixed into `op_hash`.
    Write to .act/ops/<id>/<yyyy-mm>/<iso>-<op_hash[0:4]>-claim.json.
 
 2. git add <op_file>
-   git commit --no-verify -m "act-op: <id> claim"
+   git commit --no-verify -m "act-op: (<short-id>) claim"
 
 3. If not --isolated:
      git pull --rebase <remote> <branch>

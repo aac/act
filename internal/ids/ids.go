@@ -38,6 +38,25 @@ import (
 // MinInputHexLen=1 (see internal/ids/prefix.go), which has not changed.
 const MinShortHexLen = 6
 
+// CommitMarkerLen is the length of the parenthesized short id used in
+// auto-commit subjects (`(act-XXXXXX)`): the `act-` prefix plus the first
+// MinShortHexLen hex characters. It lives here, below both internal/cli and
+// internal/claim, so the claim path and every other op commit truncate with
+// the same constant — a second literal in internal/claim once stayed at
+// 4 hex while the rest moved to 6 (act-263350).
+const CommitMarkerLen = len("act-") + MinShortHexLen
+
+// CommitMarkerID returns the short id used in auto-commit subjects for the
+// given full issue id: the id truncated to CommitMarkerLen. An id already at
+// or below that length — a historical 4-hex id, or a malformed input — is
+// returned verbatim.
+func CommitMarkerID(full string) string {
+	if len(full) > CommitMarkerLen {
+		return full[:CommitMarkerLen]
+	}
+	return full
+}
+
 // MaxShortHexLen is the largest length we will grow a short id to before
 // giving up.
 //

@@ -21,6 +21,7 @@ import (
 	"github.com/aac/act/internal/config"
 	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/hlc"
+	"github.com/aac/act/internal/ids"
 	"github.com/aac/act/internal/op"
 )
 
@@ -317,7 +318,7 @@ func singleAttempt(
 	}
 
 	// Step 3b: commit the new op. The canonical auto-commit subject is
-	// `act-op: (act-XXXX) claim`; the parenthesized short id is required
+	// `act-op: (act-XXXXXX) claim`; the parenthesized short id is required
 	// for doctor's orphan-close grep, and the op_type-only suffix matches
 	// every other write op (act-d3a5). The previous form `act-<id>: claim
 	// <assignee>` produced a double-prefix bug (`act-act-XXXX: ...`)
@@ -533,25 +534,15 @@ func repoReference(repoRoot string) (hlc.HLC, error) {
 // readFile is var-indirect for fault-injection tests.
 var readFile = osReadFile
 
-// commitMarkerLen is the length of the parenthesized short id used in the
-// claim auto-commit subject (`(act-XXXX)`). It mirrors
-// cli.CommitMarkerLen but is inlined here to avoid a cli→claim→cli import
-// cycle (cli depends on claim). The constant is intentionally small —
-// `len("act-") + 4` — and load-bearing across the codebase; if either side
-// changes, both must move together. See act-d3a5.
-const commitMarkerLen = len("act-") + 4
-
 // buildClaimCommitMessage returns the canonical auto-commit subject for a
-// claim op: `act-op: (act-XXXX) claim`. Mirrors cli.BuildOpCommitMessage
-// for op_type="claim" without taking a cli import. The previous form
-// `act-<id>: claim <assignee>` (issueID already has the `act-` prefix)
-// produced double-prefixed subjects (`act-act-XXXX: claim …`) and broke
-// doctor's orphan-close grep, which keys on the literal `(act-XXXX)`
-// marker. See act-d3a5.
+// claim op: `act-op: (act-XXXXXX) claim`. Mirrors cli.BuildOpCommitMessage
+// for op_type="claim" without taking a cli import (cli depends on claim).
+// The short id comes from ids.CommitMarkerID, the same helper cli uses, so
+// a claim commit carries the same marker as every other op commit on the
+// issue (act-263350). The previous form `act-<id>: claim <assignee>`
+// (issueID already has the `act-` prefix) produced double-prefixed subjects
+// (`act-act-XXXX: claim …`) and broke doctor's orphan-close grep, which keys
+// on the literal `(act-XXXXXX)` marker. See act-d3a5.
 func buildClaimCommitMessage(issueID string) string {
-	short := issueID
-	if len(issueID) > commitMarkerLen {
-		short = issueID[:commitMarkerLen]
-	}
-	return fmt.Sprintf("act-op: (%s) claim", short)
+	return fmt.Sprintf("act-op: (%s) claim", ids.CommitMarkerID(issueID))
 }

@@ -24,7 +24,8 @@ import (
 // auto-commit subjects (`(act-XXXX)`), counting the `act-` prefix plus the
 // first MinShortHexLen hex characters. Doctor's orphan-close grep keys on
 // this exact marker, so the constant is load-bearing across packages.
-const CommitMarkerLen = len("act-") + ids.MinShortHexLen
+// The value is ids.CommitMarkerLen, shared with internal/claim.
+const CommitMarkerLen = ids.CommitMarkerLen
 
 // ShortIssueID returns the canonical short id used in auto-commit subjects
 // for the given full issue id. For ids that already match `act-` + at least
@@ -33,10 +34,7 @@ const CommitMarkerLen = len("act-") + ids.MinShortHexLen
 // is still written but doctor's grep may not match it; that is the correct
 // behavior because the input is itself non-canonical.
 func ShortIssueID(full string) string {
-	if len(full) > CommitMarkerLen {
-		return full[:CommitMarkerLen]
-	}
-	return full
+	return ids.CommitMarkerID(full)
 }
 
 // WorkCommitTrailerKey is the trailer key used by act's work-commit marker.
