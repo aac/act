@@ -14,8 +14,7 @@
 //     --strict (via the global pass in RunDoctor).
 //   - case (g):  origin unreachable. A short-timeout `git fetch origin
 //     --dry-run` against the nested `.act/.git` decides; failure exits 4
-//     with the literal stderr `remote: origin unreachable; run 'act
-//     remote sync' from the orchestrator or check connectivity`. Under
+//     with the literal stderr caseGStderrLiteral. Under
 //     --no-fetch the same condition is reported as a warning (exit 0).
 //   - case (h):  `origin-upstream` more than `act.upstreamDriftThreshold
 //     Commits` commits behind `origin`. Reads refs/remotes locally after
@@ -97,7 +96,13 @@ const fetchDryRunTimeout = 5 * time.Second
 // caseGStderrLiteral is the literal stderr line emitted on a case-(g)
 // finding. Pinned by an acceptance criterion in the ticket; the
 // doc-claim sweep enforces the same string in docs/spec.md.
-const caseGStderrLiteral = "remote: origin unreachable; run 'act remote sync' from the orchestrator or check connectivity"
+//
+// act-2bd35b: it used to say "run 'act remote sync' from the orchestrator".
+// That command pushes the orchestrator's history to `origin-upstream`; it
+// neither reaches this checkout's `origin` nor publishes this checkout's
+// unpushed commits, so it could not clear the finding. What does publish
+// them, once origin answers again, is the next ordinary write.
+const caseGStderrLiteral = "remote: origin unreachable; check connectivity and the origin URL (unpushed commits publish on the next act write without --offline or --isolated)"
 
 // checkPhase2Reconciliation runs cases (a'), (c'), (f), (g), (h) and
 // updates `status` with the per-case JSON-block fields. It is invoked

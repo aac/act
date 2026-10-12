@@ -1509,7 +1509,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "doctor-case-g",
 		docFile:      "docs/spec.md",
-		claimPattern: "remote: origin unreachable; run 'act remote sync' from the orchestrator or check connectivity",
+		claimPattern: "remote: origin unreachable; check connectivity and the origin URL (unpushed commits publish on the next act write without --offline or --isolated)",
 		testName:     "TestDocClaim_DoctorCase_G_OriginUnreachableStderr",
 	},
 	{

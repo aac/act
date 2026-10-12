@@ -2001,7 +2001,7 @@ the `TestDocClaim_DoctorCase_*` registry entries — drift in either the
 spec or the implementation surfaces as a `go test` failure):
 
 - Case (f): `local: <N> unpushed commits ahead of origin`
-- Case (g): `remote: origin unreachable; run 'act remote sync' from the orchestrator or check connectivity`
+- Case (g): `remote: origin unreachable; check connectivity and the origin URL (unpushed commits publish on the next act write without --offline or --isolated)`
 - Case (h): `upstream: origin-upstream is <N> commits behind origin; run 'act remote sync'`
 
 Case (a') and case (c') findings carry remedy literals in their human
