@@ -50,3 +50,53 @@ func TestEdg_ReclaimPushOfHeldIssueDoesNotPush(t *testing.T) {
 		t.Fatalf("premise: a real write against the repointed origin was not deferred")
 	}
 }
+
+// TestEdg_MultiFlagUpdateDefersOnce pins that an `act update` writing
+// several ops against an origin that cannot be reached reports the deferred
+// push once (act-11d2e2 item 3): one WARNING block on stderr and one entry
+// in .act/.pending-pushes, not one of each per op. A push covers every
+// commit reachable from HEAD, so one entry is all a later flush needs.
+func TestEdg_MultiFlagUpdateDefersOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"no --push", []string{"--priority", "1", "--title", "edg retitled", "--description", "edg body"}},
+		{"--push", []string{"--priority", "1", "--title", "edg retitled", "--description", "edg body", "--push"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := sp6Site(t)
+			made, _ := wfxCreate(t, dir, "edg multi-flag target")
+			upuAddMissingOrigin(t, dir)
+
+			res, stderr := upuUpdate(t, dir, append([]string{made.ID}, tc.args...)...)
+			if !res.Committed || !res.PushDeferred || res.PushDeferredReason == "" {
+				t.Errorf("multi-flag update, unreachable origin: committed %v, push_deferred %v, reason %q; want committed and deferred with a reason",
+					res.Committed, res.PushDeferred, res.PushDeferredReason)
+			}
+			if n := strings.Count(stderr, "COMMITTED LOCALLY but NOT PUSHED"); n != 1 {
+				t.Errorf("multi-flag update, unreachable origin: %d not-pushed WARNING blocks on stderr, want 1", n)
+			}
+			q := pnrPendingPushes(t, dir)
+			if n := len(strings.Split(q, "\n")); q == "" || n != 1 {
+				t.Errorf("multi-flag update, unreachable origin: .act/.pending-pushes holds %d entries, want 1:\n%s", n, q)
+			}
+			show := sp8Show(t, dir, made.ID)
+			if p, title := string(show["priority"]), sp8Str(show["title"]); p != "1" || title != "edg retitled" {
+				t.Errorf("multi-flag update, unreachable origin: show reports priority %s, title %q; want 1 and the new title", p, title)
+			}
+		})
+	}
+
+	// --offline queues once too, and stays quiet.
+	t.Run("--offline", func(t *testing.T) {
+		dir := sp6Site(t)
+		wfxAddBareOrigin(t, dir)
+		made, _ := wfxCreate(t, dir, "edg offline multi-flag target")
+		_, stderr := upuUpdate(t, dir, made.ID, "--priority", "1", "--title", "edg retitled", "--offline")
+		q := pnrPendingPushes(t, dir)
+		if n := len(strings.Split(q, "\n")); q == "" || n != 1 || stderr != "" {
+			t.Errorf("multi-flag update --offline: .act/.pending-pushes holds %d entries, stderr %q; want 1 entry and quiet:\n%s", n, stderr, q)
+		}
+	})
+}
