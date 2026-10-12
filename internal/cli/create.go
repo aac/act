@@ -9,6 +9,7 @@ import (
 
 	"github.com/aac/act/internal/canonicaljson"
 	"github.com/aac/act/internal/config"
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/gitops"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/ids"
@@ -684,10 +685,28 @@ func FormatCreateHuman(res CreateResult) string {
 
 // parentIsClosed reports whether parentID resolves to a closed issue. It
 // rebuilds the index against the on-disk op log (so newly written ops are
-// observable) and consults the issues table. Errors and a missing parent
-// row are surfaced as (false, err); callers treat err==nil + closed=false
-// as "not closed".
+// observable) and consults the issues table.
+//
+// The index is a cache; when it cannot answer — malformed, unopenable — the
+// parent's own ops are folded instead, the read `act show` uses, so a broken
+// index does not cost create its parent_closed warning (act-533566). An
+// error is returned only when the op log cannot answer either; callers
+// treat err==nil + closed=false as "not closed".
 func parentIsClosed(paths config.LayoutPaths, parentID string) (bool, error) {
+	if closed, err := parentIsClosedInIndex(paths, parentID); err == nil {
+		return closed, nil
+	}
+	state, err := fold.FoldIssue(paths.Ops, parentID, fold.ApplyDispatch)
+	if err != nil {
+		return false, err
+	}
+	// A deleted parent has no index row and never warned; keep that.
+	return !state.Tombstoned && fold.IsClosedTerminal(state), nil
+}
+
+// parentIsClosedInIndex is parentIsClosed's index read. A missing parent
+// row is an error.
+func parentIsClosedInIndex(paths config.LayoutPaths, parentID string) (bool, error) {
 	idx, err := index.Open(paths.IndexDB)
 	if err != nil {
 		return false, err

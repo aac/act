@@ -3798,6 +3798,12 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`index_update_failed` is only ever a warning: no command exits non-zero with it, so it has no row in the error table.",
 		testName:     "TestDocClaim_IxwIndexUpdateFailedIsNeverAnErrorCode",
 	},
+	{
+		name:         "spec-create-parent-closed-survives-malformed-index",
+		docFile:      "docs/spec.md",
+		claimPattern: "A malformed index does not hide `parent_closed`: when the index cannot say whether the `--parent` issue is closed, `act create` reads that from the op log, and both warnings are reported.",
+		testName:     "TestDocClaim_Spec_CreateParentClosedOverMalformedIndex",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
