@@ -1260,7 +1260,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// holds committed nothing, so neither publishes again.
 		if !opts.Push && !opts.Isolated && !res.AlreadyHeld {
 			if opts.Offline {
-				_ = RecordPendingPush(gops, gops.RepoRoot, "claim")
+				QueueOfflinePush(gops, "claim", nil)
 			} else if pub := publishClaimCommit(gops, opts.Branch); pub.Deferred {
 				won.PushDeferred = true
 				if pub.Reason != nil {

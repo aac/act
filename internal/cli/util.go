@@ -326,9 +326,9 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 	// next non-offline write will flush this entry (and any others
 	// queued by previous offline writes) before its own push.
 	if opts.Offline {
-		if err := RecordPendingPush(gops, gops.RepoRoot, env.OpType); err != nil {
-			return fmt.Errorf("cli: record pending-push: %w", err)
-		}
+		// A failed queue append is a warning, not an error: the commit
+		// has landed (act-11d2e2; see QueueOfflinePush).
+		QueueOfflinePush(gops, env.OpType, opts.Stderr)
 		return nil
 	}
 
@@ -484,9 +484,7 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// entry for the just-landed commit. Same semantics as the single-op
 	// path; the batch is one local commit so one entry is sufficient.
 	if opts.Offline {
-		if err := RecordPendingPush(gops, gops.RepoRoot, envs[0].OpType); err != nil {
-			return fmt.Errorf("cli: record pending-push: %w", err)
-		}
+		QueueOfflinePush(gops, envs[0].OpType, opts.Stderr)
 		return nil
 	}
 

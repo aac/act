@@ -657,6 +657,8 @@ Distinction from `--isolated`: `--isolated` is the strict local-only mode (no fe
 
 `--offline` + `--push` is a usage error (exit 2): the two are direct opposites. `--offline` + `--no-commit` is silently reduced to `--no-commit` semantics (no commit happens, so there's nothing to defer).
 
+An `--offline` write whose append to `.act/.pending-pushes` fails still stands. The op is committed by then, so the command exits 0 and prints a WARNING block on stderr that starts `act: WARNING: the op was COMMITTED LOCALLY but could NOT be queued in .act/.pending-pushes.` Do not retry the write. Nothing is lost: the next write without `--offline` pushes the commit along with its own. This holds for every write that takes `--offline`, `act update --claim` included; no command exits non-zero for it, so it has no row in the error table.
+
 **Pinned `.act/.pending-pushes` schema.** JSON-lines, one record per line, newline-terminated. Each record has exactly three fields:
 
 ```json
@@ -1356,7 +1358,6 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `payload_invalid`          | 1    | the underlying error's text | none |
 | `push_failed`              | 3    | `act remote add-upstream: initial push failed: <error>` | `url`, `branch` |
 | `query_failed`             | 2    | `act search: <error>` | none |
-| `record_pending_push_failed` | 1    | the underlying error's text | none |
 | `stage_failed`             | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
 | `stale_git_lock`           | 1    | `stale git lock blocks the tracker: <lock file> exists; <how to confirm it is stale, remove it and recover>` | `lock_file`, `remedy`, `quarantined_op` |
 | `stat_failed`              | 1, 3 | by command, e.g. `act state import: target <path>: <error>` | none |

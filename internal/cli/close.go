@@ -542,12 +542,9 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		// pending-push record. The next non-offline write flushes
 		// the entry before its own push.
 		if opts.Offline {
-			if err := RecordPendingPush(gops, gops.RepoRoot, env.OpType); err != nil {
-				return CloseErrorOutput{
-					Error:   "record_pending_push_failed",
-					Message: err.Error(),
-				}, 1
-			}
+			// act-11d2e2: a failed queue append is a warning on a close
+			// that landed, not exit 1 (see QueueOfflinePush).
+			QueueOfflinePush(gops, env.OpType, opts.Stderr)
 		} else if !opts.Isolated {
 			// --isolated (act-7e8600) is the strict local-only mode: the
 			// commit above is the whole write — no push, nothing queued —

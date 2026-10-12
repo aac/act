@@ -35,6 +35,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/aac/act/internal/gitops"
@@ -100,4 +102,37 @@ func RecordPendingPush(gops *gitops.ActGitOps, stateRoot, opType string) error {
 		OpType:    opType,
 	}
 	return AppendPendingPush(stateRoot, rec)
+}
+
+// QueueOfflinePush is the --offline leg of every write: it records the
+// commit that just landed in `.act/.pending-pushes`. It returns nothing on
+// purpose (act-11d2e2). The commit is already durable by the time this
+// runs, so a queue append that fails cannot fail the command — the same
+// boundary publish.go draws for a failed push (act-89a595). The failure is
+// a WARNING block on stderr and the command exits 0.
+//
+// This used to be three behaviors for one event: `act update --claim
+// --offline` dropped the error, `act close --offline` exited 1 with an
+// error code of its own (since retired), and every other write exited 1
+// `write_failed` — the last two for an op the next `act show` would read
+// back, which a caller applying "non-zero means it did not happen" then
+// wrote a second time.
+//
+// Nothing is lost when the append fails: a push is not sha-scoped, so the
+// next write without --offline publishes this commit along with its own.
+//
+// stderr may be nil, in which case os.Stderr is used.
+func QueueOfflinePush(gops *gitops.ActGitOps, opType string, stderr io.Writer) {
+	err := RecordPendingPush(gops, gops.RepoRoot, opType)
+	if err == nil {
+		return
+	}
+	dst := stderr
+	if dst == nil {
+		dst = os.Stderr
+	}
+	fmt.Fprintf(dst, "act: WARNING: the op was COMMITTED LOCALLY but could NOT be queued in .act/.pending-pushes.\n")
+	fmt.Fprintf(dst, "act: WARNING:   queue append failed: %v\n", err)
+	fmt.Fprintf(dst, "act: WARNING:   the next act write without --offline pushes this commit along with its own.\n")
+	fmt.Fprintf(dst, "act: WARNING:   the write itself landed and is durable — exit status is 0 on purpose. Do NOT re-run this command; re-running duplicates the op.\n")
 }

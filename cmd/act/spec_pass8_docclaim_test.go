@@ -1571,7 +1571,6 @@ var sp8NotProvoked = map[string]string{
 	"branch_failed":               "needs git to refuse the --branch checkout",
 	"stage_failed":                "needs git add to fail for a reason other than a stale lock",
 	"commit_failed":               "needs git commit to fail for a reason other than a stale lock",
-	"record_pending_push_failed":  "needs .act/.pending-pushes to be unwritable",
 }
 
 // sp8Source is every non-test Go file under cmd/ and internal/, joined.

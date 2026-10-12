@@ -815,7 +815,6 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     nonce_failed            'act create' could not generate a nonce
     op_filename_collision   'act state export' found an op file with other content
     query_failed            'act search' query failed in SQLite
-    record_pending_push_failed 'act close --offline' could not record the deferred push
     remote_unreachable      'act state import --from-remote' clone failed
     stage_failed            'act close' could not git-add its op file
     stale_git_lock          a leftover index.lock / HEAD.lock blocks the write

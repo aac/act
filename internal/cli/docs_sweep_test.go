@@ -3940,6 +3940,15 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Three more keys are optional, each present only when it applies: `push_deferred` (`true`) and `push_deferred_reason` (the push error's text) when the push to `origin` was deferred",
 		testName:     "TestDocClaim_Spec_PdfWritesReportPushDeferred",
 	},
+	// act-11d2e2 item 2: an --offline write that could not queue its
+	// commit is a warning, not an error — it used to be silent on
+	// update --claim and exit 1 everywhere else, after the commit landed.
+	{
+		name:         "spec-offline-queue-failure-is-a-warning",
+		docFile:      "docs/spec.md",
+		claimPattern: "An `--offline` write whose append to `.act/.pending-pushes` fails still stands. The op is committed by then, so the command exits 0 and prints a WARNING block on stderr that starts `act: WARNING: the op was COMMITTED LOCALLY but could NOT be queued in .act/.pending-pushes.`",
+		testName:     "TestDocClaim_Spec_OfflineQueueFailureIsAWarning",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
