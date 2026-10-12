@@ -1265,6 +1265,7 @@ Rules:
 - `details` MUST be deterministic given inputs (no timestamps, no PIDs) so test goldens are stable.
 - Human messages are single-line, no ANSI, no trailing period, lowercase first word except proper identifiers.
 - `--json` errors go to stdout because agents parse stdout; stderr stays empty under `--json`.
+- A flag the flag parser itself rejects — an unknown flag, a flag missing its value, a value of the wrong type for the flag — is `bad_flag` with exit 2, like a bad flag value the command rejects. When `--json` (or `-json`) appears anywhere in the arguments, before or after the rejected flag, the envelope goes to stdout and the parser writes nothing to stderr; its message is the envelope's `message`, prefixed with the command (`act list: flag provided but not defined: -nonsense`). Without `--json` the parser's message and the command's flag list go to stderr and stdout stays empty. `-h` and `--help` are not errors: they print the flag list on stderr with or without `--json`, and no envelope.
 
 ### 2. Hooks contract
 

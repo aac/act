@@ -3143,6 +3143,24 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Nothing emits the older `ambiguous_id` code.",
 		testName:     "TestDocClaim_Spec_AmbiguousPrefixEnvelope",
 	},
+	{
+		name:         "spec-flag-parse-error-json-envelope",
+		docFile:      "docs/spec.md",
+		claimPattern: "When `--json` (or `-json`) appears anywhere in the arguments, before or after the rejected flag, the envelope goes to stdout and the parser writes nothing to stderr",
+		testName:     "TestDocClaim_FlagParseError_JSONEnvelope",
+	},
+	{
+		name:         "spec-flag-parse-error-missing-value-and-wrong-type",
+		docFile:      "docs/spec.md",
+		claimPattern: "an unknown flag, a flag missing its value, a value of the wrong type for the flag — is `bad_flag` with exit 2",
+		testName:     "TestDocClaim_FlagParseError_OtherParseFailures",
+	},
+	{
+		name:         "spec-flag-parse-error-help-is-not-an-error",
+		docFile:      "docs/spec.md",
+		claimPattern: "`-h` and `--help` are not errors: they print the flag list on stderr with or without `--json`, and no envelope.",
+		testName:     "TestDocClaim_FlagParseError_HelpIsNotAnError",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
