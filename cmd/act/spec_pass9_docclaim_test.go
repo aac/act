@@ -350,7 +350,7 @@ func TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary(t *te
 			t.Errorf("act create --json: %v; want exactly the keys %q, committed, not pushed, and prefix equal to a six-hex id", plain, want)
 		}
 		if _, pushed := sp9JSON(t, dir, "create", "--json", "--push", "sp9 pushed"); sp9KeysOf(pushed) != want+",warnings" || pushed["pushed"] != "false" || pushed["warnings"] != `["push_no_remote"]` {
-			t.Errorf("act create --json --push in a tracker with no remote: %v; want pushed false and the warning push_no_remote as the eighth key", pushed)
+			t.Errorf("act create --json --push in a tracker with no remote: %v; want pushed false, and warnings [\"push_no_remote\"] as the only key beside the seven", pushed)
 		}
 		if _, nc := sp9JSON(t, noCommit, "create", "--json", "--no-commit", "sp9 uncommitted"); sp9KeysOf(nc) != want || nc["committed"] != "false" {
 			t.Errorf("act create --json --no-commit: %v; want committed false under the same seven keys", nc)
