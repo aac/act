@@ -2793,6 +2793,15 @@ var docClaimRegistry = []docClaim{
 		docFile:      "skills/act/SKILL.md",
 		claimPattern: `id=$(jq -er .id <<<"$out") || exit 1`,
 		testName:     "TestDocClaim_Skill_CreateIDCaptureSnippetStopsOnFailedCreate",
+	// act-e5d6b4: doctor polish after fold-error. remote_reachable was
+	// false on every run that never reached phase2-reconciliation; the
+	// fold-error finding was not echoed to stderr; `version --check-repo`
+	// skipped the tracker-remote guard.
+	{
+		name:         "spec-doctor-remote-reachable-false-only-when-probe-failed",
+		docFile:      "docs/spec.md",
+		claimPattern: "only when the probe ran and failed.",
+		testName:     "TestDocClaim_Doctor_RemoteReachableFalseOnlyWhenProbeFailed",
 	},
 }
 

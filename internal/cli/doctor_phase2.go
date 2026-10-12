@@ -57,10 +57,9 @@ import (
 //
 //   - RemoteReachable: result of the case-(g) probe. True when the
 //     dry-run fetch against `origin` succeeded OR when `origin` is not
-//     configured (vacuously reachable). False when the probe failed.
-//     Under --no-fetch the field reflects the pre-fetch assumption
-//     (true if origin is configured, false otherwise) since no probe
-//     was issued.
+//     configured (vacuously reachable). False only when the probe ran
+//     and failed: under --no-fetch, and on a run where this check did
+//     not run at all, no probe was issued and the field stays true.
 //   - LocalUnpushedCount: result of the case-(f) `git rev-list --count
 //     origin/<branch>..HEAD`. Zero when origin is unconfigured.
 //   - UpstreamDriftCommits: result of the case-(h) `git rev-list

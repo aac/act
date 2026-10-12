@@ -67,8 +67,9 @@ type Finding struct {
 // block: case-(f) unpushed count, case-(g) reachability, case-(h)
 // upstream drift, and the slow-writes-last-hour summary. The field is
 // always emitted (no `omitempty`) so JSON consumers can rely on the
-// key existing — its inner fields default to their zero values
-// (RemoteReachable=true on no-origin, others 0/"").
+// key existing — its inner fields default to RemoteReachable=true and
+// 0/"" for the rest, including on a run where phase2-reconciliation
+// did not run at all (a failed fold, `--check <another check>`).
 type DoctorResult struct {
 	Findings     []Finding    `json:"findings"`
 	Count        int          `json:"count"`
@@ -207,7 +208,11 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 		}
 	}
 
-	var remoteStatus RemoteStatus
+	// Start from the no-probe value: remote_reachable is false only when
+	// the case-(g) probe ran and failed. A run that never reaches
+	// phase2-reconciliation (a failed fold, `--check <another check>`)
+	// probed nothing and must not report origin as unreachable (act-e5d6b4).
+	remoteStatus := RemoteStatus{RemoteReachable: true}
 	var phase2Exit int
 	for _, name := range run {
 		switch name {
