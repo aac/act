@@ -222,6 +222,26 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Plain `act doctor` reports it too: such an op aborts the fold",
 		testName:     "TestDocClaim_Doctor_PlainRunReportsUnknownOpVersionWhenFoldFails",
 	},
+	// act-bd1d30: the fold failure has its own check name, the fold-free
+	// read-only checks still run after it, and no fix is applied.
+	{
+		name:         "spec-doctor-fold-error-own-check-and-fold-free-checks-run",
+		docFile:      "docs/spec.md",
+		claimPattern: "only `stale-git-lock`, `time-travel`, `unknown-op-version` and `gitignore-effective` still run",
+		testName:     "TestDocClaim_Doctor_FoldErrorHasOwnCheckAndFoldFreeChecksStillRun",
+	},
+	{
+		name:         "spec-doctor-check-fold-error-selectable",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--check fold-error` folds and reports only this finding",
+		testName:     "TestDocClaim_Doctor_FoldErrorCheckSelection",
+	},
+	{
+		name:         "spec-doctor-fold-error-applies-no-fixes",
+		docFile:      "docs/spec.md",
+		claimPattern: "With the fold failed, `--fix` and `--fix-index` apply nothing",
+		testName:     "TestDocClaim_Doctor_FoldErrorAppliesNoFixesAndHonoursStrict",
+	},
 	{
 		name:         "spec-property-tier-names-real-tests",
 		docFile:      "docs/spec.md",

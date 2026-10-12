@@ -55,9 +55,10 @@ func TestDocClaim_Doctor_PlainRunReportsUnknownOpVersionWhenFoldFails(t *testing
 		t.Errorf("unknown-op-version finding = %+v, want severity error and a message naming %s", unknown[0], base)
 	}
 
-	// The fold failure is still reported, under the label it has always had.
+	// The fold failure is still reported, under its own check name
+	// (act-bd1d30; it used to borrow `orphan-ops`).
 	var foldErr bool
-	for _, f := range foldfailFindingsFor(res, "orphan-ops") {
+	for _, f := range foldfailFindingsFor(res, "fold-error") {
 		if strings.HasPrefix(f.Message, "fold error: ") {
 			foldErr = true
 		}
@@ -67,17 +68,17 @@ func TestDocClaim_Doctor_PlainRunReportsUnknownOpVersionWhenFoldFails(t *testing
 	}
 }
 
-// TestDoctor_FoldFailSingleFoldCheckUnchanged pins what the fix must not
-// change: a --check that needs the fold still answers with the fold-error
-// finding alone, and --check unknown-op-version still answers with its own
-// finding alone.
+// TestDoctor_FoldFailSingleFoldCheckUnchanged pins single --check runs on a
+// store whose fold fails: a --check that needs the fold answers with the
+// fold-error finding alone (labelled `fold-error` since act-bd1d30), and
+// --check unknown-op-version still answers with its own finding alone.
 func TestDoctor_FoldFailSingleFoldCheckUnchanged(t *testing.T) {
 	root := makeCreateRepo(t)
 	mustCreate(t, root, "A")
 	seedCreateWithOpVersion(t, root, "act-eeee", 1700000040000, op.CurrentOpVersion+1, op.WriterVersion)
 
 	for check, wantCheck := range map[string]string{
-		"cycle":              "orphan-ops",
+		"cycle":              "fold-error",
 		"unknown-op-version": "unknown-op-version",
 	} {
 		out, code := RunDoctor(root, DoctorOptions{Check: check})

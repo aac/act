@@ -1042,6 +1042,7 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 |---|---|---|
 | `orphan-close` | Find issues with `closed_at` set but no commit message containing `(act-<prefix>)` AND no diff in `.act/ops/<id>/` at close time. | Read-only; surfaces finding. |
 | `orphan-ops` | Op files referencing an `issue_id` that has no `create` op. | Read-only. |
+| `fold-error` | The op log cannot be folded: an op file fails to parse or validate. Not a pass of its own in a default run — it is reported as one error-severity finding whenever a selected check needs the fold (`orphan-close`, `orphan-ops`, `dangling-deps`, `cycle`, `status-vs-oplog`) and the fold fails, and `--check fold-error` folds and reports only this finding. When the fold fails, only `stale-git-lock`, `time-travel`, `unknown-op-version` and `gitignore-effective` still run (those that were selected); the checks that need the fold, the three index checks and `phase2-reconciliation` do not. | Read-only. With the fold failed, `--fix` and `--fix-index` apply nothing: no check that honours them runs. |
 | `dangling-deps` | Dep edges pointing at unknown ids (post-resolution). | Read-only. |
 | `time-travel` | Adjacent ops with HLC going backward more than the 5-minute drift bound. | Read-only. |
 | `cycle` | Cycle in the `blocks` subgraph. | Read-only. |
@@ -1356,7 +1357,7 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 - **Redact of an already-redacted field.** Idempotent. A second redact op is written; fold output unchanged. Exit 0 with `{"changed": false}`.
 - **Prefix collision at create time.** The new id is checked against all existing ids. If the chosen 4-hex prefix already maps to a different id, `act` extends the displayed prefix length one hex at a time until unique, and stores the longer form in the per-session prefix map. The full id is unchanged.
 - **No squash, and no `version_skew` refusal on write.** No command squashes `act-op:` commits: each op write is its own commit in the nested `.act/` repo and stays that way. A tracker holding an op from a newer writer still accepts writes — `act update` and `act close` commit as usual while `act version --check-repo` reports the skew.
-- **`act doctor --check unknown-op-version`** is about `op_version`, not `writer_version` (see the doctor check table): it emits one finding per op file with a newer `op_version`, naming the file. It does not report writer-version skew. Plain `act doctor` reports it too: such an op aborts the fold, so the run returns the fold-error finding (labelled `orphan-ops`) followed by the `unknown-op-version` findings, and the checks that need the fold do not run.
+- **`act doctor --check unknown-op-version`** is about `op_version`, not `writer_version` (see the doctor check table): it emits one finding per op file with a newer `op_version`, naming the file. It does not report writer-version skew. Plain `act doctor` reports it too: such an op aborts the fold, so the run returns the `fold-error` finding followed by the findings of the fold-free read-only checks (`unknown-op-version` among them; the `fold-error` row of the doctor check table lists them), and the checks that need the fold do not run.
 
 ### 7. Test plan
 

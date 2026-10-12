@@ -116,10 +116,10 @@ func TestDocClaim_Doctor_FoldErrorHasOwnCheckAndFoldFreeChecksStillRun(t *testin
 	}
 }
 
-// TestDoctor_FoldErrorCheckSelection pins what `--check` does around a fold
+// TestDocClaim_Doctor_FoldErrorCheckSelection pins what `--check` does around a fold
 // failure: `--check fold-error` is a valid name that reports only the fold
 // failure, and a single fold-needing check answers with the same finding.
-func TestDoctor_FoldErrorCheckSelection(t *testing.T) {
+func TestDocClaim_Doctor_FoldErrorCheckSelection(t *testing.T) {
 	root, _ := folderrSeedStore(t)
 	for _, check := range []string{"fold-error", "orphan-ops", "cycle"} {
 		res, code := folderrRun(t, root, DoctorOptions{Check: check})
@@ -138,10 +138,10 @@ func TestDoctor_FoldErrorCheckSelection(t *testing.T) {
 	}
 }
 
-// TestDoctor_FoldErrorAppliesNoFixesAndHonoursStrict: with the fold failed,
+// TestDocClaim_Doctor_FoldErrorAppliesNoFixesAndHonoursStrict: with the fold failed,
 // --fix and --fix-index leave the index file alone (the index checks do not
 // run), and --strict still promotes the surviving warn findings.
-func TestDoctor_FoldErrorAppliesNoFixesAndHonoursStrict(t *testing.T) {
+func TestDocClaim_Doctor_FoldErrorAppliesNoFixesAndHonoursStrict(t *testing.T) {
 	root, _ := folderrSeedStore(t)
 	indexPath := filepath.Join(root, ".act", "index.db")
 	// A garbage index is what index-malformed + --fix-index would move aside.

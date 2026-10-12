@@ -108,14 +108,36 @@ var allChecks = []string{
 	"phase2-reconciliation",
 }
 
-// validChecks indexes allChecks for O(1) name validation.
+// CheckFoldError labels the finding emitted when the op log cannot be folded.
+// It is not in allChecks because it has no pass of its own in a default run:
+// the finding appears whenever a selected check needs the fold and the fold
+// fails. `--check fold-error` selects it alone — it folds and reports only
+// that finding (act-bd1d30; the finding used to borrow the `orphan-ops` name).
+const CheckFoldError = "fold-error"
+
+// validChecks indexes allChecks (plus CheckFoldError) for O(1) name validation.
 var validChecks = func() map[string]bool {
-	m := make(map[string]bool, len(allChecks))
+	m := make(map[string]bool, len(allChecks)+1)
 	for _, c := range allChecks {
 		m[c] = true
 	}
+	m[CheckFoldError] = true
 	return m
 }()
+
+// runsAfterFoldError reports whether a check still runs when the fold has
+// failed. Only checks that never read the fold, write nothing under any flag,
+// and cannot raise the exit code above 1 qualify. The fold consumers cannot
+// run; the index checks are left out because they rebuild from the same
+// unreadable op log and carry --fix / --fix-index side effects;
+// phase2-reconciliation is left out because it fetches and can exit 4.
+func runsAfterFoldError(name string) bool {
+	switch name {
+	case "stale-git-lock", "time-travel", "unknown-op-version", "gitignore-effective":
+		return true
+	}
+	return false
+}
 
 // RunDoctor implements `act doctor`. It returns either a DoctorResult or a
 // DoctorErrorOutput plus an exit code.
@@ -153,36 +175,38 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 		run = []string{opts.Check}
 	}
 
+	var findings []Finding
+
 	// Pre-fold the ops once; most checks consume the same view.
 	var foldRes *fold.FoldResult
 	if foldNeeded(run) {
 		fr, err := fold.Fold(paths.Ops, fold.ApplyDispatch)
 		if err != nil {
-			// A fold error is itself a doctor finding (op-log corrupt).
-			// The checks that consume the fold cannot run, but
-			// unknown-op-version reads op_version from the raw JSON
-			// and is the usual explanation for the abort (an op from
-			// a newer act fails envelope validation), so it still
-			// runs when selected (act-f95d6e).
-			findings := []Finding{{
-				Check:    "orphan-ops",
+			// A fold error is itself a doctor finding (op-log corrupt),
+			// reported under its own name. The checks that consume the
+			// fold cannot run; the read-only ones that never touch it
+			// still do (act-f95d6e, act-bd1d30) — unknown-op-version
+			// among them, the usual explanation for the abort (an op
+			// from a newer act fails envelope validation). No fix is
+			// applied: nothing that honours --fix or --fix-index is
+			// left in the run.
+			findings = append(findings, Finding{
+				Check:    CheckFoldError,
 				Severity: "error",
 				Message:  fmt.Sprintf("fold error: %v", err),
-			}}
+			})
+			var kept []string
 			for _, name := range run {
-				if name == "unknown-op-version" {
-					findings = append(findings, checkUnknownOpVersion(paths.Ops)...)
+				if runsAfterFoldError(name) {
+					kept = append(kept, name)
 				}
 			}
-			return DoctorResult{
-				Findings: findings,
-				Count:    len(findings),
-			}, 1
+			run = kept
+		} else {
+			foldRes = fr
 		}
-		foldRes = fr
 	}
 
-	var findings []Finding
 	var remoteStatus RemoteStatus
 	var phase2Exit int
 	for _, name := range run {
@@ -260,7 +284,7 @@ func foldNeeded(run []string) bool {
 	for _, n := range run {
 		switch n {
 		case "orphan-close", "orphan-ops", "dangling-deps", "cycle",
-			CheckStatusVsOplog:
+			CheckStatusVsOplog, CheckFoldError:
 			return true
 		}
 	}
