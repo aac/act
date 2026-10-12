@@ -3469,6 +3469,60 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "an ambiguous prefix is exit 2 with id_ambiguous",
 		testName:     "TestDocClaim_Spec_DepAddAmbiguousPrefixIsExit2",
 	},
+	{
+		name:         "spec-pass9-init-creates-these-files",
+		docFile:      "docs/spec.md",
+		claimPattern: "the placeholder file `ops/.gitkeep`, the inert hook template `hooks/close.sample`, and `config.json`",
+		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
+	},
+	{
+		name:         "spec-pass9-init-config-four-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "`config.json` holds exactly four keys:",
+		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
+	},
+	{
+		name:         "spec-pass9-init-no-index-db",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act init` does not create `index.db`: the first command that reads the index does",
+		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
+	},
+	{
+		name:         "spec-pass9-init-nested-first-commit",
+		docFile:      "docs/spec.md",
+		claimPattern: "commits what it wrote there as that repo's first commit, with the subject `act init: nested act state bootstrap`",
+		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
+	},
+	{
+		name:         "spec-pass9-init-no-host-commit-unless-asked",
+		docFile:      "docs/spec.md",
+		claimPattern: "It makes no commit in the host repo unless `--commit-host` is given.",
+		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
+	},
+	{
+		name:         "spec-pass9-init-side-effects-one-nested-commit",
+		docFile:      "docs/spec.md",
+		claimPattern: "makes one commit in the nested `.act/` repo — none on a `--force` re-run of a tracker whose nested repo already has a commit",
+		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
+	},
+	{
+		name:         "spec-pass9-init-force-always-rewrites-config",
+		docFile:      "docs/spec.md",
+		claimPattern: "and always rewrites `config.json`: `node_id` is worked out again from the machine id and `user.email` as they are now, and `created_at` becomes the time of the re-run",
+		testName:     "TestDocClaim_Spec_InitForceRewritesConfig",
+	},
+	{
+		name:         "spec-pass9-init-force-leaves-config-uncommitted",
+		docFile:      "docs/spec.md",
+		claimPattern: "so the rewritten `config.json` is left there as an uncommitted change. Op files and snapshots are never changed or removed.",
+		testName:     "TestDocClaim_Spec_InitForceRewritesConfig",
+	},
+	{
+		name:         "spec-pass9-init-force-edge-case",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--force` on a `.act/` with existing ops leaves the op files untouched; it rewrites `config.json` and puts back what is missing.",
+		testName:     "TestDocClaim_Spec_InitForceRewritesConfig",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
