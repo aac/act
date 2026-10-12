@@ -28,7 +28,8 @@ type DoctorOptions struct {
 	// Check restricts the run to a single named check; empty runs all
 	// every check in spec order.
 	Check string
-	// Fix enables auto-remediation for the two index checks.
+	// Fix enables auto-remediation for the two index checks and for
+	// nested-exclude.
 	Fix bool
 	// AsJSON toggles the JSON output envelope.
 	AsJSON bool
@@ -100,6 +101,9 @@ var allChecks = []string{
 	// the only one that survives a sweep, a rollback, or another machine.
 	"status-vs-oplog",
 	"gitignore-effective",
+	// act-1d3110: act's own working files (.write.lock, .slow-writes, ...)
+	// listed in the nested repo's info/exclude. Honours --fix.
+	CheckNestedExclude,
 	// Phase 2 ticket 9 (act-aa4f19): cases (a'), (c'), (f), (g), (h)
 	// share one walk (single git-config read + nested-repo stat) and
 	// surface under the umbrella name `phase2-reconciliation`. The
@@ -240,6 +244,8 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 			findings = append(findings, checkStatusVsOplog(paths, foldRes)...)
 		case "gitignore-effective":
 			findings = append(findings, checkGitignoreEffective(repoRoot)...)
+		case CheckNestedExclude:
+			findings = append(findings, checkNestedExclude(paths.Root, opts.Fix)...)
 		case "phase2-reconciliation":
 			p2Findings, p2Status, p2Exit := checkPhase2Reconciliation(repoRoot, opts.NoFetch)
 			findings = append(findings, p2Findings...)

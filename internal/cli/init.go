@@ -509,6 +509,14 @@ func bootstrapNestedRepo(actDir, machineID, gitEmail string) (bool, error) {
 		return false, fmt.Errorf("git init in %s: %w", actDir, err)
 	}
 
+	// act-1d3110: list act's machine-local working files in the nested
+	// repo's info/exclude. Before the `git add -A` below, so a working file
+	// already on disk is never staged, and before the re-init early return,
+	// so `act init --force` repairs an older store too.
+	if _, err := EnsureNestedExclude(actDir); err != nil {
+		return false, err
+	}
+
 	// Pin commit identity locally so the initial commit doesn't fail on
 	// hosts with no global user.{name,email} set (CI containers, fresh
 	// installs). We use the same email act already collected for node_id
