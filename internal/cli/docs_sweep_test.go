@@ -4010,6 +4010,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "so do not claim again.",
 		testName:     "TestDocClaim_EdgMCP_ComposedToolDescriptionsNameTheirExtraKeys",
 	},
+	// act-4a538e: credentials embedded in a remote URL never reach act's
+	// output.
+	{
+		name:         "spec-rdx-remote-credentials-never-printed",
+		docFile:      "docs/spec.md",
+		claimPattern: "`push_deferred_reason`, the `act: WARNING:` block, `act doctor`'s `fetch_failure_reason`, the output of `act remote add-upstream`, `act remote sync` and `act state import --from-remote`, and the entries of `.act/.sync-log` — the userinfo is replaced with `***`.",
+		testName:     "TestDocClaim_Spec_RdxRemoteCredentialsNeverPrinted",
+	},
+	{
+		name:         "spec-rdx-mcp-remote-credentials-never-returned",
+		docFile:      "docs/spec.md",
+		claimPattern: "The results of the MCP tools (`act_finish`, `act_next`, `act_create`, `act_update`) are masked the same way.",
+		testName:     "TestDocClaim_Spec_RdxMCPRemoteCredentialsNeverReturned",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

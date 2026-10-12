@@ -1064,7 +1064,8 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		case perr == nil:
 			published = PublishResult{}
 		case published.Deferred:
-			published.Reason = perr
+			// Redacted as deferPublish redacts it (act-4a538e).
+			published.Reason = gops.RedactError(perr)
 		default:
 			published = deferPublish(gops, "update", nil, perr)
 		}

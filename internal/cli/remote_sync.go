@@ -339,13 +339,16 @@ func gitPushUpstream(gitDir, branch string) error {
 	// act-40e336: routed through the shared gitops handle rather than
 	// exec'ing git here, so this push gets the same git-dir pinning and
 	// maintenance overrides as every other nested-repo invocation.
-	out, err := gitops.NewActGitOpsFromGitDir(gitDir).
-		RunGitCombined("push", UpstreamRemoteName, branch)
+	g := gitops.NewActGitOpsFromGitDir(gitDir)
+	out, err := g.RunGitCombined("push", UpstreamRemoteName, branch)
 	if err != nil {
+		// act-4a538e: git's output can echo credentials embedded in the
+		// upstream URL, and this error is returned and written to
+		// .sync-log.
 		if trimmed := strings.TrimSpace(out); trimmed != "" {
-			return fmt.Errorf("%v: %s", err, trimmed)
+			return g.RedactError(fmt.Errorf("%v: %s", err, trimmed))
 		}
-		return err
+		return g.RedactError(err)
 	}
 	return nil
 }

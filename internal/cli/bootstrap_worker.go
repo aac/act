@@ -960,22 +960,25 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		// filesystem.
 		_ = os.RemoveAll(stagingAct)
 
+		// act-4a538e: the URL and git's output are reported with any
+		// userinfo masked; the clone itself got the real URL.
+		shownURL := gitops.RedactURLUserinfo(opts.FromRemoteURL)
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return map[string]any{
 				"error":   ErrBootstrapTimeout,
-				"message": fmt.Sprintf(cmd+": clone %s exceeded %ds budget", opts.FromRemoteURL, timeoutSec),
+				"message": fmt.Sprintf(cmd+": clone %s exceeded %ds budget", shownURL, timeoutSec),
 				"details": map[string]any{
 					"timeout_seconds": timeoutSec,
-					"url":             opts.FromRemoteURL,
+					"url":             shownURL,
 				},
 			}, 4
 		}
 		return map[string]any{
 			"error":   ErrRemoteUnreachable,
-			"message": fmt.Sprintf(cmd+": clone %s: %v", opts.FromRemoteURL, cloneErr),
+			"message": fmt.Sprintf(cmd+": clone %s: %v", shownURL, cloneErr),
 			"details": map[string]any{
-				"url":         opts.FromRemoteURL,
-				"stderr_tail": CaptureStderrTail(string(cloneOut)),
+				"url":         shownURL,
+				"stderr_tail": CaptureStderrTail(gitops.RedactURLUserinfo(string(cloneOut), opts.FromRemoteURL)),
 			},
 		}, 3
 	}
@@ -1085,7 +1088,7 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 	hlcJSON, _ := dispatchHLC.MarshalJSON()
 
 	return BootstrapWorkerResult{
-		SourceRoot:      opts.FromRemoteURL,
+		SourceRoot:      gitops.RedactURLUserinfo(opts.FromRemoteURL),
 		Target:          absTarget,
 		OpsCopied:       stats.OpsCopied,
 		SnapshotsCopied: stats.SnapshotsCopied,

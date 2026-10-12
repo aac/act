@@ -128,7 +128,13 @@ func pushDeferredFields(pub PublishResult) (bool, string) {
 
 // deferPublish records the unpushed commit, warns, and reports the
 // deferral. Always returns Deferred=true.
+//
+// act-4a538e: reason wraps git's own output, which can echo credentials
+// embedded in the origin URL. It is printed below and returned as
+// push_deferred_reason (CLI JSON and MCP results), so it is redacted here,
+// where every deferral is built.
 func deferPublish(gops *gitops.ActGitOps, opType string, stderr io.Writer, reason error) PublishResult {
+	reason = gops.RedactError(reason)
 	res := PublishResult{Deferred: true, Reason: reason}
 	if err := RecordPendingPush(gops, gops.RepoRoot, opType); err == nil {
 		res.Queued = true

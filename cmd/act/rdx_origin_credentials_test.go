@@ -109,7 +109,15 @@ func TestDocClaim_Spec_RdxRemoteCredentialsNeverPrinted(t *testing.T) {
 			// fails and reports the URL; sync fails soft into .sync-log.
 			rdxWantNoSecret(t, dir, "remote", "add-upstream", "--json", url)
 			rdxWantNoSecret(t, dir, "remote", "add-upstream", url)
-			rdxWantNoSecret(t, dir, "remote", "sync", "--json")
+			out, _ = rdxWantNoSecret(t, dir, "remote", "sync", "--json")
+			if !strings.Contains(out, `"logged":true`) {
+				t.Errorf("act remote sync --json logged no failure; the credentialed-upstream push was not exercised:\n%s", out)
+			}
+			// A clone from the same URL fails and reports the URL.
+			out, _ = rdxWantNoSecret(t, dir, "state", "import", "--from-remote", url, "--json", t.TempDir())
+			if !strings.Contains(out, `"url":`) {
+				t.Errorf("act state import --from-remote did not report the URL it could not clone; the path was not exercised:\n%s", out)
+			}
 			if log, err := os.ReadFile(filepath.Join(dir, ".act", ".sync-log")); err == nil {
 				t.Logf(".act/.sync-log=%s", strings.TrimSpace(string(log)))
 				if strings.Contains(string(log), rdxSecret) {

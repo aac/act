@@ -84,6 +84,10 @@ func RunRemoteAddUpstream(opts RemoteAddUpstreamOptions) (any, int) {
 		}, 2
 	}
 
+	// act-4a538e: the URL as this command reports it — userinfo masked.
+	// git config still gets opts.URL itself.
+	shownURL := gitops.RedactURLUserinfo(opts.URL)
+
 	// Public-URL refusal. Happens BEFORE we touch any state so a
 	// refused invocation has no side effects.
 	if config.IsPublicURL(opts.URL) && !opts.ForcePublic {
@@ -91,7 +95,7 @@ func RunRemoteAddUpstream(opts RemoteAddUpstreamOptions) (any, int) {
 			"error":   ErrUpstreamPublic,
 			"message": "refusing public upstream; pass --force-public to override",
 			"details": map[string]any{
-				"url": opts.URL,
+				"url": shownURL,
 			},
 		}, 2
 	}
@@ -184,7 +188,7 @@ func RunRemoteAddUpstream(opts RemoteAddUpstreamOptions) (any, int) {
 			"error":   ErrPushFailed,
 			"message": fmt.Sprintf("act remote add-upstream: initial push failed: %v", err),
 			"details": map[string]any{
-				"url":    opts.URL,
+				"url":    shownURL,
 				"branch": branch,
 			},
 		}, 3
@@ -193,7 +197,7 @@ func RunRemoteAddUpstream(opts RemoteAddUpstreamOptions) (any, int) {
 	return RemoteAddUpstreamResult{
 		ActStateRoot: actRoot,
 		ConfigPath:   configPath,
-		URL:          opts.URL,
+		URL:          shownURL,
 		Branch:       branch,
 		ForcePublic:  opts.ForcePublic,
 	}, 0
@@ -227,13 +231,15 @@ func resolveAddUpstreamBranch(gitDir string) string {
 func gitPushInitialUpstream(gitDir, branch string) error {
 	// act-40e336: see gitPushUpstream — the shared handle is the only
 	// place nested-repo git invocations are constructed.
-	out, err := gitops.NewActGitOpsFromGitDir(gitDir).
-		RunGitCombined("push", UpstreamRemoteName, branch)
+	g := gitops.NewActGitOpsFromGitDir(gitDir)
+	out, err := g.RunGitCombined("push", UpstreamRemoteName, branch)
 	if err != nil {
+		// act-4a538e: git's output can echo credentials embedded in the
+		// upstream URL, and this error is printed and returned.
 		if trimmed := strings.TrimSpace(out); trimmed != "" {
-			return fmt.Errorf("%v: %s", err, trimmed)
+			return g.RedactError(fmt.Errorf("%v: %s", err, trimmed))
 		}
-		return err
+		return g.RedactError(err)
 	}
 	return nil
 }

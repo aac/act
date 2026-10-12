@@ -308,10 +308,13 @@ func fetchDryRunRemote(gitDir, remote string, timeout time.Duration) (string, bo
 	// .act/.git. The wall-clock bound (a hung TCP connect must not stall
 	// doctor) now comes from the wrapper's own timeout path rather than a
 	// hand-rolled AfterFunc that never stopped its timer.
-	out, err := nestedProbe(gitDir).RunGitCombinedTimeout(timeout,
+	probe := nestedProbe(gitDir)
+	out, err := probe.RunGitCombinedTimeout(timeout,
 		"fetch", "--dry-run", remote)
 	if err != nil {
-		return strings.TrimSpace(out) + ": " + err.Error(), false
+		// act-4a538e: the reason is reported as fetch_failure_reason, and
+		// git's output can echo credentials embedded in the remote URL.
+		return probe.RedactRemoteCredentials(strings.TrimSpace(out) + ": " + err.Error()), false
 	}
 	return "", true
 }
