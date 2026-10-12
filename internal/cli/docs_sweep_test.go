@@ -3189,6 +3189,84 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "Default: `priority,-created_at`. `id` ascending is added as the last key whenever the keys do not name `id`. An unknown field, an unknown direction suffix or an empty key is exit 2.",
 		testName:     "TestDocClaim_Spec_ListSortSyntax",
 	},
+	{
+		name:         "spec-init-existing-tracker-exits-1",
+		docFile:      "docs/spec.md",
+		claimPattern: "1 if `.act/config.json` already exists and `--force` was not given (`act_already_initialized`)",
+		testName:     "TestDocClaim_Spec_InitExitCodesAndOutputModes",
+	},
+	{
+		name:         "spec-init-tracker-remote-exits-3-unless-force-new",
+		docFile:      "docs/spec.md",
+		claimPattern: "or when a configured tracker remote already holds this repo's tracker and `--force-new` was not given (`tracker_not_checked_out`)",
+		testName:     "TestDocClaim_Spec_InitExitCodesAndOutputModes",
+	},
+	{
+		name:         "spec-init-json-only-with-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "**JSON output** (only with `--json`; without it `act init` prints human-readable lines, the first of them `Initialized .act/ at <path> with node_id <id>`):",
+		testName:     "TestDocClaim_Spec_InitExitCodesAndOutputModes",
+	},
+	{
+		name:         "spec-init-json-example-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "The first seven keys are always present.",
+		testName:     "TestDocClaim_Spec_InitListSearchJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-init-json-no-writer-or-schema-version",
+		docFile:      "docs/spec.md",
+		claimPattern: "There is no `writer_version` or `schema_version` key.",
+		testName:     "TestDocClaim_Spec_InitListSearchJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-list-json-example-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "The object has five top-level keys: `issues`, `count`, `total`, `truncated` and `refresh`. There is no `ok` key.",
+		testName:     "TestDocClaim_Spec_InitListSearchJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-list-json-row-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "Each row always has `id`, `title`, `status`, `priority` and `type`; `assignee`, `created_at` and `claimed_at` are omitted when empty",
+		testName:     "TestDocClaim_Spec_InitListSearchJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-search-json-example-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "The object has three top-level keys: `matches`, `count` and `refresh`. There is no `ok` key and no `results` key. `matches` is an empty array, not `null`, when nothing matched.",
+		testName:     "TestDocClaim_Spec_InitListSearchJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-error-envelope-three-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "`error` is a string code, not an object, and the envelope has exactly those three keys",
+		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
+	},
+	{
+		name:         "spec-doctor-findings-are-not-an-envelope",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.",
+		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
+	},
+	{
+		name:         "spec-dep-add-cycle-envelope",
+		docFile:      "docs/spec.md",
+		claimPattern: "1 on cycle (`{\"error\":\"cycle\",\"message\":\"act dep add: cycle detected: <a> -> <b> -> <a>\",\"details\":{\"path\":[\"<a>\",\"<b>\",\"<a>\"]}}`)",
+		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
+	},
+	{
+		name:         "spec-mcp-error-is-iserror-result-with-envelope",
+		docFile:      "docs/spec.md",
+		claimPattern: "An error surfaces as a tool result with `isError: true` whose text is the error envelope",
+		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
+	},
+	{
+		name:         "spec-op-payloads-migrate-transform-id",
+		docFile:      "docs/spec.md",
+		claimPattern: "{ \"from_version\": 1, \"to_version\": 2, \"transform_id\": \"v1-to-v2\" }",
+		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

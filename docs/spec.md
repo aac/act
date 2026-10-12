@@ -199,9 +199,9 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 { "source_ref": "issues.jsonl@<sha>", "source_id": "bootstrap-id-1",
   "mapping_file": ".act/imports/2026-04-29T14:23:01Z.json" }
 
-// migrate — rewrites the interpretation of prior ops at fold time
-{ "from_version": 1, "to_version": 2,
-  "transform": { "kind": "rename_field", "from": "owner", "to": "assignee" } }
+// migrate — records that `act migrate` ran the migration registered for
+// (from_version, to_version) over this issue's ops; see "4. Op-schema migration"
+{ "from_version": 1, "to_version": 2, "transform_id": "v1-to-v2" }
 
 // tombstone — issue-level deletion marker
 { "deleted_at": "RFC3339 UTC" }
@@ -703,7 +703,7 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 - `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
 - `4` — not one meaning. Three commands exit 4, each for its own condition: `act version --check-repo` when some op file carries a `writer_version` newer than this binary's (`version_skew`); `act doctor` when `origin` is configured but unreachable (the `remote-reachable` finding); and `act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`). No other command exits 4 — reads and writes apply an op from a newer writer like any other op.
 
-All non-zero exits emit `{"error": {"code": <int>, "kind": "<slug>", "message": "..."}}` on stdout when `--json` is set; on stderr in human mode.
+A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has exactly those three keys; the codes are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
 
 ### Pre-import id resolution
 
@@ -726,13 +726,17 @@ Resolution happens before any op is written, so a write command never partially 
 **Flags:**
 - `--force` (bool, default false) — proceed even if `.act/` already exists; merges missing subdirs and rewrites `config.json` only if absent. Never overwrites existing ops or snapshots.
 
-**Exit codes:** 0 on success; 2 if `.act/` exists and `--force` not given; 3 if `cwd` is not inside a git working tree.
+**Exit codes:** 0 on success; 1 if `.act/config.json` already exists and `--force` was not given (`act_already_initialized`); 2 on an unknown flag; 3 if `cwd` is not inside a git working tree (`not_in_git`), or when a configured tracker remote already holds this repo's tracker and `--force-new` was not given (`tracker_not_checked_out`).
 
-**JSON output (`--json` always emitted on init):**
+**JSON output** (only with `--json`; without it `act init` prints human-readable lines, the first of them `Initialized .act/ at <path> with node_id <id>`):
 ```json
 {"ok": true, "act_dir": "/abs/path/.act", "node_id": "7f3a91c2",
- "writer_version": "0.1.0", "schema_version": 1}
+ "nested_committed": true, "host_committed": false,
+ "gitignore_updated": true, "hook_installed": true,
+ "host_files_uncommitted": [".gitignore"]}
 ```
+
+The first seven keys are always present. `nested_committed` says whether this run made the nested `.act/` repo's first commit (false on a `--force` re-init of a repo that already has one); `gitignore_updated` and `hook_installed` say whether this run added the `.act/` line to the host `.gitignore` and the act block to the host pre-commit hook; `host_committed` is true only when `--commit-host` committed host files. Four more keys appear only when they have something to say: `host_files_uncommitted` (the host files this run wrote and left uncommitted), `contributing_emitted` (`--contributing` wrote the stanza), `contributing_suggested` (the host has a public-looking remote and `--contributing` was not given) and `partial_failures` (host-side steps that failed after the nested repo was created). There is no `writer_version` or `schema_version` key.
 
 **Side effects:** Creates directories and files under `.act/`. Does NOT create a commit; `init` is the one write that defers commit to the user's first real op.
 
@@ -788,13 +792,16 @@ Resolution happens before any op is written, so a write command never partially 
 
 **JSON output:**
 ```json
-{"ok": true, "count": 12, "issues": [
-  {"id":"act-a1b2c3d4e5f60718","prefix":"act-a1b2","title":"...",
-   "status":"open","priority":1,"type":"task","assignee":"agent-1",
-   "parent":null,"created_at":"2026-04-29T14:23:01Z",
+{"issues": [
+  {"id":"act-a1b2c3","title":"...","status":"in_progress","priority":1,
+   "type":"task","assignee":"7f3a91c2",
+   "created_at":"2026-04-29T14:23:01.000Z",
    "claimed_at":"2026-04-29T15:01:44.318Z"}
-]}
+ ], "count": 1, "total": 1, "truncated": false,
+ "refresh": {"reason":"no_remote","fetched":false}}
 ```
+
+The object has five top-level keys: `issues`, `count`, `total`, `truncated` and `refresh`. There is no `ok` key. `count` is the number of rows returned and `total` the number that matched before `--limit`; `truncated` is true exactly when the limit dropped rows. `refresh` reports what the read path did before answering (`reason` is `no_remote` in a tracker with no `origin`, `no_fetch` under `--no-fetch`). Each row always has `id`, `title`, `status`, `priority` and `type`; `assignee`, `created_at` and `claimed_at` are omitted when empty, and `short_id` appears only when it differs from `id`. A row has no `prefix` and no `parent` key.
 
 **Exit codes:** 0, including an empty result; 1 when the index cannot be opened, brought up to date with the op log, or queried (`index_open_failed`, `index_rebuild_failed`, `index_query_failed`) — an op file the fold rejects, such as one with an unknown `op_version`, lands here; 2 on a usage error — an unknown flag, a positional argument, `--all` with `--status`, an unknown `--status` value or `--sort` field; 3 outside a git working tree (`not_in_git`), or when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`). In a git repo with no `.act/` and no tracker remote, `act list` prints the no-state line and exits 0. `act list` never exits 4: an op with a newer `writer_version` is applied like any other, and a refresh from `origin` that fails is a stderr warning, not a failure.
 
@@ -921,7 +928,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
  "committed":true}
 ```
 
-**Exit codes:** 0; 1 on cycle (`{"error":{"kind":"cycle","path":[...]}}`); 2 on bad flags; 3 on missing id.
+**Exit codes:** 0; 1 on cycle (`{"error":"cycle","message":"act dep add: cycle detected: <a> -> <b> -> <a>","details":{"path":["<a>","<b>","<a>"]}}`); 2 on bad flags; 3 on missing id.
 
 **Edge cases:** self-edge → exit 2; duplicate edge is idempotent (no op, exit 0); `relates`/`supersedes` are not cycle-checked.
 
@@ -1029,10 +1036,13 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 
 **JSON output:**
 ```json
-{"ok": true, "count": 5, "results":[
-  {"id":"...","prefix":"...","title":"...","snippet":"...","rank":-3.41}
-]}
+{"matches": [
+  {"id":"act-a1b2c3","title":"...","status":"open","snippet":"a [needle] in context"}
+ ], "count": 1,
+ "refresh": {"reason":"no_remote","fetched":false}}
 ```
+
+The object has three top-level keys: `matches`, `count` and `refresh`. There is no `ok` key and no `results` key. `matches` is an empty array, not `null`, when nothing matched. Each match has `id`, `title`, `status` and `snippet`, in which the matched terms are wrapped in `[` `]`; `short_id` appears only when it differs from `id`. A match has no `prefix` and no `rank` key.
 
 **Exit codes:** 0, including no matches; 2 on a usage error — an unknown flag, a missing or empty query, a second positional argument (quote a multi-word query), an `--in` value other than `title|desc|all`, a negative `--limit` — and on any error SQLite returns for the query itself; 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), or when the index cannot be opened or brought up to date with the op log (`index_open_failed`, `index_rebuild_failed` — the failures `act list` reports as exit 1 are exit 3 here). The query is quoted token by token before it reaches FTS5, so FTS5 operators and unbalanced quotes are searched for literally, not rejected as syntax. In a git repo with no `.act/` and no tracker remote, `act search` prints the no-state line and exits 0. `act search` never exits 4: an op with a newer `writer_version` is indexed like any other.
 
@@ -1184,7 +1194,7 @@ Layers 1 and 2 are **explicit**; only they cause `act ready`/`act next` to filte
 
 The server exposes one tool per CLI command, named `act_<verb>` (`act_init`, `act_create`, `act_list`, `act_show`, `act_update`, `act_close`, `act_dep_add`, `act_ready`, `act_search`, `act_log`, `act_doctor`, `act_version`), plus three composed tools. Read-only enforcement is a server-level concern: **no tool schema advertises a `read_only` parameter** (act-ca659d — it was a per-call advisory nothing enforced), and the server rejects any write tool when started with `--read-only`. Tool schemas leave `additionalProperties` unconstrained, so a client holding a cached older schema may still send `read_only`/`no_commit`/`isolated` and the call behaves as before. Transport is stdio. JSON Schema (concise) for each:
 
-**Per-command tools.** Each `act_<verb>` accepts an object whose fields mirror the CLI flags (kebab-case becomes snake_case). Output is the command's `--json` body. Errors surface as MCP tool errors carrying `{code, kind, message}`.
+**Per-command tools.** Each `act_<verb>` accepts an object whose fields mirror the CLI flags (kebab-case becomes snake_case). Output is the command's `--json` body. An error surfaces as a tool result with `isError: true` whose text is the error envelope — `{"error": "<code>", "message": "..."}`, plus `details` when the command supplies any.
 
 **Advertised surface.** `tools/list` advertises the eight tools the work loop runs — `act_next`, `act_finish`, `act_block`, `act_file_blocker`, `act_list`, `act_show`, `act_create`, `act_update` (act-8a6536). The setup/diagnostic verbs (`act_init`, `act_version`, `act_doctor`, `act_log`, `act_search`, `act_ready`, `act_close`, `act_dep_add`) are **reachable through the identically-named CLI verbs** and remain dispatchable over MCP for clients holding a cached tool list; they are simply not advertised, because every advertised schema is re-read on every turn.
 
