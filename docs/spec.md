@@ -672,7 +672,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--machine LABEL` (string, default ""). Pins the new issue to one machine: `act ready`/`act next` on any other machine exclude it, while `act list`/`act show` show it everywhere. The default, empty, means "runs anywhere". Filing time is when the constraint is known, which is why the flag lives here and not only on `act update`. Label rules: printable ASCII, no spaces or control characters, ≤64 bytes; a violation is exit 2 at the flag boundary, never a written op.
 - `--json` (bool, default false for humans, true under MCP).
 
-**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `create` hook, then op-commits unless `--no-commit`.
+**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), runs the `create` hook, and only once the hook passes writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json` and op-commits it. The `create` hook runs before the create op file is written (§Hooks contract), so a hook that refuses the create leaves no op file behind. Under `--no-commit` the op file is written, no hook runs and nothing is committed.
 
 **JSON output:**
 ```json
@@ -802,7 +802,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 - `--reason TEXT` (string, default ""). Stored as `closed_reason`.
 - `--json` (bool).
 
-**Behavior:** Writes a `close` op carrying `closed_at` and `closed_reason`; computes and stores the `closed_by_tree` reverse index (git tree hash of `.act/ops/<id>/`); runs the `close` hook; commits with message `act-op: <id> close`.
+**Behavior:** Builds a `close` op carrying `closed_at` and `closed_reason`; runs the `close` hook, and only once the hook passes writes the op file. The `close` hook runs before the close op file is written (§Hooks contract), so a refused close leaves no op file behind. It then computes and stores the `closed_by_tree` reverse index (git tree hash of `.act/ops/<id>/`) and commits with message `act-op: <id> close`.
 
 **JSON output:**
 ```json
@@ -824,7 +824,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 - `--type T` (enum blocks|relates|supersedes, default blocks).
 - `--json` (bool).
 
-**Behavior:** Resolves both ids, refuses if it would create a cycle in the `blocks` subgraph (cycle detection runs over the full folded graph). Writes a `dep-add` op.
+**Behavior:** Resolves both ids, refuses if it would create a cycle in the `blocks` subgraph (cycle detection runs over the full folded graph). Writes one `add_dep` op on the child issue.
 
 **Direction (edge_type=blocks):** the `child` is blocked BY the `parent` — the child stays out of `act ready` until the parent closes. `child` is the dependent, `parent` is the blocker. The raw `child`/`parent` fields read backwards as subject-verb-object, so the output carries a `summary` field rendering the edge in its natural direction.
 
