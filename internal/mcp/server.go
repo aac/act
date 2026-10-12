@@ -1109,11 +1109,12 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_block",
-			Description: "Recommended: mark an issue blocked AND record the blocks-edge in a single commit. Use instead of act_update + act_dep_add. The result may also carry `warnings` (`push_no_remote`: the edge is committed and nothing was pushed).",
+			Description: "Recommended: mark an issue blocked AND record the blocks-edge in a single commit. Use instead of act_update + act_dep_add. The result may also carry `warnings` (`push_no_remote`: the edge is committed and nothing was pushed). It carries `push_deferred` with `push_deferred_reason` when the edge's commit did not reach origin: the edge is recorded either way, so do not retry.",
 			InputSchema: schemaObject(map[string]any{
 				"id":         schemaString("Issue to mark blocked (required)."),
 				"blocked_by": schemaString("Issue that blocks (required)."),
 				"reason":     schemaString("Optional reason."),
+				"push":       schemaBool("Push after commit."),
 			}, []string{"id", "blocked_by"}),
 		},
 		{

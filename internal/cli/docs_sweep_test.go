@@ -4038,6 +4038,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "publishes the backlog; 'act remote sync' does not (it pushes to",
 		testName:     "TestDocClaim_Spec_DplDeferredPushRetriedByTheNextWrite",
 	},
+	{
+		name:         "spec-dpl-mcp-block-schema-advertises-push",
+		docFile:      "docs/spec.md",
+		claimPattern: "Input: `{\"id\":\"string\",\"blocked_by\":\"string\",\"reason\":{\"type\":\"string\"},\"push\":{\"type\":\"boolean\"}}`; `tools/list` advertises all four.",
+		testName:     "TestDocClaim_DplMCP_BlockSchemaAdvertisesPush",
+	},
+	{
+		name:         "mcp-dpl-block-description-names-push-deferred",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "It carries `push_deferred` with `push_deferred_reason` when the edge's commit did not reach origin: the edge is recorded either way, so do not retry.",
+		testName:     "TestDocClaim_DplMCP_BlockSchemaAdvertisesPush",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

@@ -1276,7 +1276,7 @@ Input: `{"id":"string","reason":{"type":"string"}}`. Behavior: `act close --reas
 
 **Composed tool: `act_block`**
 
-Input: `{"id":"string","blocked_by":"string","reason":{"type":"string"}}`. Behavior: write one `add_dep` op with `type=blocks` from `id` to `blocked_by`. The "blocked" display state is derived automatically once the dep edge is present — no separate status op is written (that op was removed in act-018cb3). The `ops_written` label in the response is the literal string `dep-add`; the op type on disk is `add_dep`. Output:
+Input: `{"id":"string","blocked_by":"string","reason":{"type":"string"},"push":{"type":"boolean"}}`; `tools/list` advertises all four. Behavior: write one `add_dep` op with `type=blocks` from `id` to `blocked_by`. The "blocked" display state is derived automatically once the dep edge is present — no separate status op is written (that op was removed in act-018cb3). The `ops_written` label in the response is the literal string `dep-add`; the op type on disk is `add_dep`. Output:
 ```json
 {"ok":true,"id":"...","blocked_by":"...","ops_written":["dep-add"]}
 ```
