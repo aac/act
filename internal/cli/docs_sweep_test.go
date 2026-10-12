@@ -2758,6 +2758,42 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "3 outside a git working tree (`not_in_git`), when the repo has no `.act/` (`no_repo`), or when `.act/` cannot be read",
 		testName:     "TestDocClaim_VersionCheckRepo_ResolvesRepoRootFromSubdirectory",
 	},
+	// act-377d38: the skill teaches capturing a new ticket's id from
+	// `act create --json` rather than from the sentence `act create`
+	// prints. Asserted against the real binary, and by running the skill's
+	// own snippet, in cmd/act/skillcap_docclaim_test.go. Drift shape: the
+	// snippet loses its exit-status check or its `jq -e`, so a failed
+	// create flows into the next command with an empty or `null` id.
+	{
+		name:         "skill-create-id-capture-from-json",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "read it from `act create --json`",
+		testName:     "TestDocClaim_Skill_CreateJSONCarriesIDFailedCreateDoesNot",
+	},
+	{
+		name:         "skill-create-failed-exits-nonzero-json-without-id",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "create that fails exits non-zero and still writes JSON to stdout: an error envelope with",
+		testName:     "TestDocClaim_Skill_CreateJSONCarriesIDFailedCreateDoesNot",
+	},
+	{
+		name:         "skill-create-id-capture-plain-jq-prints-null",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "a plain `jq -r .id` prints the word `null`",
+		testName:     "TestDocClaim_Skill_CreateIDCaptureSnippetStopsOnFailedCreate",
+	},
+	{
+		name:         "skill-create-id-capture-snippet-exit-status",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: `out=$(act create --json "<title>" --type task) || { echo "$out" >&2; exit 1; }`,
+		testName:     "TestDocClaim_Skill_CreateIDCaptureSnippetStopsOnFailedCreate",
+	},
+	{
+		name:         "skill-create-id-capture-snippet-jq-e",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: `id=$(jq -er .id <<<"$out") || exit 1`,
+		testName:     "TestDocClaim_Skill_CreateIDCaptureSnippetStopsOnFailedCreate",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

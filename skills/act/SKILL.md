@@ -162,6 +162,21 @@ only applies to the CLI.
 File it, keep working. If the discovery actually blocks the current issue, that's the
 "cross-issue block" state above.
 
+**When a later command needs the new ticket's id, read it from `act create --json` —
+never grep it out of the sentence `act create` prints.** The id is the `id` field. A
+create that fails exits non-zero and still writes JSON to stdout: an error envelope with
+no `id`, on which a plain `jq -r .id` prints the word `null` — not an empty string. So
+check the exit status, and let `jq -e` refuse a missing id:
+
+```
+out=$(act create --json "<title>" --type task) || { echo "$out" >&2; exit 1; }
+id=$(jq -er .id <<<"$out") || exit 1
+```
+
+Stop there if either line fails; never pass an unchecked capture to the next command.
+(Provenance: a create failed, the id grepped out of its output came back empty, and
+workers were launched against an empty ticket id.)
+
 **When you defer work out of a ticket's scope, give it its own ticket — don't park it in a
 close-reason.** File the follow-up as its own issue with a `relates` / `derives-from` dep
 edge (`act dep add`) back to the predecessor, so the obligation lives in the backlog rather
