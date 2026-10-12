@@ -24,7 +24,7 @@ import (
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	check := fs.String("check", "", "run a single named check (default: all)")
-	fix := fs.Bool("fix", false, "auto-remediate index-divergence/index-schema findings")
+	fix := fs.Bool("fix", false, "auto-remediate index-divergence/index-schema/nested-exclude findings")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	strict := fs.Bool("strict", false, "promote warn findings to error (exit 1 on any finding)")
 	noFetch := fs.Bool("no-fetch", false, "suppress the inline `git fetch --dry-run` probe used by case (g) reachability and case (h) upstream-drift detection; case (h) is suppressed entirely")

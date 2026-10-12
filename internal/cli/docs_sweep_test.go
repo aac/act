@@ -2816,6 +2816,42 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "it exits 3 with `tracker_not_checked_out` rather than `no_repo`",
 		testName:     "TestDocClaim_VersionCheckRepo_UnclonedTrackerSaysNotCheckedOut",
 	},
+	// act-1d3110: the nested-exclude doctor check. act's working files
+	// showed as untracked in the nested .act repo; init now lists them in
+	// .act/.git/info/exclude and doctor --fix repairs an older store.
+	// Drift shape: the entry list in the spec row and the one in
+	// internal/cli/nested_exclude.go part ways, or --fix stops driving
+	// the check, and the test goes red.
+	{
+		name:         "spec-doctor-nested-exclude-entries",
+		docFile:      "docs/spec.md",
+		claimPattern: "`/.write.lock`, `/.slow-writes`, `/.pending-pushes`, `/.sync-log`, `/.compact.lock`, `/index.db`, `/index.db-wal`, `/index.db-shm`, `/index.db-journal`",
+		testName:     "TestDocClaim_Doctor_NestedExclude",
+	},
+	{
+		name:         "spec-doctor-nested-exclude-finding",
+		docFile:      "docs/spec.md",
+		claimPattern: "Any missing lines are reported as one warn-severity finding that names them. `act init` writes these lines",
+		testName:     "TestDocClaim_Doctor_NestedExclude",
+	},
+	{
+		name:         "spec-doctor-nested-exclude-fix",
+		docFile:      "docs/spec.md",
+		claimPattern: "Appends the missing lines; existing content is kept and a second `--fix` changes nothing.",
+		testName:     "TestDocClaim_Doctor_NestedExclude",
+	},
+	{
+		name:         "spec-doctor-fix-flag-drives-nested-exclude",
+		docFile:      "docs/spec.md",
+		claimPattern: "Drives `index-divergence`, `index-schema` and `nested-exclude` only.",
+		testName:     "TestDocClaim_Doctor_NestedExclude",
+	},
+	{
+		name:         "doctor-fix-flag-help-names-nested-exclude",
+		docFile:      "cmd/act/doctor.go",
+		claimPattern: "auto-remediate index-divergence/index-schema/nested-exclude findings",
+		testName:     "TestDocClaim_Doctor_NestedExclude",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
