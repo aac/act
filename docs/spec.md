@@ -130,10 +130,16 @@ Every op file's top-level object has exactly these keys, in this order:
 `op_type` enum (all of v1):
 
 ```
-create | update_field | add_dep | remove_dep | add_accept | remove_accept |
-set_accept | claim     | close   | redact     | import     | migrate      |
-tombstone
+create       | update_field | add_dep       | remove_dep | add_external_dep |
+remove_external_dep         | add_accept    | remove_accept | set_accept    |
+claim        | unclaim      | close         | reopen     | redact           |
+import       | migrate      | tombstone
 ```
+
+These seventeen are the types a writer may emit. `redact` is legacy and
+parse-only: it is accepted on read but has no writer and no apply path, so the
+fold skips it. An op whose `op_type` is not in this list is skipped by the
+fold, not a hard failure (see §Op-fold algorithm).
 
 #### Byte-exact JSON serialization rules
 
@@ -222,9 +228,9 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
     imports/
       2026-04-29T14:23:01.000Z.json   # { "source": "...", "mapping": { ... } }
     hooks/
-      post-create                  # executable
-      post-close                   # executable
-      post-claim                   # executable
+      create                       # executable
+      close                        # executable
+      claim                        # executable
     .lock                          # advisory lock file (POSIX flock / Windows LockFileEx)
 ```
 
@@ -362,7 +368,8 @@ fold(ops_root) -> {issues, index}:
     op = json.load(f)
     require(op.schema_version <= READER_SCHEMA_MAX) else E_SCHEMA_TOO_NEW
     require(op.writer_version <= READER_WRITER_MAX) else E_UPGRADE_REQUIRED
-    require(known_op_type(op.op_type, op.op_version)) else E_UNKNOWN_OP
+    # An unrecognised op_type is NOT an error here: the op parses, sorts,
+    # and is skipped at step (5). Only an empty op_type is rejected.
     op.op_hash = sha256(canonical_json(op.payload || op.hlc || op.node_id))
     parsed.append(op)
 
@@ -375,11 +382,21 @@ fold(ops_root) -> {issues, index}:
   # (5) Apply left-to-right with per-op semantics (see 3)
   for op in parsed:
     state = issues.get(op.issue_id) or empty_issue(op.issue_id)
+    issues[op.issue_id] = state
+    if not known_op_type(op.op_type): continue    # skipped, never applied
     issues[op.issue_id] = apply(state, op)
 
   # (6) Emit
   return {issues, index: build_index(issues)}
 ```
+
+**Unknown op types are skipped, not fatal.** An op with an unrecognised op_type is skipped by the fold, not a hard failure:
+the reader parses it with every other envelope check still in force (a
+malformed envelope still aborts the fold), then passes over it without applying
+it, and every other op folds as usual. A tracker that holds ops written by a
+newer `act` therefore stays readable by an older binary — `act list`, `act
+show` and `act ready` keep answering, minus the effect of the ops they do not
+understand. The same skip covers the legacy parse-only `redact` type.
 
 `empty_issue` has all scalar fields nil, sets `deps={}`, `acceptance={}`,
 `tombstoned=false`, and a per-field `last_hlc` map used for LWW.
@@ -655,7 +672,7 @@ Resolution happens before any op is written, so a write command never partially 
 - `--machine LABEL` (string, default ""). Pins the new issue to one machine: `act ready`/`act next` on any other machine exclude it, while `act list`/`act show` show it everywhere. The default, empty, means "runs anywhere". Filing time is when the constraint is known, which is why the flag lives here and not only on `act update`. Label rules: printable ASCII, no spaces or control characters, ≤64 bytes; a violation is exit 2 at the flag boundary, never a written op.
 - `--json` (bool, default false for humans, true under MCP).
 
-**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `post-create` hook, then op-commits unless `--no-commit`.
+**Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json`, runs the `create` hook, then op-commits unless `--no-commit`.
 
 **JSON output:**
 ```json
@@ -785,7 +802,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 - `--reason TEXT` (string, default ""). Stored as `closed_reason`.
 - `--json` (bool).
 
-**Behavior:** Writes a `close` op carrying `closed_at` and `closed_reason`; computes and stores the `closed_by_tree` reverse index (git tree hash of `.act/ops/<id>/`); runs `post-close` hook; commits with message `act-op: <id> close`.
+**Behavior:** Writes a `close` op carrying `closed_at` and `closed_reason`; computes and stores the `closed_by_tree` reverse index (git tree hash of `.act/ops/<id>/`); runs the `close` hook; commits with message `act-op: <id> close`.
 
 **JSON output:**
 ```json
@@ -1151,9 +1168,9 @@ Rules:
 Discovery: only three filenames are loaded.
 
 ```
-.act/hooks/post-create
-.act/hooks/post-close
-.act/hooks/post-claim
+.act/hooks/create
+.act/hooks/close
+.act/hooks/claim
 ```
 
 Any other filename in `.act/hooks/` is ignored. Future phases (`pre-commit-op`, `post-fold`, `post-compact`) are reserved names — `act` MUST refuse to load them in v1 with no warning, so a future binary can adopt them without breaking older repos.

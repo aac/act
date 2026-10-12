@@ -70,6 +70,22 @@ type docClaim struct {
 // Order is alphabetical by `name` for readability; the sweep does not
 // depend on it.
 var docClaimRegistry = []docClaim{
+	// act-0be17c: the spec said an unknown op_type hard-fails the fold
+	// (E_UNKNOWN_OP); the fold has skipped such ops since act-20e87c. The
+	// corrected claim is asserted on the real read path, and the op_type
+	// enum block is pinned to op.ValidOpTypes so it cannot drift again.
+	{
+		name:         "spec-fold-unknown-op-type-skipped",
+		docFile:      "docs/spec.md",
+		claimPattern: "An op with an unrecognised op_type is skipped by the fold, not a hard failure",
+		testName:     "TestDocClaim_Fold_UnknownOpTypeIsSkippedNotFatal",
+	},
+	{
+		name:         "spec-op-type-enum-matches-valid-op-types",
+		docFile:      "docs/spec.md",
+		claimPattern: "`op_type` enum (all of v1):",
+		testName:     "TestDocClaim_Spec_OpTypeEnumMatchesValidOpTypes",
+	},
 	// act-2c7be3: machine affinity. Eight claims across five surfaces —
 	// the exclusion itself, the write path (including the clearing
 	// form), the fail-open rule, the always-emitted JSON contract, the
