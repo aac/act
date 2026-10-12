@@ -159,13 +159,24 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 		fr, err := fold.Fold(paths.Ops, fold.ApplyDispatch)
 		if err != nil {
 			// A fold error is itself a doctor finding (op-log corrupt).
+			// The checks that consume the fold cannot run, but
+			// unknown-op-version reads op_version from the raw JSON
+			// and is the usual explanation for the abort (an op from
+			// a newer act fails envelope validation), so it still
+			// runs when selected (act-f95d6e).
+			findings := []Finding{{
+				Check:    "orphan-ops",
+				Severity: "error",
+				Message:  fmt.Sprintf("fold error: %v", err),
+			}}
+			for _, name := range run {
+				if name == "unknown-op-version" {
+					findings = append(findings, checkUnknownOpVersion(paths.Ops)...)
+				}
+			}
 			return DoctorResult{
-				Findings: []Finding{{
-					Check:    "orphan-ops",
-					Severity: "error",
-					Message:  fmt.Sprintf("fold error: %v", err),
-				}},
-				Count: 1,
+				Findings: findings,
+				Count:    len(findings),
 			}, 1
 		}
 		foldRes = fr

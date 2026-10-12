@@ -1304,7 +1304,7 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 - **Redact of an already-redacted field.** Idempotent. A second redact op is written; fold output unchanged. Exit 0 with `{"changed": false}`.
 - **Prefix collision at create time.** The new id is checked against all existing ids. If the chosen 4-hex prefix already maps to a different id, `act` extends the displayed prefix length one hex at a time until unique, and stores the longer form in the per-session prefix map. The full id is unchanged.
 - **No squash, and no `version_skew` refusal on write.** No command squashes `act-op:` commits: each op write is its own commit in the nested `.act/` repo and stays that way (`gitops.SquashActOpRange` exists, but nothing calls it). A tracker holding an op from a newer writer still accepts writes — `act update` and `act close` commit as usual while `act version --check-repo` reports the skew.
-- **`act doctor --check unknown-op-version`** is about `op_version`, not `writer_version` (see the doctor check table): it emits one finding per op file with a newer `op_version`, naming the file. It does not report writer-version skew.
+- **`act doctor --check unknown-op-version`** is about `op_version`, not `writer_version` (see the doctor check table): it emits one finding per op file with a newer `op_version`, naming the file. It does not report writer-version skew. Plain `act doctor` reports it too: such an op aborts the fold, so the run returns the fold-error finding (labelled `orphan-ops`) followed by the `unknown-op-version` findings, and the checks that need the fold do not run.
 
 ### 7. Test plan
 

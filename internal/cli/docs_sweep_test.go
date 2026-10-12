@@ -214,6 +214,14 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "it emits one finding per op file with a newer `op_version`, naming the file",
 		testName:     "TestDocClaim_Doctor_UnknownOpVersionChecksOpVersion",
 	},
+	// act-f95d6e: plain `act doctor` used to stop at the fold error and
+	// never reach unknown-op-version on exactly the store it explains.
+	{
+		name:         "spec-doctor-plain-run-reports-unknown-op-version-on-fold-error",
+		docFile:      "docs/spec.md",
+		claimPattern: "Plain `act doctor` reports it too: such an op aborts the fold",
+		testName:     "TestDocClaim_Doctor_PlainRunReportsUnknownOpVersionWhenFoldFails",
+	},
 	{
 		name:         "spec-property-tier-names-real-tests",
 		docFile:      "docs/spec.md",
