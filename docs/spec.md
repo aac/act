@@ -543,6 +543,8 @@ file first, and the HLC tuple determines order globally.
 
 **A claim that cannot reach `origin` is unconfirmed, not failed (act-2bd35b).** The claim op is committed in step 2, before the fetch, so a fetch that does not reach `origin` — an unreachable or refusing remote, a fetch that times out — cannot undo it and does not fail the command. The winner is decided among the ops already in the checkout. If the claim is the earliest of those, the command exits 0 with `claimed: true` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once: the issue is claimed in this checkout and no other checkout can see that yet. Such a claim is unconfirmed — `origin` may hold an earlier claim this checkout has not seen, and when the two histories meet the earlier one wins and the later one reads as lost. If another checkout's earlier claim is already in this checkout, the claim is lost exactly as when the fetch succeeds (exit 5, `claim_lost`, `claimed: false`); the deferral never turns a lost race into a win. A fetch that succeeds followed by a rebase that fails is different and stays exit 1 `claim_failed`: `origin`'s ops were received but are not in the tree, so act cannot tell who holds the issue and reports no win. The rebase is aborted and the claim op stays committed locally.
 
+**`claim_failed` keeps git's output out of `message` (act-2bd35b).** `message` names the failing step and its error — `claim: commit: …` or `claim: pull --rebase: …` — and git's own output is in `details.stderr_tail`. Without `--json` the message is printed on stderr and git's output after it.
+
 `--wait` retries the full sequence on loss with backoff `1s, 2s, 4s, 8s, ...`
 capped at `--wait-timeout` (default 30s, max 600s). Each retry re-issues a
 fresh claim op with a fresh HLC; prior losing ops remain in history but are
@@ -1330,7 +1332,7 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `bad_input`                | 2    | by case, e.g. `from_version=<N> must be < to_version=<M>` | none |
 | `bootstrap_validation_failed` | 3    | `<cmd>: validation against <path> failed: <error>` | none |
 | `branch_failed`            | 1    | the underlying error's text | none |
-| `claim_failed`             | 1    | the underlying error's text; not raised when the claim's fetch cannot reach `origin` (that claim is decided locally, see "Atomic claim protocol") | none (`stderr_tail` and `quarantined_op` when there is one) |
+| `claim_failed`             | 1    | the failing step and its error, without git's output (see "Atomic claim protocol"); not raised when the claim's fetch cannot reach origin | none (`stderr_tail` and `quarantined_op` when there is one) |
 | `commit_failed`            | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
 | `config_read_failed`       | 1, 3 | the underlying error's text, e.g. `config: parse: <error>` | none |
 | `cycle`                    | 1    | `act dep add: cycle detected: <a> -> <b> -> <a>` | `path` |

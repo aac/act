@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aac/act/internal/cli"
@@ -226,6 +227,17 @@ func runUpdate(args []string) int {
 		}
 		m, _ := toMap(out)
 		emitUpdate(*asJSON, m)
+		// act-2bd35b: claim_failed keeps git's output out of `message`
+		// and in details.stderr_tail. The human form prints only the
+		// message, so the output is printed after it — a person at a
+		// terminal has no details object to look in.
+		if !*asJSON && m["error"] == "claim_failed" {
+			if details, ok := m["details"].(map[string]any); ok {
+				if tail, _ := details["stderr_tail"].(string); strings.TrimSpace(tail) != "" {
+					fmt.Fprintln(os.Stderr, strings.TrimRight(tail, "\n"))
+				}
+			}
+		}
 		return code
 	}
 

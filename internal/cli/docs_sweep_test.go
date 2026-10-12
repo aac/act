@@ -4070,6 +4070,12 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Spec_ClrClaimLostToARivalIsNeverAWin",
 	},
 	{
+		name:         "spec-clr-claim-failed-git-output-is-in-stderr-tail",
+		docFile:      "docs/spec.md",
+		claimPattern: "`message` names the failing step and its error — `claim: commit: …` or `claim: pull --rebase: …` — and git's own output is in `details.stderr_tail`. Without `--json` the message is printed on stderr and git's output after it.",
+		testName:     "TestDocClaim_Spec_ClrClaimFailedKeepsGitOutputOutOfMessage",
+	},
+	{
 		name:         "spec-dpl-offline-queue-failure-is-in-warnings",
 		docFile:      "docs/spec.md",
 		claimPattern: "With `--json` the result also names it, as `\"push_queue_failed\"` in `warnings`, on `create`, `update` (with or without `--claim`), `close`, `dep add`, `reopen` and `delete`; the stderr block is printed either way.",

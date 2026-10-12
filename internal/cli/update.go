@@ -1216,7 +1216,18 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// echo credentials embedded in origin's URL, so the text is
 		// redacted before it is split into either field (act-4a538e
 		// masked every other place it is surfaced).
-		message, tail := SplitWrappedError(gops.RedactRemoteCredentials(err.Error()))
+		//
+		// act-2bd35b: the split is made on the command error itself. A
+		// withdrawn op's error ends with the "(op file preserved at …)"
+		// note, which would otherwise be taken for the end of git's
+		// output; it is put back on the message afterwards.
+		cause := err
+		var qe *quarantinedOpError
+		if errors.As(err, &qe) {
+			cause = qe.err
+		}
+		message, tail := SplitWrappedError(gops.RedactRemoteCredentials(cause.Error()))
+		message += quarantineSuffix(quarantinedOpPath(err))
 		details := map[string]any{}
 		if tail != "" {
 			details["stderr_tail"] = CaptureStderrTail(tail)

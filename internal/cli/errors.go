@@ -260,16 +260,26 @@ func CaptureStderrTail(s string) string {
 }
 
 // SplitWrappedError separates a wrapped command error into a clean prefix
-// and the trailing `(output: ...)` blob produced by the gitops/claim
-// runGit wrappers. Used by claim_failed (and any future code path that
+// and the trailing `(output: ...)` or `(stderr: ...)` blob produced by the
+// gitops wrappers. Used by claim_failed (and any future code path that
 // wraps subprocess stderr inside a Go error message) to keep raw stderr
 // out of the user-facing `message` and into `details.stderr_tail`.
 //
-// When no `(output: ...)` marker is present the entire string becomes the
-// prefix and tail is empty.
+// Both spellings are in use: the combined-output helpers (fetch, rebase,
+// push) write `(output: …)`, and GitOps.run — commit, stage, branch — writes
+// `(stderr: …)`. Only the first was recognised, so a claim whose commit
+// failed put the whole of git's output in `message` (act-2bd35b).
+//
+// When neither marker is present the entire string becomes the prefix and
+// tail is empty. The blob must run to the end of s: callers split the
+// command error itself, before anything is appended to it.
 func SplitWrappedError(s string) (prefix, tail string) {
-	const marker = "(output: "
-	i := indexLast(s, marker)
+	i, marker := -1, ""
+	for _, m := range []string{"(output: ", "(stderr: "} {
+		if j := indexLast(s, m); j > i {
+			i, marker = j, m
+		}
+	}
 	if i < 0 {
 		return s, ""
 	}

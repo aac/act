@@ -196,10 +196,10 @@ func TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked(t *testing.T) {
 		t.Errorf("claim_failed: stdout lacks git's message with the userinfo masked (%q):\n%s", want, stdout)
 	}
 
-	// Without --json the envelope's message is a line on stderr.
+	// Without --json the message and then git's output are on stderr.
 	stdout, stderr, code = runActIn(t, dir, "update", second, "--claim")
-	if code != 1 {
-		t.Errorf("act update --claim (human) with a failing rebase: exit %d, want 1\nstderr=%s", code, stderr)
+	if code != 1 || !strings.Contains(stderr, "could not rebase onto "+dplMaskedURLBase) {
+		t.Errorf("act update --claim (human) with a failing rebase: exit %d, want 1 and git's message with the userinfo masked\nstderr=%s", code, stderr)
 	}
 	dplWantNoSecret(t, "act update --claim (claim_failed, human)", stdout+stderr)
 
