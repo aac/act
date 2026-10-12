@@ -1,6 +1,6 @@
 // Package gitops provides a concrete, shellout-based implementation of the
-// git mutations needed by the writer pipeline (auto-commit, push, atomic
-// claim's pull-rebase, and squash-of-contiguous-act-op-range).
+// git mutations needed by the writer pipeline (auto-commit, push, and atomic
+// claim's pull-rebase).
 //
 // Design notes:
 //
@@ -103,7 +103,7 @@ type GitOps struct {
 	// by NewActGitOps (and only by NewActGitOps) so the act-state handle
 	// is type-system AND argv-level isolated from the host repo. Leaving
 	// gitDir empty preserves the original cwd-discovery behavior for
-	// callers (HostGitOps; NewGitOps used by tests and the claim/squash/
+	// callers (HostGitOps; NewGitOps used by tests and the claim/
 	// import paths whose RepoRoot is the host working tree itself, not a
 	// nested act state) — see act-784b.
 	gitDir string
@@ -344,7 +344,7 @@ func pushURLIsLocal(url string) bool {
 // stages an op or commits an act change must use *ActGitOps.
 //
 // ActGitOps is a type alias for *GitOps so it exposes the full write
-// surface (Commit, StageOpFile, Push, PullRebase, SquashActOpRange) plus
+// surface (Commit, StageOpFile, Push, PullRebase) plus
 // all the read helpers. Migration consists of flipping construction calls
 // from NewGitOps to NewActGitOps; the method set is identical.
 type ActGitOps = GitOps
@@ -388,8 +388,8 @@ func NewActGitOpsFromGitDir(gitDir string) *ActGitOps {
 //
 // HostGitOps deliberately exposes only the read surface that doctor and
 // show need (RepoRoot, WorkCommitsForIssue). The write methods on the
-// underlying *GitOps (Commit, StageOpFile, Push, PullRebase,
-// SquashActOpRange) are a compile-time absence from HostGitOps's method
+// underlying *GitOps (Commit, StageOpFile, Push, PullRebase) are a
+// compile-time absence from HostGitOps's method
 // set — the only way to perform writes is to drop down to *ActGitOps,
 // which makes the policy ("act never writes to the host repo") enforced
 // by the type system rather than by convention.
@@ -659,7 +659,7 @@ const envSlowCommitMs = "ACT_TEST_SLOW_COMMIT_MS"
 // SlowWriteContext carries the op metadata that CommitOp embeds into a
 // `.act/.slow-writes` record when the commit duration exceeds the
 // threshold. The zero value disables slow-write logging entirely —
-// callers without op metadata (e.g. squash, harvest) keep using
+// callers without op metadata (e.g. harvest) keep using
 // Commit() and skip the measurement.
 type SlowWriteContext struct {
 	// OpType is one of `create|close|update|dep_add|reopen|delete`. The
@@ -711,7 +711,7 @@ type SlowWriteContext struct {
 //     swallowed because slow-write observability never blocks the
 //     write path.
 //
-// Callers without op metadata (composed/squash/harvest) keep using
+// Callers without op metadata (composed/harvest) keep using
 // Commit() directly; the slow-write measurement is opt-in via this
 // method.
 func (g *GitOps) CommitOp(message string, ctx SlowWriteContext) error {
@@ -1273,51 +1273,6 @@ func (g *GitOps) ContiguousActOpRange() (string, string, int, error) {
 		count++
 	}
 	return first, last, count, nil
-}
-
-// SquashActOpRange collapses the contiguous run [firstSHA..lastSHA] (where
-// firstSHA is the OLDEST commit in the range and lastSHA is HEAD) into a
-// single squashed commit with message
-// `act-squash: writer_version=<maxWriterVersion>`.
-//
-// Returns nil with no side effects when count == 1 (single commit).
-//
-// maxWriterVersion is supplied by the caller; this method is a pure
-// git-level squash and does not consult writer versions on its own. Nothing
-// outside this package's tests calls it: no command squashes before a push,
-// and there is no version_skew gate on squash-and-push in the spec or the
-// code.
-func (g *GitOps) SquashActOpRange(firstSHA, lastSHA, maxWriterVersion string) error {
-	if firstSHA == "" || lastSHA == "" {
-		return fmt.Errorf("gitops: empty SHA")
-	}
-	if firstSHA == lastSHA {
-		// Single-commit range: no-op.
-		return nil
-	}
-	if maxWriterVersion == "" {
-		return fmt.Errorf("gitops: empty maxWriterVersion")
-	}
-	// Resolve parent of firstSHA. `git rev-parse <sha>^` exits non-zero if
-	// firstSHA is the root commit; treat that as an error (squashing the
-	// root commit is unsupported).
-	parent, err := g.run("rev-parse", firstSHA+"^")
-	if err != nil {
-		return fmt.Errorf("gitops: parent of %s: %w", firstSHA, err)
-	}
-	parent = strings.TrimSpace(parent)
-	if _, err := g.run("reset", "--soft", parent); err != nil {
-		return err
-	}
-	msg := fmt.Sprintf("act-squash: writer_version=%s", maxWriterVersion)
-	args := []string{"commit", "-m", msg}
-	if !g.Verify {
-		args = append(args, "--no-verify")
-	}
-	if _, err := g.run(args...); err != nil {
-		return err
-	}
-	return nil
 }
 
 // WorkCommit is a single git commit attributed to an issue via the
