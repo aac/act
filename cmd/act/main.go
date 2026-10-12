@@ -572,7 +572,7 @@ func runLog(args []string) int {
 	since := fs.String("since", "", "only include ops newer than this duration (e.g. 24h, 7d, 30m); prefix ok")
 	byIssue := fs.String("by-issue", "", "only include ops for this issue id (full or unique prefix)")
 	typeFlag := fs.String("type", "", "only include ops of these types (comma-separated, e.g. create,close)")
-	summary := fs.Bool("summary", false, "render one line per op (timestamp, op_type, 8-char hash, summary) instead of full envelopes")
+	summary := fs.Bool("summary", false, "human format only: add a short note of what each op did (a create's title, a close's reason, an update's field) to its line; --json is unchanged")
 	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {

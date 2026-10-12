@@ -747,8 +747,10 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
   Two tiers, both surfaced verbatim in the "error" field:
 
   Spec canonical codes (per spec.md §error-envelope):
-    not_in_git              act run outside a git repo
-    act_not_initialized     .act/ missing in this repo
+    not_in_git              act run outside a git repo; also what the act_show,
+                            act_log and act_search MCP tools answer when the
+                            repo has no .act/ (the CLI commands exit 0 there)
+    act_not_initialized    .act/ missing in this repo
     issue_not_found         id resolved to nothing
     id_ambiguous            short id matched 2+ issues
     version_skew            an op's writer_version is newer than this binary's;
@@ -757,9 +759,6 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     cycle_detected          dep edge would close a cycle
     dep_not_found           dep target id resolved to nothing
     hook_failed             a .act/hooks/<event> script exited non-zero or timed out
-    op_invalid              op-file payload failed validation
-    hlc_drift               clock moved backwards beyond tolerance
-    index_corrupt           SQLite cache failed integrity check
     import_invalid_jsonl    'act import' could not parse a line
 
   Internal / per-command codes (also stable; tests pin them):

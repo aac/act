@@ -677,7 +677,7 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 - `1` — logical failure: claim loss, doctor finding, cycle refused, dependency dangling, etc. The command ran correctly but the answer is "no."
 - `2` — usage error: bad flag combination, unknown flag, missing required argument, ambiguous id prefix.
 - `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
-- `4` — version skew: any op carries `writer_version > self.writer_version` ("upgrade required"). Always non-recoverable from the binary's side.
+- `4` — not one meaning. Three commands exit 4, each for its own condition: `act version --check-repo` when some op file carries a `writer_version` newer than this binary's (`version_skew`); `act doctor` when `origin` is configured but unreachable (the `remote-reachable` finding); and `act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`). No other command exits 4 — reads and writes apply an op from a newer writer like any other op.
 
 All non-zero exits emit `{"error": {"code": <int>, "kind": "<slug>", "message": "..."}}` on stdout when `--json` is set; on stderr in human mode.
 
@@ -779,11 +779,14 @@ Resolution happens before any op is written, so a write command never partially 
 
 ### `act show <id>`
 
-**Synopsis:** `act show <id> [--json] [--include-ops]`
+**Synopsis:** `act show <id> [--json] [--include-ops] [--commit-marker] [--full] [--no-fetch]`
 
 **Flags:**
 - `--json` (bool).
 - `--include-ops` (bool, default false). Inlines the full op stream alongside the folded snapshot.
+- `--commit-marker` (bool). Print only the commit-message trailer for the issue — one line, `Act-Id: <id>`, using the issue's short id — and exit 0. A tombstoned issue has no marker and exits 3.
+- `--full` (bool). Human output only: print `description` and `closed_reason` whole. Without it each is cut at 5 lines or 400 characters, whichever comes first, and ends with `… (truncated; see --json for full text)`. `--json` output is never cut.
+- `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk. `ACT_NO_FETCH=1` does the same.
 
 **Behavior:** Resolves id (errors with exit 2 on prefix ambiguity), folds the issue, prints snapshot.
 
@@ -1010,9 +1013,17 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 
 ### `act log <id>`
 
-**Synopsis:** `act log <id> [--json]`
+**Synopsis:** `act log [<id>] [--since D] [--by-issue ID] [--type T[,T...]] [--summary] [--no-fetch] [--json]`
 
-**Behavior:** Resolves id; emits the chronological op stream (HLC-sorted) for the issue. Includes `op_id`, `op_type`, `payload`, `hlc`, `node_id`, `writer_version`, and the file path.
+**Flags:**
+- `--since D` (duration). Only ops newer than `D` ago. Takes Go durations (`30m`, `24h`) and a whole-token day form (`7d`); a mixed form such as `1d12h` is rejected.
+- `--by-issue ID` (string). Only ops of this issue, by full id or unique prefix — the same scope as the positional `<id>`. Passing both with different values exits 2.
+- `--type T[,T...]` (string). Only ops of these op types, comma-separated (for example `create,close`). An unknown type exits 2.
+- `--summary` (bool). Human output only. The human format is one line per op either way — timestamp, op type, 8-character hash, `[issue=<short id>]` — and `--summary` adds a short note of what the op did (the title of a create, the reason of a close, the field of an update) and drops the issue tag when the log is scoped to one issue. `--json` output is the same with or without it.
+- `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk. `ACT_NO_FETCH=1` does the same.
+- `--json` (bool).
+
+**Behavior:** Emits the chronological op stream (HLC-sorted). The `<id>` is optional: with an `<id>` or `--by-issue` the stream is that one issue's; with neither, it spans every issue, and at least one of `--since`, `--type` or `--summary` must then be given — a bare `act log` exits 2. `--since` and `--type` narrow the stream and combine with each other and with the issue scope. Includes `op_id`, `op_type`, `payload`, `hlc`, `node_id`, `writer_version`, and the file path.
 
 **JSON output:**
 ```json
@@ -1031,7 +1042,7 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 **Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--json]`
 
 **Flags:**
-- `--check NAME` (repeatable). Default: run all.
+- `--check NAME` (string, a single value). Run only the named check. The flag is not repeatable: passed twice, the last value is the one that runs. Default: run all. The names accepted are the rows of the table below; any other name exits 2.
 - `--fix` (bool). Auto-remediate where safe (per check, below). Drives `index-divergence`, `index-schema` and `nested-exclude` only.
 - `--fix-index` (bool). Auto-remediate the `index-malformed` check by rebuilding `.act/index.db` from `.act/ops/`. Separate flag from `--fix` so the malformed-image recovery (which moves the broken file aside) is opt-in independent of the routine divergence/schema fixes.
 - `--json` (bool).
@@ -1040,6 +1051,7 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 
 | Check | Algorithm | `--fix` / `--fix-index` effect |
 |---|---|---|
+| `stale-git-lock` | Look for `index.lock` and `HEAD.lock` in the nested repo's git dir (`.act/.git/`). Either one, left behind by an interrupted commit, makes every act write fail until it is removed. One error-severity finding per lock file present; its message names the file and the recovery commands, and in human mode is also written bare to stderr. | Read-only, under `--fix` too: doctor never removes the lock, because it cannot tell a stale lock from one a running git process holds. A finding exits 1. |
 | `orphan-close` | Find issues with `closed_at` set but no commit message containing `(act-<prefix>)` AND no diff in `.act/ops/<id>/` at close time. | Read-only; surfaces finding. |
 | `orphan-ops` | Op files referencing an `issue_id` that has no `create` op. | Read-only. |
 | `fold-error` | The op log cannot be folded: an op file fails to parse or validate. Not a pass of its own in a default run — it is reported as one error-severity finding whenever a selected check needs the fold (`orphan-close`, `orphan-ops`, `dangling-deps`, `cycle`, `status-vs-oplog`) and the fold fails, and `--check fold-error` folds and reports only this finding. In human mode the finding's message is also written bare to stderr. When the fold fails, only `stale-git-lock`, `time-travel`, `unknown-op-version` and `gitignore-effective` still run (those that were selected); the checks that need the fold, the three index checks, `nested-exclude` and `phase2-reconciliation` do not. | Read-only. With the fold failed, `--fix` and `--fix-index` apply nothing: no check that honours them runs. |
@@ -1047,6 +1059,9 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 | `time-travel` | Adjacent ops with HLC going backward more than the 5-minute drift bound. | Read-only. |
 | `cycle` | Cycle in the `blocks` subgraph. | Read-only. |
 | `unknown-op-version` | Any op file whose `op_version` is greater than the one this binary writes (1). It reads only that field from the raw JSON; `writer_version` is not examined, so an op from a newer writer with a known `op_version` is not a finding (that skew is `act version --check-repo`'s to report). | Read-only: `--fix` changes nothing and the op file is left in place. One error-severity finding per offending op file, so the run exits 1. |
+| `status-vs-oplog` | Compare each issue's status across three views: the index (`.act/index.db`), the op files on disk under `.act/ops/`, and the op log committed at `HEAD` of the nested repo. An error-severity finding when the index holds a status the op files on disk do not give (a stale index), and when an op file committed at `HEAD` is missing from `ops/` and the status changes with it (an op retracted with no record). A warn-severity finding when op files on disk are not committed yet and they change the status: the status act reports is not durable yet. Op-file differences that leave the status unchanged are not findings, and neither is an issue the index has no row for. In human mode each finding's message is also written bare to stderr. | Read-only: `--fix` does nothing for this check. Error findings exit 1; the warn finding exits 0 unless `--strict`. |
+| `gitignore-effective` | Ask the host repo whether `.act/` is ignored (`git check-ignore .act/`). If it is not, the tracker's files can be committed into the host repo's history: one error-severity finding whose message gives the remedy (add `.act/` to `.gitignore`, then `git rm -r --cached .act/`). A probe that cannot run is an error finding too. | Read-only: `--fix` does not edit `.gitignore`. A finding exits 1. |
+| `phase2-reconciliation` | One name for the five remote cases described under "Doctor reconciliation" below, run in a single pass: `remote-attached-orchestrator`, `worker-without-origin`, `unpushed-commits`, `remote-reachable`, `upstream-drift`. Findings carry those five names, never `phase2-reconciliation`, and `--check` takes only the umbrella name — the five case names are not accepted. This is the check that fills `remote_status` in the JSON output. | Read-only: `--fix` changes nothing. `remote-attached-orchestrator` and `worker-without-origin` are error findings (exit 1); `unpushed-commits` and `upstream-drift` are warnings (exit 0 unless `--strict`); `remote-reachable` exits 4 when `origin` is configured and the fetch probe fails, and is a warning under `--no-fetch`. |
 | `index-malformed` | Try `index.Open` and `PRAGMA integrity_check` on `.act/index.db`. The malformed signal is the canonical SQLite phrasing — `database disk image is malformed` (SQLITE_CORRUPT) or `file is not a database` (SQLITE_NOTADB). | With `--fix-index`: renames the broken file to `.act/index.db.malformed-<unix-nano>`, opens a fresh SQLite at the canonical path, and runs `index.Rebuild(paths.Ops)` to repopulate from the op log. Without `--fix-index`: emits an error-severity finding whose message ends with the literal `rebuild with 'act doctor --fix-index'`. |
 | `index-divergence` | Recompute index into a tmp SQLite from ops/snapshots; row-by-row diff against `.act/index.db` (recomputed = oracle). | Replaces `.act/index.db` with the recomputed db. When `.act/index.db` is malformed, this check defers to `index-malformed` (returns no finding) to avoid stderr-noise duplication. |
 | `index-schema` | Compare index schema version to expected. | Drops and rebuilds `.act/index.db`. When `.act/index.db` is malformed, this check defers to `index-malformed` to avoid stderr-noise duplication. |
@@ -1120,7 +1135,7 @@ Layers 1 and 2 are **explicit**; only they cause `act ready`/`act next` to filte
 **Synopsis:** `act version [--check-repo] [--json]`
 
 **Flags:**
-- `--check-repo` (bool). Walk all op files to find `max(writer_version)`; compare to `self.writer_version`. Exits 4 if `self < max`.
+- `--check-repo` (bool). Walk every op file under the `.act/ops/` of the repo the working directory is in — the repo root is found from any subdirectory, so the flag need not be run from the root — to find `max(writer_version)`; compare to `self.writer_version`. Exits 4 if `self < max`. Outside a git working tree, or in a repo with no `.act/`, it exits 3 (see the exit codes below).
 - `--json` (bool).
 
 **JSON output:**
@@ -1199,9 +1214,6 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 | `cycle_detected`           | 6    | `dep would create cycle: <a> -> ... -> <a>`                                | `path[]`                                      |
 | `dep_not_found`            | 6    | `dep target '<id>' not found`                                              | `target`                                      |
 | `hook_failed`              | 7    | `hook '<name>' exited <rc>; op unstaged`                                   | `hook`, `exit_code`, `stderr_tail`            |
-| `op_invalid`               | 8    | `op rejected: <reason>`                                                    | `reason`, `op_path`                           |
-| `hlc_drift`                | 8    | `hlc drift exceeds 5m: op=<hlc> ref=<ref>`                                 | `op_hlc`, `ref_hlc`, `delta_seconds`          |
-| `index_corrupt`            | 9    | `index.db corrupt or schema-mismatched; rerun 'act doctor --rebuild'`      | `reason`                                      |
 | `import_invalid_jsonl`     | 10   | `bootstrap line <N> rejected: <reason>`                                    | `line`, `reason`, `source`                    |
 | `redact_target_not_found`  | 3    | `redact target '<field>' not present on <id>`                              | `issue_id`, `field`                           |
 | `remote_unreachable`       | 3    | `act bootstrap-worker: clone <url>: <reason>`                              | `url`, `stderr_tail`                          |
@@ -1412,7 +1424,7 @@ A fake stdio MCP client process spawns `act mcp` and drives `act_next`, `act_fin
 
 #### 7.6 Doctor coverage
 
-For each check (`orphan-close`, `orphan-ops`, `dangling-deps`, `time-travel`, `cycle`, `unknown-op-version`, `index-divergence`, `index-schema`):
+For each check (`stale-git-lock`, `orphan-close`, `orphan-ops`, `dangling-deps`, `time-travel`, `cycle`, `unknown-op-version`, `index-malformed`, `index-divergence`, `index-schema`, `status-vs-oplog`, `gitignore-effective`, `nested-exclude`, `phase2-reconciliation`, and `fold-error`, which has no pass of its own):
 - **Positive test** — synthesize the broken state on disk, run the check, assert exactly one finding with the expected code and details.
 - **Negative test** — start from a clean seeded repo, run the check, assert zero findings.
 
@@ -1842,8 +1854,10 @@ reachability probe blocking the report.
 ### Remote-status JSON block
 
 Doctor's `--json` output gains a top-level `remote_status` object
-(always emitted; fields default to their zero values when not
-applicable). The five fields:
+(always emitted). On a run where `phase2-reconciliation` did not run —
+a failed fold, or `--check` naming another check — `remote_reachable`
+is `true` and the other four fields hold their zero values (`0`, `""`):
+nothing was probed, so nothing is reported unreachable. The five fields:
 
 ```json
 {
