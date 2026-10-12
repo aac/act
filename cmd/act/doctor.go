@@ -101,6 +101,12 @@ func runDoctor(args []string) int {
 			// close that the committed op log never kept; nothing said
 			// so on any surface.
 			fmt.Fprintln(os.Stderr, f.Message)
+		case cli.CheckFoldError:
+			// act-e5d6b4: the finding that means the op log could not be
+			// read and most checks did not run. Its message names the op
+			// file and why the fold rejected it; emit it bare to stderr
+			// like the other load-bearing findings.
+			fmt.Fprintln(os.Stderr, f.Message)
 		case "stale-git-lock":
 			// act-8fe6eb: emit the bare message to stderr so a wedged agent
 			// tailing stderr sees the lock path and the recovery sequence

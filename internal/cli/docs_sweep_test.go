@@ -2803,6 +2803,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "only when the probe ran and failed.",
 		testName:     "TestDocClaim_Doctor_RemoteReachableFalseOnlyWhenProbeFailed",
 	},
+	{
+		name:         "spec-doctor-fold-error-echoed-bare-to-stderr",
+		docFile:      "docs/spec.md",
+		claimPattern: "In human mode the finding's message is also written bare to stderr.",
+		testName:     "TestDocClaim_Doctor_FoldErrorEchoedBareToStderr",
+	},
+	{
+		name:         "spec-version-check-repo-tracker-not-checked-out",
+		docFile:      "docs/spec.md",
+		claimPattern: "it exits 3 with `tracker_not_checked_out` rather than `no_repo`",
+		testName:     "TestDocClaim_VersionCheckRepo_UnclonedTrackerSaysNotCheckedOut",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -400,7 +401,7 @@ var writeNoStateCommands = map[string]bool{
 }
 
 // shouldCheckNoState reports whether the guard runs for this subcommand
-// at all. Subcommands not in either map (e.g. `init`, `mcp`, `version`,
+// at all. Subcommands not in either map (e.g. `init`, `mcp`, plain `version`,
 // `help`, unknown subcommands) bypass the guard and go through the
 // normal dispatch path. `dep` is a write surface but its dispatch lives
 // in its own branch in main(); we treat write-shaped `dep` invocations
@@ -412,7 +413,36 @@ func shouldCheckNoState(sub string, args []string) bool {
 	if readOnlyNoStateCommands[sub] || writeNoStateCommands[sub] {
 		return true
 	}
+	if isVersionCheckRepo(sub, args) {
+		return true
+	}
 	return isWriteDepInvocation(sub, args)
+}
+
+// isVersionCheckRepo reports whether this is `act version --check-repo`,
+// the one `version` form that reads a repo. It is in neither no-state map —
+// with no `.act/` and no tracker remote it keeps its own `no_repo` exit 3
+// rather than the read commands' soft exit 0 — but it does go through the
+// tracker-remote probe, so a checkout whose tracker exists and is not cloned
+// answers `tracker_not_checked_out` instead of `no_repo` (act-e5d6b4). Plain
+// `act version` reads no repo and stays outside the guard.
+func isVersionCheckRepo(sub string, args []string) bool {
+	if sub != "version" {
+		return false
+	}
+	for _, a := range args {
+		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || name != "check-repo" {
+			continue
+		}
+		if !hasVal {
+			return true
+		}
+		if on, err := strconv.ParseBool(val); err == nil && on {
+			return true
+		}
+	}
+	return false
 }
 
 // isWriteDepInvocation reports whether an `act dep ...` invocation is a

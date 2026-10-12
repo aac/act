@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Reproductions for act-e5d6b4 items 2 and 3, run against the real binary.
+// Doc-claim cover for act-e5d6b4 items 2 and 3, run against the real binary.
 
 // dpolFoldFailedSite makes a tracker whose fold fails: its one issue's create
 // op carries an op_version this binary does not know.
@@ -29,11 +29,12 @@ func dpolHasLine(text, want string) bool {
 	return false
 }
 
-// TestDoctor_FoldErrorEchoedBareToStderr: human-mode `act doctor` on a store
+// TestDocClaim_Doctor_FoldErrorEchoedBareToStderr asserts the spec's
+// `fold-error` row: human-mode `act doctor` on a store
 // whose fold fails writes the fold-error message bare to stderr, as it does
 // for the other findings an operator must not miss (stale-git-lock,
 // index-malformed, status-vs-oplog, the remote cases).
-func TestDoctor_FoldErrorEchoedBareToStderr(t *testing.T) {
+func TestDocClaim_Doctor_FoldErrorEchoedBareToStderr(t *testing.T) {
 	dir := dpolFoldFailedSite(t)
 
 	// The message doctor reports, read from --json so the test does not
@@ -73,11 +74,12 @@ func TestDoctor_FoldErrorEchoedBareToStderr(t *testing.T) {
 	}
 }
 
-// TestVersionCheckRepo_UnclonedTracker: on a checkout whose configured
+// TestDocClaim_VersionCheckRepo_UnclonedTrackerSaysNotCheckedOut asserts the
+// spec's `act version` exit-codes line: on a checkout whose configured
 // tracker remote holds a tracker that is not cloned here, `act version
 // --check-repo` answers tracker_not_checked_out like the other read commands,
 // not no_repo. Plain `act version` reads no repo and still exits 0.
-func TestVersionCheckRepo_UnclonedTracker(t *testing.T) {
+func TestDocClaim_VersionCheckRepo_UnclonedTrackerSaysNotCheckedOut(t *testing.T) {
 	brokencoIsolateEnv(t)
 	bares := t.TempDir()
 	bare, _ := brokencoTrackerBare(t, bares)
