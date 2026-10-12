@@ -3830,6 +3830,8 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "a close whose index update failed after the commit (`warnings` names `index_update_failed`); 1 if the `close` hook refuses the close (`hook_failed`), if the index cannot be opened or brought up to date before the op is written (`index_open_failed`, `index_rebuild_failed` — no op is written or committed), or if the op cannot be written or committed (including `write_lock_timeout` and `stale_git_lock`)",
 		testName:     "TestDocClaim_Spec_SpxCloseIndexFailureExitCodes",
 	},
+	// act-7b65b0: finish, next and the MCP composed tools pass on warnings.
+	{
 		name:         "help-finish-passes-on-close-warnings-push-no-remote",
 		docFile:      "cmd/act/help.go",
 		claimPattern: "'act finish' passes on what close reports besides the close:",
