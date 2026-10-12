@@ -101,24 +101,23 @@ const (
 	// Internal/per-command error slugs in active use across cli/*.go.
 	// They are surfaced as the `error` field of the envelope; tests and
 	// JSON consumers depend on them, so renaming is a breaking change.
-	ErrBadFlag           = "bad_flag"
-	ErrAmbiguousID       = "ambiguous_id" // legacy alias for id_ambiguous
-	ErrCycle             = "cycle"        // legacy slug used by `dep add`
-	ErrClaimFailed       = "claim_failed"
-	ErrConfigReadFailed  = "config_read_failed"
-	ErrIndexOpenFailed   = "index_open_failed"
-	ErrIndexQueryFailed  = "index_query_failed"
-	ErrIndexRebuildFail  = "index_rebuild_failed"
-	ErrIndexUpdateFailed = "index_update_failed"
-	ErrEnvelopeInvalid   = "envelope_invalid"
-	ErrPayloadInvalid    = "payload_invalid"
-	ErrMarshalFailed     = "marshal_failed"
-	ErrFoldFailed        = "fold_failed"
-	ErrOpsScanFailed     = "ops_scan_failed"
-	ErrOpsWalkFailed     = "ops_walk_failed"
-	ErrOpsReadFailed     = "ops_read_failed"
-	ErrPushFailed        = "push_failed"
-	ErrWriteFailed       = "write_failed"
+	ErrBadFlag          = "bad_flag"
+	ErrAmbiguousID      = "ambiguous_id" // legacy alias for id_ambiguous
+	ErrCycle            = "cycle"        // legacy slug used by `dep add`
+	ErrClaimFailed      = "claim_failed"
+	ErrConfigReadFailed = "config_read_failed"
+	ErrIndexOpenFailed  = "index_open_failed"
+	ErrIndexQueryFailed = "index_query_failed"
+	ErrIndexRebuildFail = "index_rebuild_failed"
+	ErrEnvelopeInvalid  = "envelope_invalid"
+	ErrPayloadInvalid   = "payload_invalid"
+	ErrMarshalFailed    = "marshal_failed"
+	ErrFoldFailed       = "fold_failed"
+	ErrOpsScanFailed    = "ops_scan_failed"
+	ErrOpsWalkFailed    = "ops_walk_failed"
+	ErrOpsReadFailed    = "ops_read_failed"
+	ErrPushFailed       = "push_failed"
+	ErrWriteFailed      = "write_failed"
 	// ErrStaleGitLock is emitted by a write path when git failed because a
 	// stale lock file (index.lock/HEAD.lock) is wedging the nested .act/ repo
 	// (act-8fe6eb). It replaces the generic write_failed envelope for this

@@ -3568,7 +3568,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-pass9-close-json-five-keys",
 		docFile:      "docs/spec.md",
-		claimPattern: "A close that writes its op prints those five keys.",
+		claimPattern: "A close that writes its op always prints those five keys.",
 		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
 	},
 	{
@@ -3803,6 +3803,32 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "A malformed index does not hide `parent_closed`: when the index cannot say whether the `--parent` issue is closed, `act create` reads that from the op log, and both warnings are reported.",
 		testName:     "TestDocClaim_Spec_CreateParentClosedOverMalformedIndex",
+	},
+	// act-9f22d7: the spec and help caught up with update's push_deferred
+	// and with the index failure after a commit being a warning.
+	{
+		name:         "spec-spx-close-and-update-set-push-deferred",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act close --json` and `act update --json` additionally set `push_deferred: true` (and `push_deferred_reason`) on their results",
+		testName:     "TestDocClaim_Spec_SpxCloseAndUpdateSetPushDeferred",
+	},
+	{
+		name:         "help-spx-close-and-update-set-push-deferred",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act update --json' set push_deferred: true.",
+		testName:     "TestDocClaim_Spec_SpxCloseAndUpdateSetPushDeferred",
+	},
+	{
+		name:         "spec-spx-close-json-keys-that-appear-when-they-apply",
+		docFile:      "docs/spec.md",
+		claimPattern: "Three more appear only when they apply: `warnings`, a list naming `push_no_remote` (`--push` in a tracker with no `origin`) or `index_update_failed` (the index could not be updated after the commit), and `push_deferred: true` with `push_deferred_reason` when the push did not reach `origin`.",
+		testName:     "TestDocClaim_Spec_SpxCloseJSONKeysThatAppearWhenTheyApply",
+	},
+	{
+		name:         "spec-spx-close-exit-one-only-before-the-commit",
+		docFile:      "docs/spec.md",
+		claimPattern: "a close whose index update failed after the commit (`warnings` names `index_update_failed`); 1 if the `close` hook refuses the close (`hook_failed`), if the index cannot be opened or brought up to date before the op is written (`index_open_failed`, `index_rebuild_failed` — no op is written or committed), or if the op cannot be written or committed (including `write_lock_timeout` and `stale_git_lock`)",
+		testName:     "TestDocClaim_Spec_SpxCloseIndexFailureExitCodes",
 	},
 }
 

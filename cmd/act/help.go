@@ -904,9 +904,10 @@ EXIT CODES
   A FAILED PUSH IS NOT A FAILED WRITE. Once a write's op is committed in
   the nested .act/ repo it is durable, so a push that can't reach origin
   exits 0: the commit is queued in .act/.pending-pushes, an
-  'act: WARNING:' block on stderr says so, and 'act close --json' sets
-  push_deferred: true. Do NOT re-run the command — re-running duplicates
-  the op. The next write (or 'act remote sync') publishes the backlog.
+  'act: WARNING:' block on stderr says so, and 'act close --json' and
+  'act update --json' set push_deferred: true. Do NOT re-run the command
+  — re-running duplicates the op. The next write (or 'act remote sync')
+  publishes the backlog.
   Failures BEFORE the commit — op write, staging, hook, commit — still
   exit non-zero, because nothing landed. (The old push_exhausted exit-4
   envelope was retired for exactly this reason; see act help errors.)
