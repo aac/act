@@ -1105,8 +1105,9 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 // On win (Result.Claimed == true): exit 0 with the win envelope.
 // On loss (Claimed == false): exit 5 with the loss envelope (error
 // claim_lost), per spec §error-envelope's universal exit-code table.
-// On hard error (drift / write / commit / pull-rebase): exit 1 with an
-// UpdateErrorOutput.
+// On hard error (drift / write / commit / a rebase that failed once origin
+// was fetched): exit 1 with an UpdateErrorOutput. A fetch that never reached
+// origin is not one: the claim is decided locally and a win is a deferral.
 func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	paths := config.Layout(repoRoot)
 
@@ -1258,6 +1259,16 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 			won.PushDeferred = true
 			won.PushDeferredReason = deferred.Reason.Error()
 		}
+		// act-2bd35b: the claim's fetch did not reach origin. The claim op
+		// is committed and is the earliest this checkout can see, so the
+		// claim stands — unconfirmed — and it is reported as the deferral
+		// it is, not as exit 1 for a write that landed. Nothing more is
+		// pushed or queued below: this already queued the commit.
+		if res.PullErr != nil {
+			deferred := deferPublish(gops, "claim", nil, res.PullErr)
+			won.PushDeferred = true
+			won.PushDeferredReason = deferred.Reason.Error()
+		}
 		// act-2cfc30: a claim is a write like any other, and it is the
 		// one other checkouts most need to see — it is what tells them
 		// the issue is taken. Without --push it used to stay local and
@@ -1268,7 +1279,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// not reach origin is a deferral. --push already pushed inside the
 		// claim protocol, and a re-claim of an issue this node already
 		// holds committed nothing, so neither publishes again.
-		if !opts.Push && !opts.Isolated && !res.AlreadyHeld {
+		if !opts.Push && !opts.Isolated && !res.AlreadyHeld && res.PullErr == nil {
 			if opts.Offline {
 				// act-18bd72: a failed queue append is named on the
 				// result as well as on stderr.
@@ -1422,7 +1433,8 @@ func FormatUpdateHuman(res UpdateResult) string {
 // stages `.act/ops` first. The claim package writes the new op file
 // directly to disk (bypassing WriteOpAndAutoCommit's explicit StageOpFile
 // call), so without this wrapper the subsequent `git commit` finds an
-// empty index and fails. PullRebase / Push pass through unchanged.
+// empty index and fails. PullRebase / Push take the write lock and name the
+// branch.
 type claimGitOps struct {
 	inner *gitops.ActGitOps
 	// branch, when non-empty, names the nested .act/ branch the claim
@@ -1472,7 +1484,7 @@ func (c *claimGitOps) PullRebase() error {
 		return err
 	}
 	defer release()
-	return c.inner.PullRebase()
+	return c.inner.PullRebaseBranch(c.branch)
 }
 
 // Push takes the write lock too (act-94bbea): the post-win push runs after

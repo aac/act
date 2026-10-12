@@ -4050,6 +4050,25 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "A `claim_failed` envelope that carries git's output has the credentials in `origin`'s URL masked in `message` and `details.stderr_tail`.",
 		testName:     "TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked",
 	},
+	// act-2bd35b: the claim's rebase names origin and the branch.
+	{
+		name:         "spec-clr-claim-rebase-names-origin-and-branch",
+		docFile:      "docs/spec.md",
+		claimPattern: "It runs whenever the tracker has an `origin` remote and does not depend on the branch having an upstream configured, so a tracker that has only ever auto-published — whose pushes pass no `-u` — still rebases before deciding who won: a claim of an issue another checkout has already claimed and pushed is lost there too (exit 5, `claim_lost`). With no `origin` remote, or when `origin` does not have the branch yet, the step is a no-op.",
+		testName:     "TestDocClaim_Spec_ClrClaimRebasesWithoutAnUpstream",
+	},
+	{
+		name:         "spec-clr-claim-unreachable-origin-is-unconfirmed",
+		docFile:      "docs/spec.md",
+		claimPattern: "If the claim is the earliest of those, the command exits 0 with `claimed: true` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once: the issue is claimed in this checkout and no other checkout can see that yet.",
+		testName:     "TestDocClaim_Spec_ClrClaimWithUnreachableOriginIsUnconfirmed",
+	},
+	{
+		name:         "spec-clr-claim-lost-to-a-rival-is-never-a-win",
+		docFile:      "docs/spec.md",
+		claimPattern: "If another checkout's earlier claim is already in this checkout, the claim is lost exactly as when the fetch succeeds (exit 5, `claim_lost`, `claimed: false`); the deferral never turns a lost race into a win. A fetch that succeeds followed by a rebase that fails is different and stays exit 1 `claim_failed`: `origin`'s ops were received but are not in the tree, so act cannot tell who holds the issue and reports no win. The rebase is aborted and the claim op stays committed locally.",
+		testName:     "TestDocClaim_Spec_ClrClaimLostToARivalIsNeverAWin",
+	},
 	{
 		name:         "spec-dpl-offline-queue-failure-is-in-warnings",
 		docFile:      "docs/spec.md",

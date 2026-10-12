@@ -92,6 +92,12 @@ var ErrNoRemote = claim.ErrNoUpstream
 // network error, auth) remain hard errors.
 var ErrPullRebaseDirtyTree = claim.ErrPullRebaseSoftFail
 
+// ErrOriginUnreachable is returned by PullRebase when `git fetch origin
+// <branch>` could not reach origin at all (act-2bd35b). Nothing local has
+// changed. Aliased to claim.ErrOriginUnreachable, which says what a claim
+// does with it.
+var ErrOriginUnreachable = claim.ErrOriginUnreachable
+
 // GitOps is a concrete implementation of the git side-effects used by the
 // claim and write-op flows. The zero value is not safe; use NewGitOps.
 type GitOps struct {
@@ -1072,42 +1078,86 @@ func (g *GitOps) maybeFireOrchestratorSync() {
 	}
 }
 
-// PullRebase runs `git pull --rebase`. If no upstream is configured the
-// method returns ErrNoRemote so the caller can decide whether to surface a
-// usage error or silently no-op (e.g. atomic claim with --isolated).
-//
-// Special-case classification: when `git pull --rebase` refuses because the
-// working tree has unstaged changes (the "cannot pull with rebase: You have
-// unstaged changes" message), PullRebase returns ErrPullRebaseDirtyTree so
-// callers that have already committed a durable local op can demote this to
-// a soft failure rather than misleading the user with raw git stderr
-// (act-68f08b). The check is intentionally conservative: we match only the
-// canonical refuse-due-to-dirty-tree message, leaving all other failure
-// modes (rebase conflict, network) to surface as before.
+// PullRebase brings origin's history under the local commits of the current
+// branch: `git fetch origin <branch>` then `git rebase origin/<branch>`, the
+// two halves of `git pull --rebase origin <branch>` (see PullRebaseBranch).
 func (g *GitOps) PullRebase() error {
-	if _, err := g.upstream(); err != nil {
-		return err
-	}
-	if _, err := g.run("pull", "--rebase"); err != nil {
-		if isDirtyTreeRebaseRefusal(err.Error()) {
-			return fmt.Errorf("%w: %v", ErrPullRebaseDirtyTree, err)
-		}
-		return err
-	}
-	return nil
+	return g.PullRebaseBranch("")
 }
 
-// isDirtyTreeRebaseRefusal reports whether `git pull --rebase`'s stderr
-// matches the canonical refuse-due-to-unstaged-changes message. Two
-// equivalent phrasings appear across git versions:
+// PullRebaseBranch is PullRebase with an explicit branch (empty means the
+// current one). It is the claim protocol's "rebase onto origin before
+// deciding who won" step.
+//
+// act-2bd35b: the remote and branch are named explicitly. This used to be a
+// bare `git pull --rebase`, gated on the branch having an upstream
+// configured — and act's own publish push passes no `-u`, so a tracker that
+// had only ever auto-published had none, the pull never ran, and a claim was
+// decided without origin's claims in view: two checkouts could both be told
+// they held one issue. The only precondition now is an `origin` remote.
+//
+// Outcomes:
+//
+//   - no `origin` remote, or a detached HEAD with no branch named: ErrNoRemote
+//     (nothing to rebase onto; the caller treats it as a no-op).
+//   - origin has no such branch yet (nothing was ever published): nil.
+//   - `git rebase` refused because a tracked file has unstaged changes:
+//     ErrPullRebaseDirtyTree (act-68f08b), as the bare pull reported it.
+//   - the fetch did not reach origin: ErrOriginUnreachable, wrapping the
+//     fetch error. Nothing local changed.
+//   - anything else from FetchAndRebase (a rebase conflict — aborted, the
+//     tree is back where it was): that error.
+func (g *GitOps) PullRebaseBranch(branch string) error {
+	if !g.hasOriginRemote() {
+		return ErrNoRemote
+	}
+	target := branch
+	if target == "" {
+		var err error
+		target, err = g.CurrentBranch()
+		if err != nil {
+			return err
+		}
+		if target == "HEAD" {
+			return ErrNoRemote
+		}
+	}
+	err := g.FetchAndRebase(target)
+	switch {
+	case err == nil, errors.Is(err, ErrShallowRecovered):
+		return nil
+	case errors.Is(err, ErrFetchFailed) && isMissingRemoteRef(err.Error()):
+		return nil
+	case errors.Is(err, ErrFetchFailed):
+		return fmt.Errorf("%w: %v", ErrOriginUnreachable, err)
+	case isDirtyTreeRebaseRefusal(err.Error()):
+		return fmt.Errorf("%w: %v", ErrPullRebaseDirtyTree, err)
+	}
+	return err
+}
+
+// isMissingRemoteRef reports whether a fetch failed only because origin has
+// no such branch (`fatal: couldn't find remote ref <branch>`): origin was
+// reached and holds nothing to rebase onto.
+func isMissingRemoteRef(s string) bool {
+	return strings.Contains(strings.ToLower(s), "couldn't find remote ref")
+}
+
+// isDirtyTreeRebaseRefusal reports whether git refused to rebase because the
+// working tree or index has uncommitted changes to tracked files. The
+// phrasings, by command:
 //
 //	error: cannot pull with rebase: You have unstaged changes.
 //	error: cannot pull with rebase: Your index contains uncommitted changes.
+//	error: cannot rebase: You have unstaged changes.
+//	error: cannot rebase: Your index contains uncommitted changes.
 //
-// Both share the "cannot pull with rebase" prefix; we anchor on that. Case-
-// insensitive to be robust to localized git builds (rare, but harmless).
+// Case-insensitive to be robust to localized git builds (rare, but harmless).
 func isDirtyTreeRebaseRefusal(s string) bool {
-	return strings.Contains(strings.ToLower(s), "cannot pull with rebase")
+	l := strings.ToLower(s)
+	return strings.Contains(l, "cannot pull with rebase") ||
+		strings.Contains(l, "cannot rebase: you have") ||
+		strings.Contains(l, "cannot rebase: your index")
 }
 
 // Push runs `git push -u origin <current-branch>`. Returns ErrNoRemote if

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -297,4 +298,42 @@ func TestDocClaim_Spec_ClrClaimLostToARivalIsNeverAWin(t *testing.T) {
 		again, _, _, code := clrRunClaim(t, dir, id)
 		t.Logf("second claim after the conflicted one: exit %d claimed=%v error=%q winner=%q", code, again.Claimed, again.Error, again.Winner)
 	})
+}
+
+// clrFakeGitRebaseFails puts a stand-in `git` first on PATH. It runs the
+// real git for everything except `rebase` (other than `rebase --abort`),
+// which prints line on stderr and exits 128: a rebase that fails after a
+// fetch that worked, with output of the test's choosing.
+func clrFakeGitRebaseFails(t *testing.T, line string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find git: %v", err)
+	}
+	dir := t.TempDir()
+	script := `#!/bin/sh
+# Test stand-in for git (act-2bd35b). See clrFakeGitRebaseFails.
+skip=0
+seen=0
+for a in "$@"; do
+	if [ "$skip" = 1 ]; then skip=0; continue; fi
+	if [ "$seen" = 1 ]; then
+		case "$a" in
+			--abort) break ;;
+			*) echo "` + line + `" >&2; exit 128 ;;
+		esac
+	fi
+	case "$a" in
+		-C|-c) skip=1 ;;
+		-*) ;;
+		rebase) seen=1 ;;
+		*) break ;;
+	esac
+done
+exec "` + real + `" "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write the stand-in git: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

@@ -54,6 +54,15 @@ type Result struct {
 	// origin): the claim stands, RunClaim returns a nil error, and the
 	// caller reports the push as deferred (act-8ffc13).
 	PushErr error
+	// PullErr is non-nil when the rebase step could not reach origin
+	// (ErrOriginUnreachable) and the claim won among the ops this checkout
+	// can see. The claim op is committed, so the claim stands — locally,
+	// and unconfirmed: origin may hold an earlier claim this checkout has
+	// not seen. RunClaim returns a nil error, does not attempt the push,
+	// and the caller reports the deferral (act-2bd35b). Always nil on a
+	// lost claim: a loss is decided by an op already on disk and needs no
+	// confirmation.
+	PullErr error
 }
 
 // Options configures a RunClaim invocation.
@@ -103,6 +112,27 @@ var ErrEmptyAssignee = errors.New("claim: assignee is required")
 // using either sentinel; errors.Is matches both.
 var ErrNoUpstream = errors.New("claim: no upstream remote configured")
 
+// ErrOriginUnreachable is the sentinel a GitOps.PullRebase implementation
+// returns when origin could not be fetched at all — the remote is
+// unreachable, refuses the connection, or the fetch timed out — and the
+// local tree is exactly as the commit step left it (act-2bd35b).
+//
+// The claim op is already committed by then, so failing the command would
+// report a non-zero exit for a write that landed: the caller's retry then
+// found the issue "already held" and was told nothing about origin. RunClaim
+// instead goes on to decide the winner among the ops on disk:
+//
+//   - another checkout's earlier claim is already here: the claim is lost,
+//     exactly as if the fetch had succeeded.
+//   - ours is the earliest visible: the claim stands, unconfirmed, and the
+//     reason travels on Result.PullErr so the caller reports the deferral.
+//
+// This is NOT for a fetch that succeeded followed by a rebase that failed:
+// origin's ops were then received but are not in the tree, so winner
+// selection cannot see them and a "win" would be a guess. That stays a hard
+// error.
+var ErrOriginUnreachable = errors.New("origin not reached, the claim is unconfirmed")
+
 // ErrPullRebaseSoftFail is the sentinel a GitOps.PullRebase implementation
 // returns when the rebase pre-step failed for a transient/cosmetic reason
 // that does NOT compromise the local write. By the time RunClaim invokes
@@ -122,8 +152,9 @@ var ErrNoUpstream = errors.New("claim: no upstream remote configured")
 // ErrPullRebaseDirtyTree.
 //
 // RunClaim treats this sentinel like ErrNoUpstream: log nothing, continue
-// to the fold/winner-determination step. Other PullRebase failures (rebase
-// conflict on .act/ops/**, network failure, auth) remain hard errors.
+// to the fold/winner-determination step. A fetch that could not reach origin
+// is ErrOriginUnreachable (see above); other PullRebase failures (a rebase
+// conflict once origin was fetched) remain hard errors.
 var ErrPullRebaseSoftFail = errors.New("claim: pull --rebase soft failure (local op durable)")
 
 // CommitError is returned by RunClaim when GitOps.Commit fails after the
@@ -366,11 +397,22 @@ func singleAttempt(
 	//     Surfacing raw git stderr here would mislead the agent into
 	//     thinking the write failed.
 	//
-	// Other PullRebase failures (rebase conflict on .act/ops/**, network,
-	// auth) remain hard errors.
+	//   - ErrOriginUnreachable (act-2bd35b): the fetch never reached
+	//     origin. Nothing local changed and the claim op is committed, so
+	//     the winner is decided among the ops on disk; a win is reported
+	//     as unconfirmed through Result.PullErr rather than as an error.
+	//
+	// Other PullRebase failures — origin was fetched and its history could
+	// not be rebased under ours — remain hard errors: origin's ops are not
+	// in the tree, so the winner cannot be told and no win is reported.
+	var pullErr error
 	if !opts.Isolated {
 		if err := gitOps.PullRebase(); err != nil {
-			if !errors.Is(err, ErrNoUpstream) && !errors.Is(err, ErrPullRebaseSoftFail) {
+			switch {
+			case errors.Is(err, ErrNoUpstream), errors.Is(err, ErrPullRebaseSoftFail):
+			case errors.Is(err, ErrOriginUnreachable):
+				pullErr = fmt.Errorf("claim: pull --rebase: %w", err)
+			default:
 				return Result{IssueID: issueID, YourOpHash: ourHash, HLC: stamp}, fmt.Errorf("claim: pull --rebase: %w", err)
 			}
 		}
@@ -407,6 +449,14 @@ func singleAttempt(
 	// act-8ffc13: nor is any other push failure. The claim op is committed
 	// and won, so returning an error made the caller exit non-zero for a
 	// claim that had landed. The failure travels on the result instead.
+	//
+	// act-2bd35b: a win decided without reaching origin is unconfirmed.
+	// The push would fail the same way, so it is not attempted, and the
+	// one reason is reported.
+	if res.Claimed && pullErr != nil {
+		res.PullErr = pullErr
+		return res, nil
+	}
 	if res.Claimed && opts.Push {
 		if err := gitOps.Push(); err != nil {
 			if errors.Is(err, ErrNoUpstream) {

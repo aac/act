@@ -159,43 +159,57 @@ func TestDocClaim_Spec_DplTrackerRemoteCredentialsAreMasked(t *testing.T) {
 }
 
 // TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked asserts the
-// `claim_failed` sentence of the same paragraph: when a claim's `git pull
-// --rebase` fails and git's output echoes the credentials in origin's URL,
-// the envelope — `message` and `details.stderr_tail`, whichever carries
-// git's output — has them masked (act-18bd72 item 5: the envelope was not
-// swept when act-4a538e masked the others; measured, the text sits in
-// `message`).
+// `claim_failed` sentence of the same paragraph: when a claim's rebase onto
+// origin fails and git's output carries the credentials in origin's URL, the
+// envelope — `message` and `details.stderr_tail`, whichever carries git's
+// output — has them masked (act-18bd72 item 5: the envelope was not swept
+// when act-4a538e masked the others).
+//
+// act-2bd35b: a fetch that cannot reach origin is no longer `claim_failed`
+// (the claim stands, deferred, and `push_deferred_reason` is masked like
+// every deferral — asserted here too). The envelope is reached through the
+// other failure: origin is fetched, from a local bare repo the credentialed
+// URL is rewritten to, and the rebase then fails. A stand-in git makes the
+// rebase fail with a line that repeats origin's URL.
 func TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked(t *testing.T) {
-	dir := sp6Site(t)
-	bare := wfxAddBareOrigin(t, dir)
-	id := createIssue(t, dir, "dpl claim target")
-	// A second issue for the human-form call: the first failed claim's
-	// commit stays in the local repo, so claiming that issue again is a
-	// re-claim that never reaches the pull.
+	dir, bare, id := clrSiteWithOrigin(t)
 	second := createIssue(t, dir, "dpl second claim target")
-	if !wfxOriginHasHead(t, dir, bare) {
-		t.Fatalf("the create was not pushed to the bare origin")
+	// A rival checkout moves origin ahead, so the claim has something to
+	// rebase onto.
+	rival := clrRival(t, bare)
+	createIssue(t, rival, "dpl the rival's issue")
+	if !wfxOriginHasHead(t, rival, bare) {
+		t.Fatalf("the rival's create was not pushed to origin")
 	}
-	// Give the tracker's branch an upstream, as a tracker cloned with
-	// `git clone` has: only then does a claim run `git pull --rebase`.
-	sp6Git(t, "-C", filepath.Join(dir, ".act"), "push", "-q", "-u", "origin", "HEAD")
-	dplRepoint(t, dir, "origin", dplCredURLBase+"x.git")
-	dplFakeGit(t)
+	credURL := dplCredURLBase + filepath.Base(bare)
+	dplRepoint(t, dir, "origin", credURL)
+	dplRewriteToLocal(t, filepath.Dir(bare))
+	clrFakeGitRebaseFails(t, "fatal: could not rebase onto "+credURL)
 
 	stdout, stderr, code := runActIn(t, dir, "update", "--json", id, "--claim")
-	t.Logf("act update --claim --json, pull fails: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
-	if code != 1 || !strings.Contains(stdout, `"claim_failed"`) || !strings.Contains(stdout, "unable to look up") {
-		t.Fatalf("act update --claim with a failing pull: exit %d, want 1 claim_failed carrying git's output — nothing was exercised\nstdout=%s", code, stdout)
+	t.Logf("act update --claim --json, rebase fails: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	if code != 1 || !strings.Contains(stdout, `"claim_failed"`) || !strings.Contains(stdout, "could not rebase onto") {
+		t.Fatalf("act update --claim with a failing rebase: exit %d, want 1 claim_failed carrying git's output — nothing was exercised\nstdout=%s", code, stdout)
 	}
 	dplWantNoSecret(t, "act update --claim --json (claim_failed)", stdout+stderr)
-	if want := "unable to look up ***@127.0.0.1"; !strings.Contains(stdout, want) {
+	if want := "could not rebase onto " + dplMaskedURLBase; !strings.Contains(stdout, want) {
 		t.Errorf("claim_failed: stdout lacks git's message with the userinfo masked (%q):\n%s", want, stdout)
 	}
 
-	// Without --json the same envelope is a line on stderr.
+	// Without --json the envelope's message is a line on stderr.
 	stdout, stderr, code = runActIn(t, dir, "update", second, "--claim")
-	if code != 1 || !strings.Contains(stderr, "unable to look up ***@127.0.0.1") {
-		t.Errorf("act update --claim (human) with a failing pull: exit %d, want 1 and git's message with the userinfo masked\nstderr=%s", code, stderr)
+	if code != 1 {
+		t.Errorf("act update --claim (human) with a failing rebase: exit %d, want 1\nstderr=%s", code, stderr)
 	}
 	dplWantNoSecret(t, "act update --claim (claim_failed, human)", stdout+stderr)
+
+	// The unreachable-origin claim is a deferral, and its reason is masked.
+	third := createIssue(t, dir, "dpl third claim target", "--isolated")
+	dplFakeGit(t)
+	stdout, stderr, code = runActIn(t, dir, "update", "--json", third, "--claim")
+	t.Logf("act update --claim --json, fetch fails: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	if code != 0 || !strings.Contains(stdout, `"push_deferred":true`) || !strings.Contains(stdout, "unable to look up ***@127.0.0.1") {
+		t.Errorf("act update --claim with a failing fetch: exit %d, want 0 with push_deferred and git's message masked\nstdout=%s", code, stdout)
+	}
+	dplWantNoSecret(t, "act update --claim --json (deferred)", stdout+stderr)
 }

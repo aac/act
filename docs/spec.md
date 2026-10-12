@@ -539,6 +539,10 @@ is *not* used for tiebreaking — it is already mixed into `op_hash`.
 Note the winner is the *earliest* claim, not the latest: claim is a race to
 file first, and the HLC tuple determines order globally.
 
+**The rebase names `origin` and the tracker's branch (act-2bd35b).** Step 3 is `git fetch origin <branch>` followed by `git rebase origin/<branch>`. It runs whenever the tracker has an `origin` remote and does not depend on the branch having an upstream configured, so a tracker that has only ever auto-published — whose pushes pass no `-u` — still rebases before deciding who won: a claim of an issue another checkout has already claimed and pushed is lost there too (exit 5, `claim_lost`). With no `origin` remote, or when `origin` does not have the branch yet, the step is a no-op.
+
+**A claim that cannot reach `origin` is unconfirmed, not failed (act-2bd35b).** The claim op is committed in step 2, before the fetch, so a fetch that does not reach `origin` — an unreachable or refusing remote, a fetch that times out — cannot undo it and does not fail the command. The winner is decided among the ops already in the checkout. If the claim is the earliest of those, the command exits 0 with `claimed: true` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once: the issue is claimed in this checkout and no other checkout can see that yet. Such a claim is unconfirmed — `origin` may hold an earlier claim this checkout has not seen, and when the two histories meet the earlier one wins and the later one reads as lost. If another checkout's earlier claim is already in this checkout, the claim is lost exactly as when the fetch succeeds (exit 5, `claim_lost`, `claimed: false`); the deferral never turns a lost race into a win. A fetch that succeeds followed by a rebase that fails is different and stays exit 1 `claim_failed`: `origin`'s ops were received but are not in the tree, so act cannot tell who holds the issue and reports no win. The rebase is aborted and the claim op stays committed locally.
+
 `--wait` retries the full sequence on loss with backoff `1s, 2s, 4s, 8s, ...`
 capped at `--wait-timeout` (default 30s, max 600s). Each retry re-issues a
 fresh claim op with a fresh HLC; prior losing ops remain in history but are
@@ -631,7 +635,7 @@ Precedence rules:
 1. `--no-commit` + `--push` is a usage error (exit 2): cannot push what wasn't committed.
 2. `--isolated` + `--push` is a usage error (exit 2): isolated forbids network.
 3. `--verify` + `--no-commit` is silently a no-op (no commit happens, hooks irrelevant).
-4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set.
+4. `--claim` (on `update`) implicitly fetches unless `--isolated` is set. `--offline` does not skip that fetch; it skips the push.
 
 Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony.
 
@@ -1326,7 +1330,7 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `bad_input`                | 2    | by case, e.g. `from_version=<N> must be < to_version=<M>` | none |
 | `bootstrap_validation_failed` | 3    | `<cmd>: validation against <path> failed: <error>` | none |
 | `branch_failed`            | 1    | the underlying error's text | none |
-| `claim_failed`             | 1    | the underlying error's text | none (`stderr_tail` and `quarantined_op` when there is one) |
+| `claim_failed`             | 1    | the underlying error's text; not raised when the claim's fetch cannot reach `origin` (that claim is decided locally, see "Atomic claim protocol") | none (`stderr_tail` and `quarantined_op` when there is one) |
 | `commit_failed`            | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
 | `config_read_failed`       | 1, 3 | the underlying error's text, e.g. `config: parse: <error>` | none |
 | `cycle`                    | 1    | `act dep add: cycle detected: <a> -> <b> -> <a>` | `path` |
