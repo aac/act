@@ -3532,7 +3532,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-pass9-create-json-warnings-key",
 		docFile:      "docs/spec.md",
-		claimPattern: "An eighth key, `warnings` (an array of strings), appears only when there is a warning: `[\"parent_closed\"]` when `--parent` names a closed issue.",
+		claimPattern: "Three more keys are optional, each present only when it applies: `push_deferred` (`true`) and `push_deferred_reason` (the push error's text) when the push to `origin` was deferred, and `warnings` (an array of strings) when there is a warning: `[\"parent_closed\"]` when `--parent` names a closed issue.",
 		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
 	},
 	{
@@ -3929,6 +3929,16 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "A `claimed: true` result also carries the claim's `warnings`, `push_deferred`",
 		testName:     "TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred",
+	},
+	// act-a85bc9: the create section's optional-keys sentence names all
+	// three omitempty keys of cli.CreateResult. Its `warnings` half stays
+	// pinned by spec-pass9-create-json-warnings-key; this pins the two
+	// deferral keys to the test that provokes a deferred create.
+	{
+		name:         "spec-fbd-create-json-optional-deferral-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "Three more keys are optional, each present only when it applies: `push_deferred` (`true`) and `push_deferred_reason` (the push error's text) when the push to `origin` was deferred",
+		testName:     "TestDocClaim_Spec_PdfWritesReportPushDeferred",
 	},
 }
 

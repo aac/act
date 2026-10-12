@@ -660,5 +660,11 @@ func (s *Server) callFileBlocker(raw json.RawMessage) (any, bool) {
 	if len(res.Warnings) > 0 {
 		body["warnings"] = res.Warnings
 	}
+	// act-a85bc9: so does a deferred push, under the keys act_create uses;
+	// both absent when the push was not deferred.
+	if res.PushDeferred {
+		body["push_deferred"] = true
+		body["push_deferred_reason"] = res.PushDeferredReason
+	}
 	return body, false
 }
