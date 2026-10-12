@@ -978,13 +978,21 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	var published PublishResult
 	for i, env := range envelopes {
 		published = PublishResult{}
+		// act-11d2e2: only the last op takes the publish leg. Every op
+		// before it is committed and held exactly as --isolated holds a
+		// write — no push, nothing queued — and the last op's push (or
+		// its --offline queue entry) carries them all. Each op used to
+		// publish on its own, so an origin that could not be reached
+		// printed one WARNING block and queued one .pending-pushes entry
+		// per flag.
+		last := i == len(envelopes)-1
 		werr := WriteOpAndAutoCommit(env, bodies[i], paths, gops, WriteOpts{
 			NoCommit: opts.NoCommit,
 			// Defer the push to AFTER all ops are written so we don't push
 			// a partial state mid-batch.
 			Push:      false,
-			Isolated:  opts.Isolated,
-			Offline:   opts.Offline,
+			Isolated:  opts.Isolated || !last,
+			Offline:   opts.Offline && last,
 			Branch:    opts.Branch,
 			Published: &published,
 		})
