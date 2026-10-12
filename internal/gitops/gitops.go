@@ -72,11 +72,17 @@ var ErrNoRemote = claim.ErrNoUpstream
 
 // ErrPullRebaseDirtyTree is returned by PullRebase when `git pull --rebase`
 // refuses because the working tree has unstaged changes (`error: cannot pull
-// with rebase: You have unstaged changes.`). The most common cause under
-// Phase 1's nested-repo layout is `.act/index.db`: it is tracked in the
-// nested `.act/.git` but gets re-written on every read (the SQLite read
-// cache). A subsequent write's pre-step pull-rebase then trips this guard
-// even though the local write itself succeeds (act-68f08b).
+// with rebase: You have unstaged changes.`). The case this was written for
+// (act-68f08b) is a store from an older layout whose nested `.act/.git`
+// committed the SQLite read cache: the cache is re-written on every read,
+// so a subsequent write's pre-step pull-rebase trips this guard even
+// though the local write itself succeeds.
+//
+// A store made by a current `act init` does not commit the cache:
+// `.act/index.db` is listed in the nested repo's `.git/info/exclude`
+// (internal/cli/nested_exclude.go), so git neither follows it nor reports
+// it. The soft-fail stays for the older stores and for any other unstaged
+// change in the nested working tree.
 //
 // Aliased to claim.ErrPullRebaseSoftFail so the claim package can swallow
 // this specific failure mode the same way it swallows ErrNoUpstream — by

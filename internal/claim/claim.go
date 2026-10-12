@@ -99,10 +99,14 @@ var ErrNoUpstream = errors.New("claim: no upstream remote configured")
 // re-fetch and reconcile against any concurrent writer.
 //
 // The canonical case (act-68f08b) is `git pull --rebase` refusing because
-// the working tree has unstaged changes — under Phase 1's nested-repo
-// layout, `.act/index.db` is tracked but rewritten on every read, so any
-// prior `act show` dirties the index even though no op was written. The
-// gitops package re-exports this value as ErrPullRebaseDirtyTree.
+// the working tree has unstaged changes. It was first seen on stores from
+// an older layout whose nested repo committed the SQLite read cache: the
+// cache is rewritten on every read, so any prior `act show` left the
+// nested working tree dirty even though no op was written. A store made
+// by a current `act init` keeps `.act/index.db` out of the nested repo
+// through its `.git/info/exclude`, so the cache no longer causes this
+// there. The gitops package re-exports this value as
+// ErrPullRebaseDirtyTree.
 //
 // RunClaim treats this sentinel like ErrNoUpstream: log nothing, continue
 // to the fold/winner-determination step. Other PullRebase failures (rebase

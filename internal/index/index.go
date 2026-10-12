@@ -2,7 +2,10 @@
 //
 // The index is a derived cache only: the .act/ops/ tree is the source of
 // truth. Index rows are produced by folding ops and rendering each issue's
-// terminal state. The file lives at .act/index.db and is gitignored.
+// terminal state. The file lives at .act/index.db. It is never committed:
+// the host repo gitignores all of .act/, and the nested .act/ repo lists
+// index.db and its SQLite sidecars in its own .git/info/exclude (written
+// by `act init`, repaired by `act doctor --fix`).
 //
 // The driver is modernc.org/sqlite (pure Go, no cgo).
 package index
