@@ -563,16 +563,17 @@ func TestDocClaim_ExitCodes_Version(t *testing.T) {
 	// --check-repo: 0 on a tracker this binary wrote.
 	pass5Run(t, dir, 0, "", "version", "--check-repo", "--json")
 
-	// --check-repo: 3 where the working directory has no .act/ — including
-	// a subdirectory of a repo that has one, since it does not walk up.
-	pass5Run(t, bare, 3, "no_repo", "version", "--check-repo", "--json")
+	// --check-repo: 3 outside a git working tree and in a repo with no
+	// .act/. It resolves the repo root like the other read commands, so a
+	// subdirectory of a repo that has a tracker is 0 (act-77b411).
+	pass5Run(t, bare, 3, "not_in_git", "version", "--check-repo", "--json")
 	pass5Run(t, brokencoHostRepo(t), 3, "no_repo", "version", "--check-repo", "--json")
 	sub := filepath.Join(dir, "pass5-sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	pass5Run(t, sub, 3, "no_repo", "version", "--check-repo", "--json")
-	pass5Run(t, sub, 0, "", "list", "--json") // the other commands do walk up
+	pass5Run(t, sub, 0, "", "version", "--check-repo", "--json")
+	pass5Run(t, sub, 0, "", "list", "--json")
 
 	// An unknown op_version is not skew: --check-repo compares writer_version.
 	restore := pass5UnknownOpVersion(t, dir, id)
@@ -643,12 +644,9 @@ func TestDocClaim_HelpErrors_VersionSkewHookFailedNoRepoRows(t *testing.T) {
 	pass5Run(t, dir, 1, "hook_failed", "create", "--json", "refused by .act/hooks/create")
 	unhook()
 
-	// no_repo: no .act/ where the command looked, inside a git repo ...
-	sub := filepath.Join(dir, "pass5-sub")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	pass5Run(t, sub, 3, "no_repo", "version", "--check-repo", "--json")
+	// no_repo: no .act/ where the command looked — the root of a git repo
+	// that has no tracker (act-77b411: it looks there, not in the cwd) ...
+	pass5Run(t, brokencoHostRepo(t), 3, "no_repo", "version", "--check-repo", "--json")
 	// ... and, from an MCP tool call, no host git repo.
 	if out, _, code := pass5MCP(t, t.TempDir(), nil, pass5MCPInit, pass5MCPList); code != 0 || !strings.Contains(out, "no_repo") {
 		t.Errorf("act_list outside git: exit %d, want 0 with a no_repo error result: %s", code, out)

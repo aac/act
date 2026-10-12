@@ -181,9 +181,9 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ExitCodes_MCP",
 	},
 	{
-		name:         "spec-exit-codes-version-check-repo-does-not-walk-up",
+		name:         "spec-exit-codes-version-check-repo-resolves-repo-root",
 		docFile:      "docs/spec.md",
-		claimPattern: "the check looks in the current directory and does not walk up to the repo root",
+		claimPattern: "the check resolves the repo root from the working directory like the other read commands",
 		testName:     "TestDocClaim_ExitCodes_Version",
 	},
 	{
@@ -2743,6 +2743,20 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: `git commit --no-verify -m "act-op: (<short-id>) claim"`,
 		testName:     "TestDocClaim_Spec_ClaimCommitSubjectUsesSixHexShortID",
+	},
+	// act-77b411: `act version --check-repo` used the working directory as
+	// the repo root and reported no_repo from a subdirectory.
+	{
+		name:         "spec-exit-codes-version-check-repo-same-from-any-subdirectory",
+		docFile:      "docs/spec.md",
+		claimPattern: "so it gives the same answer from any subdirectory of the repo",
+		testName:     "TestDocClaim_VersionCheckRepo_ResolvesRepoRootFromSubdirectory",
+	},
+	{
+		name:         "spec-exit-codes-version-check-repo-not-in-git",
+		docFile:      "docs/spec.md",
+		claimPattern: "3 outside a git working tree (`not_in_git`), when the repo has no `.act/` (`no_repo`), or when `.act/` cannot be read",
+		testName:     "TestDocClaim_VersionCheckRepo_ResolvesRepoRootFromSubdirectory",
 	},
 }
 

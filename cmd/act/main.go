@@ -493,6 +493,15 @@ func findRepoRoot() (string, error) {
 	return gitops.FindHostRepoRoot(cwd)
 }
 
+// versionRepoRoot returns the host repo root `act version --check-repo`
+// reads, or "" without the flag, when no repo is consulted at all.
+func versionRepoRoot(checkRepo bool) (string, error) {
+	if !checkRepo {
+		return "", nil
+	}
+	return findRepoRoot()
+}
+
 // getMachineID returns a stable per-host identifier. Order:
 // 1. /etc/machine-id (Linux/systemd).
 // 2. os.Hostname() if reachable.
@@ -873,23 +882,23 @@ func runMigrate(args []string) int {
 
 func runVersion(args []string) int {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
-	checkRepo := fs.Bool("check-repo", false, "walk .act/ops/ and report max writer_version; exit 4 on skew")
+	checkRepo := fs.Bool("check-repo", false, "walk this repo's .act/ops/ (found from any subdirectory) and report max writer_version; exit 4 on skew")
 	jsonOut := fs.Bool("json", false, "emit JSON output")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	repoRoot := ""
-	if *checkRepo {
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "act version: %v\n", err)
-			return 1
-		}
-		repoRoot = cwd
+	// --check-repo reads the tracker of the repo the working directory is
+	// in, resolved like every other read command, so it answers the same
+	// from a subdirectory (or from inside .act/) as from the repo root.
+	// Without the flag no repo is read and the command works anywhere.
+	var out any
+	var code int
+	if root, err := versionRepoRoot(*checkRepo); err != nil {
+		out, code = map[string]any{"error": "not_in_git", "message": err.Error()}, 3
+	} else {
+		out, code = cli.RunVersion(*checkRepo, root)
 	}
-
-	out, code := cli.RunVersion(*checkRepo, repoRoot)
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

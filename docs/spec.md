@@ -1128,7 +1128,7 @@ Layers 1 and 2 are **explicit**; only they cause `act ready`/`act next` to filte
  "schema_version":1, "repo_max_writer_version":"0.1.0"}
 ```
 
-**Exit codes:** 0; 2 on an unknown flag. With `--check-repo` only: 3 when the working directory itself has no `.act/` (`no_repo` — the check looks in the current directory and does not walk up to the repo root) or `.act/` cannot be read; 4 on skew, meaning some op file carries a `writer_version` newer than this binary's (`version_skew`). `act version --check-repo` is the only command that reports `version_skew`; without the flag `act version` reads no repo and exits 0 anywhere.
+**Exit codes:** 0; 2 on an unknown flag. With `--check-repo` only: 3 outside a git working tree (`not_in_git`), when the repo has no `.act/` (`no_repo`), or when `.act/` cannot be read — the check resolves the repo root from the working directory like the other read commands, so it gives the same answer from any subdirectory of the repo; 4 on skew, meaning some op file carries a `writer_version` newer than this binary's (`version_skew`). `act version --check-repo` is the only command that reports `version_skew`; without the flag `act version` reads no repo and exits 0 anywhere.
 
 ---
 
