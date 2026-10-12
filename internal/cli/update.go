@@ -322,7 +322,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}, 2
 	}
 
-	// Step 2d: --claim mutually-exclusive guard. Most field flags conflict
+	// Step 2d: --claim mutually-exclusive guard. Every field flag conflicts
 	// with --claim because the claim protocol writes its own op type.
 	// --json, --push, --wait, --wait-timeout, --isolated, --no-commit, and
 	// --verify remain compatible.
@@ -336,6 +336,11 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 		}
 		if opts.Assignee != nil {
 			conflicts = append(conflicts, "--assignee")
+		}
+		// act-fcf9ca: --machine was missing from this list, so the claim
+		// went ahead, exit 0, and the label was dropped without a word.
+		if opts.Machine != nil {
+			conflicts = append(conflicts, "--machine")
 		}
 		if opts.Description != nil {
 			conflicts = append(conflicts, "--description")

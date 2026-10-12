@@ -436,14 +436,14 @@ func TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary(t *te
 		if out, _ := sp9JSON(t, dir, "update", "--json", "--status", "blocked", waiting); out != `{"id":"`+waiting+`","ops_written":0,"committed":false,"already_blocked":true}` {
 			t.Errorf("act update --json --status blocked on an issue with a blocker printed %s", out)
 		}
-		// --claim refuses every field flag but --machine.
+		// --claim refuses every field flag.
 		body := filepath.Join(t.TempDir(), "sp9-body.txt")
 		if err := os.WriteFile(body, []byte("sp9 body"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", body, err)
 		}
 		for _, flag := range [][]string{
 			{"--title", "x"}, {"--status", "open"}, {"--priority", "1"}, {"--type", "bug"}, {"--parent", waiting},
-			{"--assignee", "x"}, {"--description", "x"}, {"--description-file", body}, {"--description-append", "x"},
+			{"--assignee", "x"}, {"--machine", "sp9-box"}, {"--description", "x"}, {"--description-file", body}, {"--description-append", "x"},
 			{"--description-append-file", body}, {"--accept", "x"}, {"--accept-add", "x"}, {"--accept-rm", "0"},
 			{"--dep-rm", waiting}, {"--ext-rm", "sp9:ref"},
 		} {
@@ -455,13 +455,13 @@ func TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary(t *te
 		if st := sp8Str(sp8Show(t, dir, id)["status"]); st != "open" {
 			t.Fatalf("a refused --claim left the issue %q", st)
 		}
-		// The claim itself; --machine rides along and is ignored.
-		out, won := sp9JSON(t, dir, "update", "--json", "--claim", "--machine", "sp9-box", id)
+		// The claim itself.
+		out, won := sp9JSON(t, dir, "update", "--json", "--claim", id)
 		if out != `{"ok":true,"claimed":true,"id":"`+id+`","winner":"`+node+`","ops_written":["claim"]}` || sp9KeysOf(won) != winKeys {
-			t.Errorf("act update --json --claim --machine sp9-box printed %s; want the claim-win result with winner %s", out, node)
+			t.Errorf("act update --json --claim printed %s; want the claim-win result with winner %s", out, node)
 		}
-		if shown := sp8Show(t, dir, id); shown["machine"] != nil || sp8Str(shown["status"]) != "in_progress" {
-			t.Errorf("after --claim --machine: status %s, machine %s; want in_progress and no machine", shown["status"], shown["machine"])
+		if st := sp8Str(sp8Show(t, dir, id)["status"]); st != "in_progress" {
+			t.Errorf("after --claim: status %s, want in_progress", st)
 		}
 		// The loss shape cannot be provoked from one checkout; hold the
 		// example to the source that builds it.

@@ -3566,12 +3566,6 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
 	},
 	{
-		name:         "spec-pass9-update-claim-ignores-machine",
-		docFile:      "docs/spec.md",
-		claimPattern: "`--machine` is the one field flag `--claim` does not refuse, and there it is ignored: the claim is made and the label is not set.",
-		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
-	},
-	{
 		name:         "spec-pass9-close-json-five-keys",
 		docFile:      "docs/spec.md",
 		claimPattern: "A close that writes its op prints those five keys.",
@@ -3624,6 +3618,13 @@ var docClaimRegistry = []docClaim{
 		docFile:      "docs/spec.md",
 		claimPattern: "those two keys and no `details`. The one case that prints no JSON is a flag error (an unknown flag, or a `--from`/`--to` value that is not an integer): exit 2 with the flag usage text on stderr and nothing on stdout.",
 		testName:     "TestDocClaim_Spec_EnvelopeKeysAlwaysPresent",
+	},
+	// act-fcf9ca: --claim refuses --machine like every other field flag.
+	{
+		name:         "spec-update-claim-refuses-every-field-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another.",
+		testName:     "TestDocClaim_Spec_UpdateClaimRefusesEveryFieldFlag",
 	},
 }
 

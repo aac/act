@@ -887,7 +887,7 @@ Those three keys are always present, and there is no `ok` key. `ops_written` is 
 ```json
 {"ok":true,"claimed":true,"id":"act-ecf98c","winner":"7bbfbf96","ops_written":["claim"]}
 ```
-Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. `--machine` is the one field flag `--claim` does not refuse, and there it is ignored: the claim is made and the label is not set. `winner` is the `node_id` of the checkout that holds the claim.
+Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--machine`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another. `winner` is the `node_id` of the checkout that holds the claim.
 
 **JSON output (claim loss):**
 ```json
