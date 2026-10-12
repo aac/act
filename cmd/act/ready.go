@@ -35,7 +35,7 @@ func runReady(args []string) int {
 	// mutating refresh; --no-fetch skips it entirely. Asking for both is
 	// a contradiction, so we reject it rather than silently pick.
 	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 	if *noFetch && (*fresh || *noCache) {

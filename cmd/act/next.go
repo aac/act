@@ -49,7 +49,7 @@ func runNext(args []string) int {
 	peek := fs.Bool("peek", false, "read-only: show the issue `act next` would claim, and claim nothing")
 	allMachines := fs.Bool("all-machines", false, "survey across machines: show what would be claimed if pins were ignored. Requires --peek, because `act next` CLAIMS, and claiming an issue pinned to another machine hides it from BOTH machines at once (the claim makes it in_progress, and only open issues are ready anywhere). To take such an issue deliberately: `act ready --all-machines` to find it, then `act update <id> --claim`.")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 	// --all-machines reaches the CLAIMING path, and that is a trap worth

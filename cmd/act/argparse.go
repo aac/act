@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"strings"
 )
 
@@ -101,4 +104,41 @@ func rearrangeArgs(args []string, fs *flag.FlagSet) ([]string, error) {
 	out = append(out, flags...)
 	out = append(out, positionals...)
 	return out, nil
+}
+
+// parseFlags is fs.Parse for every subcommand, with one difference: when
+// --json (or -json) appears anywhere in args, a parse failure — an unknown
+// flag, a flag missing its value, a value the flag's type rejects — is
+// reported as the bad_flag envelope on stdout, the same shape a bad flag
+// VALUE gets from the command itself, and the flag package's own message
+// and usage dump are suppressed so stderr stays empty under --json
+// (act-6a7b5e). Before this, the flag package wrote both to stderr and
+// stdout stayed empty, so a caller reading stdout as JSON saw nothing.
+//
+// The check reads args, not the parsed --json value, because the parse
+// stops at the first bad token: --json after the bad flag is never seen.
+//
+// -h / --help is not an error and is untouched: the usage text goes where
+// it always went. Without --json the behaviour is fs.Parse's, unchanged.
+// The returned error is fs.Parse's; callers keep their `return 2`.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	if !hasJSONFlag(args) {
+		return fs.Parse(args)
+	}
+	usage, out := fs.Usage, fs.Output()
+	fs.Usage = func() {}
+	fs.SetOutput(io.Discard)
+	err := fs.Parse(args)
+	fs.Usage = usage
+	fs.SetOutput(out)
+	switch {
+	case err == nil:
+	case errors.Is(err, flag.ErrHelp):
+		if usage != nil {
+			usage()
+		}
+	default:
+		emitBadFlag(true, fmt.Sprintf("act %s: %s", fs.Name(), err.Error()))
+	}
+	return err
 }

@@ -29,7 +29,7 @@ func runClose(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if err := fs.Parse(rearranged); err != nil {
+	if err := parseFlags(fs, rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {

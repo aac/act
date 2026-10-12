@@ -26,7 +26,7 @@ func runBlocksLike(args []string, cmd string) int {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: act %s <id>\n", cmd)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 	rest := fs.Args()

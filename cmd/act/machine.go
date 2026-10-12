@@ -27,7 +27,7 @@ func runMachine(args []string) int {
 	fs := flag.NewFlagSet("machine", flag.ContinueOnError)
 	set := fs.String("set", "", "write this label to the per-machine label file and print the result; the empty string removes the file, restoring the hostname fallback")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 	if rejectExtraPositionals("act machine", fs, 0, *asJSON,

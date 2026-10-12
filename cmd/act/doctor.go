@@ -29,7 +29,7 @@ func runDoctor(args []string) int {
 	strict := fs.Bool("strict", false, "promote warn findings to error (exit 1 on any finding)")
 	noFetch := fs.Bool("no-fetch", false, "suppress the inline `git fetch --dry-run` probe used by case (g) reachability and case (h) upstream-drift detection; case (h) is suppressed entirely")
 	fixIndex := fs.Bool("fix-index", false, "rebuild .act/index.db from .act/ops/ when the index is malformed; backs up the broken copy to .act/index.db.malformed-<ts>")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 

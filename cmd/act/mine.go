@@ -24,7 +24,7 @@ func runMine(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if err := fs.Parse(rearranged); err != nil {
+	if err := parseFlags(fs, rearranged); err != nil {
 		return 2
 	}
 	// `act mine` is a read-only query taking no positionals; a stray one

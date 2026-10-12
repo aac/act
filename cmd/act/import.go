@@ -20,7 +20,7 @@ func runImport(args []string) int {
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noCommit := fs.Bool("no-commit", false, "write op files but skip the auto-commit")
 	push := fs.Bool("push", false, "push after the commit")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {

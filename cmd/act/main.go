@@ -247,7 +247,7 @@ func runInit(args []string) int {
 	// commits nothing to the host repo.
 	contributing := fs.Bool("contributing", false, "append the Act-Id trailer stanza to the host repo's CONTRIBUTING.md (off by default; act init never edits CONTRIBUTING.md unasked)")
 	commitHost := fs.Bool("commit-host", false, "commit the host-side files act init wrote (.gitignore, and CONTRIBUTING.md with --contributing); off by default — act init never commits to the host repo unasked")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 
@@ -578,7 +578,7 @@ func runLog(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if err := fs.Parse(rearranged); err != nil {
+	if err := parseFlags(fs, rearranged); err != nil {
 		return 2
 	}
 
@@ -729,7 +729,7 @@ func runSearch(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if err := fs.Parse(rearranged); err != nil {
+	if err := parseFlags(fs, rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
@@ -807,7 +807,7 @@ func runList(args []string) int {
 	sortFlag := fs.String("sort", "", "comma-separated sort keys; prefix with - for desc; default priority,-created_at")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	noFetch := fs.Bool("no-fetch", false, "skip the read-path fetch+rebase entirely: answer from on-disk .act/ state without touching the store. The response reports the refresh outcome and how stale the state is; ACT_NO_FETCH=1 does the same process-wide")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 	// `act list` takes no positional arguments. Silently ignoring one
@@ -886,7 +886,7 @@ func runMigrate(args []string) int {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	from := fs.Int("from", 0, "source op_version (must be > 0)")
 	to := fs.Int("to", 0, "target op_version (must be > from)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 
@@ -914,7 +914,7 @@ func runVersion(args []string) int {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	checkRepo := fs.Bool("check-repo", false, "walk this repo's .act/ops/ (found from any subdirectory) and report max writer_version; exit 4 on skew")
 	jsonOut := fs.Bool("json", false, "emit JSON output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 
@@ -973,7 +973,7 @@ func runShow(args []string) int {
 	if err != nil {
 		return 2
 	}
-	if err := fs.Parse(rearranged); err != nil {
+	if err := parseFlags(fs, rearranged); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
@@ -1093,7 +1093,7 @@ func runMCP(args []string) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	readOnly := fs.Bool("read-only", false, "refuse all write tools")
 	workdir := fs.String("workdir", "", "chdir before serving; overrides cwd for repo resolution")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 

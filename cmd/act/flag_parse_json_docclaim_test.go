@@ -176,8 +176,8 @@ func TestDocClaim_FlagParseError_OtherParseFailures(t *testing.T) {
 	uflWantBadFlag(t, "flag needs an argument: -limit", "list", "--json", "--limit")
 	uflWantBadFlag(t, `invalid value "abc" for flag -limit`, "list", "--json", "--limit", "abc")
 	uflWantBadFlag(t, `invalid value "abc" for flag -limit`, "list", "--limit", "abc", "--json")
-	uflWantBadFlag(t, "flag needs an argument: -reason", "close", "act-0000", "--json", "--reason")
-	uflWantBadFlag(t, `invalid value "x" for flag -priority`, "create", "t", "-p", "x", "--json")
+	uflWantBadFlag(t, "flag needs an argument: -reason", "close", "--json", "--reason")
+	uflWantBadFlag(t, `invalid value "x" for flag -p`, "create", "t", "-p", "x", "--json")
 }
 
 // TestDocClaim_FlagParseError_HelpIsNotAnError asserts -h and --help are

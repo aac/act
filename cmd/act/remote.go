@@ -48,7 +48,7 @@ func runRemote(args []string) int {
 
 	fs := flag.NewFlagSet("remote", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	if err := fs.Parse(rest); err != nil {
+	if err := parseFlags(fs, rest); err != nil {
 		return 2
 	}
 
@@ -115,7 +115,7 @@ func runRemoteAddUpstream(args []string) int {
 	fs := flag.NewFlagSet("remote add-upstream", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	forcePublic := fs.Bool("force-public", false, "override the curated public-URL refusal")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return 2
 	}
 
