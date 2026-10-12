@@ -3161,6 +3161,18 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`-h` and `--help` are not errors: they print the flag list on stderr with or without `--json`, and no envelope.",
 		testName:     "TestDocClaim_FlagParseError_HelpIsNotAnError",
 	},
+	{
+		name:         "spec-flag-parse-error-json-equals-form",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--json=true` (or any value the flag reads as true, such as `--json=1`) counts as `--json` here; `--json=false` counts as no `--json`, and when both are given the last one wins.",
+		testName:     "TestDocClaim_FlagParseError_JSONEqualsForm",
+	},
+	{
+		name:         "spec-flag-parse-error-flag-where-the-verb-belongs",
+		docFile:      "docs/spec.md",
+		claimPattern: "A flag where the verb of `act state` or `act dep` belongs (`act state --json --nonsense`, `act dep --json`) follows the same rule: `bad_flag` with exit 2, the envelope on stdout under `--json` with the command's verb list as its `message`, the verb list on stderr without it.",
+		testName:     "TestDocClaim_FlagParseError_GroupCommands",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

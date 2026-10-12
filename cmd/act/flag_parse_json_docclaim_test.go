@@ -222,11 +222,11 @@ func ufgGroups(t *testing.T) []string {
 }
 
 // ufgWantEnvelope asserts one invocation answers exit 2 with exactly one
-// JSON object on stdout whose error is bad_flag and whose message is not
-// empty, and writes nothing to stderr. Unlike uflWantBadFlag it does not pin
-// the message text or require one line: a group answers a missing verb with
-// its multi-line verb list.
-func ufgWantEnvelope(t *testing.T, args ...string) {
+// JSON object on stdout whose error is bad_flag and whose message contains
+// wantMsg, and writes nothing to stderr. Unlike uflWantBadFlag it does not
+// require a one-line message: a group answers a missing verb with its
+// multi-line verb list.
+func ufgWantEnvelope(t *testing.T, wantMsg string, args ...string) {
 	t.Helper()
 	what := "act " + strings.Join(args, " ")
 	stdout, stderr, code := runActIn(t, t.TempDir(), args...)
@@ -243,8 +243,8 @@ func ufgWantEnvelope(t *testing.T, args ...string) {
 	var slug, msg string
 	_ = json.Unmarshal(env["error"], &slug)
 	_ = json.Unmarshal(env["message"], &msg)
-	if slug != "bad_flag" || msg == "" {
-		t.Errorf("%s: error=%q message=%q, want bad_flag and a message\n  stdout: %s", what, slug, msg, stdout)
+	if slug != "bad_flag" || !strings.Contains(msg, wantMsg) {
+		t.Errorf("%s: error=%q message=%q, want bad_flag and a message containing %q", what, slug, msg, wantMsg)
 	}
 }
 
@@ -290,16 +290,30 @@ func TestDocClaim_FlagParseError_JSONEqualsForm(t *testing.T) {
 // under --json — including when --json is that first flag — and with plain
 // text on stderr without it; and help stays help (act-21e07f).
 func TestDocClaim_FlagParseError_GroupCommands(t *testing.T) {
+	own := map[string]bool{}
+	for _, sub := range uflJSONCommands(t) {
+		if len(sub) == 1 {
+			own[sub[0]] = true
+		}
+	}
 	for _, g := range ufgGroups(t) {
 		g := g
 		t.Run(g, func(t *testing.T) {
-			ufgWantEnvelope(t, g, "--json", "--no-such-flag")
-			ufgWantEnvelope(t, g, "--no-such-flag", "--json")
-			ufgWantEnvelope(t, g, "-json", "--no-such-flag")
-			ufgWantEnvelope(t, g, "--json=true", "--no-such-flag")
-			ufgWantEnvelope(t, g, "--no-such-flag", "--json=true")
-			ufgWantEnvelope(t, g, "--json")
-			ufgWantEnvelope(t, g, "no-such-verb", "--json=true")
+			// The answer to a flag where the verb belongs is the group's
+			// verb list. act remote is the one group with a flag set of
+			// its own, so there the flag parser answers first.
+			usage := "usage: act " + g + " <"
+			flagMsg := usage
+			if own[g] {
+				flagMsg = "flag provided but not defined: -no-such-flag"
+			}
+			ufgWantEnvelope(t, flagMsg, g, "--json", "--no-such-flag")
+			ufgWantEnvelope(t, flagMsg, g, "--no-such-flag", "--json")
+			ufgWantEnvelope(t, flagMsg, g, "-json", "--no-such-flag")
+			ufgWantEnvelope(t, flagMsg, g, "--json=true", "--no-such-flag")
+			ufgWantEnvelope(t, flagMsg, g, "--no-such-flag", "--json=true")
+			ufgWantEnvelope(t, usage, g, "--json")
+			ufgWantEnvelope(t, "no-such-verb", g, "no-such-verb", "--json=true")
 
 			ufgWantPlain(t, g, "--no-such-flag")
 			ufgWantPlain(t, g, "--json=false", "--no-such-flag")
