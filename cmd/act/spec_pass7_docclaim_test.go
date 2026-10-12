@@ -99,16 +99,11 @@ func sp7HasBullet(text, flag string) bool {
 // bullet that is not here fails, and so does an entry here whose bullet has
 // since been written. Do not add to it; write the bullet (and its asserting
 // test) instead.
-var sp7NoBulletYet = map[string][]string{
-	"init":    {"commit-host", "contributing", "force-new", "json"},
-	"create":  {"description", "description-file"},
-	"update":  {"ext-rm", "force", "unclaim"},
-	"close":   {"force", "no-code", "no-doctor"},
-	"dep add": {"blocked-by", "blocks", "external"},
-	"ready":   {"as", "fresh", "mine", "no-cache"},
-	"next":    {"all-machines"},
-	"migrate": {"from", "to"},
-}
+//
+// Empty since the eighth pass (act-0c1c31) wrote the last 22 bullets; their
+// behaviour is asserted by TestDocClaim_Spec_FlagBullets* in
+// spec_pass8_docclaim_test.go.
+var sp7NoBulletYet = map[string][]string{}
 
 // TestDocClaim_Spec_EverySynopsisNamesEveryFlag asserts, for every
 // "**Synopsis:**" line in docs/spec.md, that it names every flag the

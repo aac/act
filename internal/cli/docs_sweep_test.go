@@ -3267,6 +3267,146 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "{ \"from_version\": 1, \"to_version\": 2, \"transform_id\": \"v1-to-v2\" }",
 		testName:     "TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey",
 	},
+	// The 22 flag bullets sp7NoBulletYet used to excuse; one tuple per
+	// bullet, keyed on the bullet's opening words.
+	{
+		name:         "spec-init-flag-force-new",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--force-new` (bool, default false). Start a new tracker even though a configured tracker remote",
+		testName:     "TestDocClaim_Spec_InitExitCodesAndOutputModes",
+	},
+	{
+		name:         "spec-init-flag-contributing",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--contributing` (bool, default false). Append a short section about the `Act-Id:` commit trailer to the host repo's `CONTRIBUTING.md`, creating the file if there is none and keeping what it already holds.",
+		testName:     "TestDocClaim_Spec_FlagBulletsInit",
+	},
+	{
+		name:         "spec-init-flag-commit-host",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--commit-host` (bool, default false). Commit the host-side files this run wrote",
+		testName:     "TestDocClaim_Spec_FlagBulletsInit",
+	},
+	{
+		name:         "spec-init-flag-commit-host-nothing-to-commit",
+		docFile:      "docs/spec.md",
+		claimPattern: "Nothing is committed when the host repo has no commit yet, or when the run wrote no host file.",
+		testName:     "TestDocClaim_Spec_FlagBulletsInit",
+	},
+	{
+		name:         "spec-init-flag-json",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--json` (bool, default false). Print the result as one JSON object instead of the human-readable lines.",
+		testName:     "TestDocClaim_Spec_InitExitCodesAndOutputModes",
+	},
+	{
+		name:         "spec-create-flag-description",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--description \"text\"` (string, default \"\"). The issue's body. An empty string is the same as leaving the flag out",
+		testName:     "TestDocClaim_Spec_FlagBulletsCreateDescription",
+	},
+	{
+		name:         "spec-create-flag-description-file",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--description-file PATH` (string). Read the body from a UTF-8 file; `-` reads it from stdin. Mutually exclusive with `--description` (the pair is exit 2). A path that does not exist is exit 3 (`file_not_found`).",
+		testName:     "TestDocClaim_Spec_FlagBulletsCreateDescription",
+	},
+	{
+		name:         "spec-update-flag-ext-rm",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--ext-rm REF` (repeatable). Clears an external dep",
+		testName:     "TestDocClaim_Spec_FlagBulletsExternalDeps",
+	},
+	{
+		name:         "spec-update-flag-unclaim",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--unclaim` (bool). Releases a claim: an `in_progress` issue returns to `open` and its assignee is cleared.",
+		testName:     "TestDocClaim_Spec_FlagBulletsUnclaim",
+	},
+	{
+		name:         "spec-update-flag-force",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--force` (bool). With `--claim` only: claim an issue even though it has open external deps.",
+		testName:     "TestDocClaim_Spec_FlagBulletsExternalDeps",
+	},
+	{
+		name:         "spec-close-flag-force",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--force` (bool). Close an issue even though it has open external deps",
+		testName:     "TestDocClaim_Spec_FlagBulletsExternalDeps",
+	},
+	{
+		name:         "spec-close-flag-no-code",
+		docFile:      "docs/spec.md",
+		claimPattern: "the close op's payload carries `no_code: true` and `act show --json` then reports `closed_no_code: true`. `act doctor`'s `orphan-close` check does not report an issue closed this way.",
+		testName:     "TestDocClaim_Spec_FlagBulletsCloseNoCodeNoDoctor",
+	},
+	{
+		name:         "spec-close-flag-no-doctor",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--no-doctor` (bool). Skip the check `act close` runs after a committed close.",
+		testName:     "TestDocClaim_Spec_FlagBulletsCloseNoCodeNoDoctor",
+	},
+	{
+		name:         "spec-dep-add-flag-blocked-by",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act dep add <a> --blocked-by <b>` says `<a>` is blocked by `<b>`, the same edge as `act dep add <a> <b>`.",
+		testName:     "TestDocClaim_Spec_FlagBulletsDepAddDirectional",
+	},
+	{
+		name:         "spec-dep-add-flag-blocks",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act dep add <a> --blocks <b>` says `<a>` blocks `<b>`, the same edge as `act dep add <b> <a>`.",
+		testName:     "TestDocClaim_Spec_FlagBulletsDepAddDirectional",
+	},
+	{
+		name:         "spec-dep-add-flag-external",
+		docFile:      "docs/spec.md",
+		claimPattern: "While an issue carries one it is left out of `act ready`, and `act close` and `act update --claim` refuse it with `blocked_by_external_dep` unless given `--force`.",
+		testName:     "TestDocClaim_Spec_FlagBulletsExternalDeps",
+	},
+	{
+		name:         "spec-ready-flag-mine",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--mine` (bool). Only the ready issues whose assignee is this checkout's `node_id`, read from `.act/config.json`.",
+		testName:     "TestDocClaim_Spec_FlagBulletsReadyMineAsFresh",
+	},
+	{
+		name:         "spec-ready-flag-as",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--as NODE` (string). With `--mine`: match the assignee `NODE` instead of this checkout's `node_id`. Without `--mine` it is exit 2.",
+		testName:     "TestDocClaim_Spec_FlagBulletsReadyMineAsFresh",
+	},
+	{
+		name:         "spec-ready-flag-fresh",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--json` output then carries `refresh.reason: \"fresh_flag\"`. Mutually exclusive with `--no-fetch` (the pair is exit 2).",
+		testName:     "TestDocClaim_Spec_FlagBulletsReadyMineAsFresh",
+	},
+	{
+		name:         "spec-ready-flag-no-cache",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--no-cache` (bool). Another spelling of `--fresh`; the two do the same thing.",
+		testName:     "TestDocClaim_Spec_FlagBulletsReadyMineAsFresh",
+	},
+	{
+		name:         "spec-next-flag-all-machines",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--all-machines` (bool). With `--peek` only: consider issues pinned to another machine too",
+		testName:     "TestDocClaim_Spec_FlagBulletsNextAllMachines",
+	},
+	{
+		name:         "spec-migrate-flag-from",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--from N` (int, required). The source `op_version`: ops at this version are the ones migrated. Must be greater than 0.",
+		testName:     "TestDocClaim_Spec_FlagBulletsMigrateFromTo",
+	},
+	{
+		name:         "spec-migrate-flag-to",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `--to M` (int, required). The target `op_version`. Must be greater than `--from`.",
+		testName:     "TestDocClaim_Spec_FlagBulletsMigrateFromTo",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

@@ -725,6 +725,10 @@ Resolution happens before any op is written, so a write command never partially 
 
 **Flags:**
 - `--force` (bool, default false) — proceed even if `.act/` already exists; merges missing subdirs and rewrites `config.json` only if absent. Never overwrites existing ops or snapshots.
+- `--force-new` (bool, default false). Start a new tracker even though a configured tracker remote (`$ACT_TRACKER_REMOTE`, else `~/.config/act/tracker-remote`) already holds one for this repo. Without it `act init` refuses that case with exit 3 and `tracker_not_checked_out`. It is a different switch from `--force`, which does not lift the refusal.
+- `--contributing` (bool, default false). Append a short section about the `Act-Id:` commit trailer to the host repo's `CONTRIBUTING.md`, creating the file if there is none and keeping what it already holds. Without the flag `act init` never touches `CONTRIBUTING.md`; a host with a public-looking remote (github.com, gitlab.com, bitbucket.org) only gets the suggestion to re-run with it. The section is written once: a later run that finds it adds nothing.
+- `--commit-host` (bool, default false). Commit the host-side files this run wrote — `.gitignore`, and `CONTRIBUTING.md` under `--contributing` — as one commit in the host repo. Without the flag those files are written to the working tree and left uncommitted. Nothing is committed when the host repo has no commit yet, or when the run wrote no host file.
+- `--json` (bool, default false). Print the result as one JSON object instead of the human-readable lines.
 
 **Exit codes:** 0 on success; 1 if `.act/config.json` already exists and `--force` was not given (`act_already_initialized`); 2 on an unknown flag; 3 if `cwd` is not inside a git working tree (`not_in_git`), or when a configured tracker remote already holds this repo's tracker and `--force-new` was not given (`tracker_not_checked_out`).
 
@@ -756,6 +760,8 @@ The first seven keys are always present. `nested_committed` says whether this ru
 - `--accept "criteria"` (string, repeatable). Each invocation appends one acceptance-criterion string.
 - `--type T` (enum task|bug|epic|chore, default task).
 - `--machine LABEL` (string, default ""). Pins the new issue to one machine: `act ready`/`act next` on any other machine exclude it, while `act list`/`act show` show it everywhere. The default, empty, means "runs anywhere". Filing time is when the constraint is known, which is why the flag lives here and not only on `act update`. Label rules: printable ASCII, no spaces or control characters, ≤64 bytes; a violation is exit 2 at the flag boundary, never a written op.
+- `--description "text"` (string, default ""). The issue's body. An empty string is the same as leaving the flag out: the issue is created with no description.
+- `--description-file PATH` (string). Read the body from a UTF-8 file; `-` reads it from stdin. Mutually exclusive with `--description` (the pair is exit 2). A path that does not exist is exit 3 (`file_not_found`).
 - `--json` (bool, default false for humans, true under MCP).
 
 **Behavior:** Builds a `create` op payload, hashes `(payload || nonce)` to derive the new issue id `act-<N hex>` where `4 <= N <= 16` (shortest non-colliding prefix per §ID model), runs the `create` hook, and only once the hook passes writes the op file at `.act/ops/<id>/<yyyy-mm>/<iso>-<hash6>-create.json` and op-commits it. The `create` hook runs before the create op file is written (§Hooks contract), so a hook that refuses the create leaves no op file behind. Under `--no-commit` the op file is written, no hook runs and nothing is committed.
@@ -862,6 +868,9 @@ The object has five top-level keys: `issues`, `count`, `total`, `truncated` and 
 - `--accept-add "..."` (repeatable; each appends one criterion via `add_accept` — the additive sibling of `--accept`).
 - `--accept-rm N` (repeatable; removes the criterion at zero-based index `N` against the current list via `remove_accept`. Out-of-range is a no-op. Replace an individual criterion with `--accept-rm N --accept-add "new text"`).
 - `--dep-rm ID` (repeatable). Removes a dep edge; resolves id.
+- `--ext-rm REF` (repeatable). Clears an external dep — an opaque external-tracker ref attached with `act dep add --external`. Each `REF` writes one `remove_external_dep` op. Clearing a ref the issue does not carry is not an error: the op is written and changes nothing. An empty `REF` is exit 2, and so is `--ext-rm` together with `--claim`.
+- `--unclaim` (bool). Releases a claim: an `in_progress` issue returns to `open` and its assignee is cleared. It writes one `unclaim` op, on an issue that is not `in_progress` too, where the op changes nothing. Mutually exclusive with `--claim` (the pair is exit 2).
+- `--force` (bool). With `--claim` only: claim an issue even though it has open external deps. Without it that claim is exit 2 with `blocked_by_external_dep`; with it the claim goes ahead and a `WARNING` naming each bypassed dep is written to stderr. It has no effect on any other update, and is not a field flag: `--force` alone is exit 2 like an update that names nothing to change.
 - `--claim` (bool). Atomic claim protocol: write `claim` op, `git pull --rebase` (skipped under `--isolated`), refold, report win/loss. On win, optionally push if `--push`.
 - `--wait` (bool, only with `--claim`). On loss, poll until the issue becomes claimable again or status becomes terminal.
 - `--wait-timeout D` (Go duration such as `90s`, default `30s`). Bound on `--wait`. A bare number such as `60` is not a duration and is exit 2.
@@ -893,6 +902,9 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 **Flags:**
 - `--reason TEXT` (string, default ""). Stored as `closed_reason`.
+- `--force` (bool). Close an issue even though it has open external deps (refs attached with `act dep add --external`). Without it that close is exit 2 with `blocked_by_external_dep`; with it the close goes ahead and a `WARNING` naming each bypassed dep is written to stderr.
+- `--no-code` (bool). Record the close as one that produced no code change (tracking work, a wrong claim, a doc-only fix): the close op's payload carries `no_code: true` and `act show --json` then reports `closed_no_code: true`. `act doctor`'s `orphan-close` check does not report an issue closed this way. It does not silence the post-close warning described under `--no-doctor`.
+- `--no-doctor` (bool). Skip the check `act close` runs after a committed close. The check looks through the host repo's last 50 commits for an `Act-Id:` trailer naming the issue and, finding none, writes one line to stderr beginning `act close: no host commit with 'Act-Id: <id>' trailer found in last 50 commits`. The line is a warning only: the close has already happened and the exit code is 0 either way. The check does not run under `--no-commit`.
 - `--json` (bool).
 
 **Behavior:** Builds a `close` op carrying `closed_at` and `closed_reason`; runs the `close` hook, and only once the hook passes writes the op file. The `close` hook runs before the close op file is written (§Hooks contract), so a refused close leaves no op file behind. It then commits the op file on its own in the nested `.act/` repo. The close commit subject is `act-op: (<short-id>) close`, where `<short-id>` is the issue id, cut to `act-` plus six hex characters when it is longer — the parenthesized marker is what `act doctor`'s `orphan-close` check greps for. The close writes one op file and nothing else: there is no `closed_by_tree` value, and the index has no `closed_by_tree` column.
@@ -915,6 +927,9 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 **Flags:**
 - `--type T` (enum blocks|relates|supersedes, default blocks).
+- `--blocked-by ID` (string). The directional form, with one positional id: `act dep add <a> --blocked-by <b>` says `<a>` is blocked by `<b>`, the same edge as `act dep add <a> <b>`.
+- `--blocks ID` (string). The inverse: `act dep add <a> --blocks <b>` says `<a>` blocks `<b>`, the same edge as `act dep add <b> <a>`. `--blocked-by` and `--blocks` each take exactly one positional id, always write a `blocks` edge (a `--type` other than `blocks` is exit 2), and cannot be combined with each other or with a second positional id (exit 2).
+- `--external REF` (string, repeatable). Attach an opaque external-tracker ref — for example `linear:ENG-123` — to the one positional issue as an external dep, one `add_external_dep` op per `REF`. While an issue carries one it is left out of `act ready`, and `act close` and `act update --claim` refuse it with `blocked_by_external_dep` unless given `--force`. `act update --ext-rm REF` clears it. `--external` takes exactly one positional id and cannot be combined with `--blocked-by`, `--blocks` or a `--type` other than `blocks` (exit 2); an empty `REF` is exit 2. Its `--json` result is `{"ok":true,"issue":"<id>","external":["<REF>", ...],"committed":true}`.
 - `--json` (bool).
 
 **Behavior:** Resolves both ids, refuses if it would create a cycle in the `blocks` subgraph (cycle detection runs over the full folded graph). Writes one `add_dep` op on the child issue.
@@ -943,6 +958,10 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 - `--json` (bool).
 - `--limit N` (int, default 50). `--limit 0` means "no limit" (every ready issue), the same meaning it has on `act list`.
 - `--all-machines` (bool). Include issues pinned to another machine.
+- `--mine` (bool). Only the ready issues whose assignee is this checkout's `node_id`, read from `.act/config.json`.
+- `--as NODE` (string). With `--mine`: match the assignee `NODE` instead of this checkout's `node_id`. Without `--mine` it is exit 2.
+- `--fresh` (bool). Skip the read cache for this one read: fetch from `origin` and rebase even when the last fetch is inside the freshness window (see "Read-cache"). `--json` output then carries `refresh.reason: "fresh_flag"`. Mutually exclusive with `--no-fetch` (the pair is exit 2).
+- `--no-cache` (bool). Another spelling of `--fresh`; the two do the same thing.
 - `--no-fetch` (bool). Skip the read-path fetch and rebase and answer from the `.act/` state on disk; `--json` output then carries `refresh.reason: "no_fetch"`. `ACT_NO_FETCH=1` does the same.
 
 **Algorithm:** Fold all issues; an issue is **ready** iff `status == open` AND no incoming `blocks` dep points at it from an open/in_progress issue AND it is not pinned to a different machine. Sort by priority asc, created_at desc, id asc.
@@ -979,6 +998,7 @@ claimable issue from the ready frontier, **claims it**, and shows it.
 - `--under <id>` (string, optional). Restrict the ready frontier to descendants of this id.
 - `--limit N` (int, default 50). How many ready candidates to consider.
 - `--peek` (bool). **Read-only survey.** Show the issue `act next` would claim and claim nothing.
+- `--all-machines` (bool). With `--peek` only: consider issues pinned to another machine too, so the peek can name one this machine would otherwise skip. Without `--peek` it is exit 2, for the reason given above.
 - `--isolated` (bool). Offline mode for the claim: commit but no network ops.
 - `--json` (bool).
 
@@ -1351,7 +1371,11 @@ Migration ops: `act migrate` is the only command that writes a `migrate` op.
 
 **Synopsis:** `act migrate --from <N> --to <M>`
 
-**Flags:** `--from` (int, source `op_version`) and `--to` (int, target `op_version`). There are no others — no `--dry-run` and no `--json`. The command is not listed in `act help`.
+**Flags:**
+- `--from N` (int, required). The source `op_version`: ops at this version are the ones migrated. Must be greater than 0.
+- `--to M` (int, required). The target `op_version`. Must be greater than `--from`.
+
+There are no others — no `--dry-run` and no `--json`. The command is not listed in `act help`.
 
 **Behavior:** looks up the migration registered for exactly `(from, to)`, then walks `.act/ops/` for ops at `op_version` `<N>`. Each one is passed through the migration's transform, and the ops the transform returns are written as new op files stamped after every existing op. One `migrate` op per affected issue (not one global) is then written to record the transition. Its envelope payload:
 
