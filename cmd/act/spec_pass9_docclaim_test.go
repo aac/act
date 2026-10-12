@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -294,4 +295,242 @@ func TestDocClaim_Spec_InitForceRewritesConfig(t *testing.T) {
 	if got := sp8Str(sp8Show(t, host, id)["title"]); got != "sp9 kept" {
 		t.Errorf("after --force the issue reads back with title %q", got)
 	}
+}
+
+// sp9ExampleKeys returns the sorted top-level keys of the first JSON example
+// that follows marker in the spec section under heading.
+func sp9ExampleKeys(t *testing.T, heading, marker string) string {
+	t.Helper()
+	return sp7Keys(sp8Object(t, "the example under "+marker+" in "+heading, sp8Example(t, heading, marker)))
+}
+
+// sp9JSON runs act with args, wants exit 0, and returns the trimmed stdout
+// and its top-level keys.
+func sp9JSON(t *testing.T, dir string, args ...string) (string, map[string]string) {
+	t.Helper()
+	out, _ := pass5Run(t, dir, 0, "", args...)
+	vals := map[string]string{}
+	for k, v := range sp8Object(t, "act "+strings.Join(args, " "), out) {
+		vals[k] = string(v)
+	}
+	return strings.TrimSpace(out), vals
+}
+
+// sp9KeysOf returns the sorted keys of vals, comma-joined.
+func sp9KeysOf(vals map[string]string) string {
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
+// TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary
+// asserts the JSON examples of the `act create`, `act show`, `act update`,
+// `act close` and `act version` sections and the paragraph under each: every
+// example parses, its top-level keys are exactly those of real output for the
+// same kind of call, and the keys the paragraphs call optional or absent are
+// so.
+func TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary(t *testing.T) {
+	dir := sp6Site(t)
+	_, cfg := sp9Config(t, dir)
+	node := cfg["node_id"]
+	// noCommit is a second tracker for the --no-commit calls, which leave an
+	// uncommitted op file behind.
+	noCommit := sp6Site(t)
+
+	t.Run("create", func(t *testing.T) {
+		const want = "committed,id,ok,op_id,prefix,pushed,title"
+		if got := sp9ExampleKeys(t, "### `act create <title>`", "**JSON output:**"); got != want {
+			t.Errorf("the spec's create example has keys %q, want %q", got, want)
+		}
+		_, plain := sp9JSON(t, dir, "create", "--json", "sp9 created")
+		if sp9KeysOf(plain) != want || plain["ok"] != "true" || plain["committed"] != "true" || plain["pushed"] != "false" || plain["title"] != `"sp9 created"` || plain["prefix"] != plain["id"] {
+			t.Errorf("act create --json: %v; want exactly the keys %q, committed, not pushed, and prefix equal to a six-hex id", plain, want)
+		}
+		if _, pushed := sp9JSON(t, dir, "create", "--json", "--push", "sp9 pushed"); sp9KeysOf(pushed) != want || pushed["pushed"] != "true" {
+			t.Errorf("act create --json --push in a tracker with no remote: %v; want pushed true under the same seven keys", pushed)
+		}
+		if _, nc := sp9JSON(t, noCommit, "create", "--json", "--no-commit", "sp9 uncommitted"); sp9KeysOf(nc) != want || nc["committed"] != "false" {
+			t.Errorf("act create --json --no-commit: %v; want committed false under the same seven keys", nc)
+		}
+		// warnings: only when --parent names a closed issue.
+		closed := createIssue(t, dir, "sp9 closed parent")
+		pass5Run(t, dir, 0, "", "close", "--json", "--no-doctor", closed)
+		if _, warned := sp9JSON(t, dir, "create", "--json", "--parent", closed, "sp9 child of closed"); sp9KeysOf(warned) != want+",warnings" || warned["warnings"] != `["parent_closed"]` {
+			t.Errorf("act create --json --parent <closed>: %v; want the seven keys plus warnings [\"parent_closed\"]", warned)
+		}
+	})
+
+	t.Run("show", func(t *testing.T) {
+		const eleven = "accept,blocked_by,blocks,commits,created_at,id,priority,refresh,status,title,type"
+		const example = "accept,blocked_by,blocks,commits,created_at,deps,description,id,parent,priority,refresh,status,title,type"
+		if got := sp9ExampleKeys(t, "### `act show <id>`", "**JSON output:**"); got != example {
+			t.Errorf("the spec's show example has keys %q, want %q", got, example)
+		}
+		plain := createIssue(t, dir, "sp9 plain")
+		out, shown := sp9JSON(t, dir, "show", "--json", plain)
+		if sp9KeysOf(shown) != eleven || shown["accept"] != "[]" || shown["blocked_by"] != "[]" || shown["blocks"] != "[]" || shown["commits"] != "[]" || strings.Contains(out, "null") {
+			t.Errorf("act show --json of an issue with a title and nothing else: keys %q; want %q, the lists as [] and no null\n%s", sp9KeysOf(shown), eleven, out)
+		}
+		// The example's issue: a parent, a blocker, a criterion, a body.
+		full := createIssue(t, dir, "sp9 full", "--parent", plain, "--blocked-by", plain, "--accept", "sp9 criterion", "--description", "sp9 body", "--priority", "1")
+		out, shown = sp9JSON(t, dir, "show", "--json", full)
+		if sp9KeysOf(shown) != example || shown["deps"] != `[{"edge_type":"blocks","parent":"`+plain+`"}]` || shown["accept"] != `["sp9 criterion"]` || shown["parent"] != `"`+plain+`"` {
+			t.Errorf("act show --json of an issue like the example's: keys %q, want %q\n%s", sp9KeysOf(shown), example, out)
+		}
+		for _, gone := range []string{"ok", "issue", "ops_count", "acceptance_criteria", "ops"} {
+			if _, has := shown[gone]; has {
+				t.Errorf("act show --json carries the key %q", gone)
+			}
+		}
+		// machine, on a pinned issue.
+		pinned := createIssue(t, dir, "sp9 pinned", "--machine", "sp9-box")
+		if _, shown = sp9JSON(t, dir, "show", "--json", pinned); sp9KeysOf(shown) != strings.Replace(eleven, "id,", "id,machine,", 1) || shown["machine"] != `"sp9-box"` {
+			t.Errorf("act show --json of a pinned issue: keys %q; want the eleven plus machine", sp9KeysOf(shown))
+		}
+		// ops, only with --include-ops.
+		if _, shown = sp9JSON(t, dir, "show", "--json", "--include-ops", plain); sp9KeysOf(shown) != strings.Replace(eleven, "id,", "id,ops,", 1) || !strings.HasPrefix(shown["ops"], `[{"op_version":1,`) || !strings.Contains(shown["ops"], `"op_type":"create"`) {
+			t.Errorf("act show --json --include-ops: keys %q; want the eleven plus ops, the create op first", sp9KeysOf(shown))
+		}
+		// assignee and claimed_at, once claimed.
+		pass5Run(t, dir, 0, "", "update", "--json", "--claim", plain)
+		if _, shown = sp9JSON(t, dir, "show", "--json", plain); sp9KeysOf(shown) != "accept,assignee,blocked_by,blocks,claimed_at,commits,created_at,id,priority,refresh,status,title,type" || shown["assignee"] != `"`+node+`"` {
+			t.Errorf("act show --json of a claimed issue: keys %q, assignee %s; want the eleven plus assignee (%s) and claimed_at", sp9KeysOf(shown), shown["assignee"], node)
+		}
+		// closed_at, closed_reason and closed_by_node, once closed.
+		pass5Run(t, dir, 0, "", "close", "--json", "--no-doctor", "--reason", "sp9 done", plain)
+		if _, shown = sp9JSON(t, dir, "show", "--json", plain); sp9KeysOf(shown) != "accept,assignee,blocked_by,blocks,claimed_at,closed_at,closed_by_node,closed_reason,commits,created_at,id,priority,refresh,status,title,type" || shown["closed_reason"] != `"sp9 done"` || shown["closed_by_node"] != `"`+node+`"` {
+			t.Errorf("act show --json of a closed issue: keys %q; want closed_at, closed_reason and closed_by_node added", sp9KeysOf(shown))
+		}
+		// A tombstoned issue: id and tombstoned, nothing else.
+		gone := createIssue(t, dir, "sp9 deleted")
+		pass5Run(t, dir, 0, "", "delete", "--json", gone)
+		if out, _ = sp9JSON(t, dir, "show", "--json", gone); out != `{"id":"`+gone+`","tombstoned":true}` {
+			t.Errorf("act show --json of a tombstoned issue printed %s", out)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		const heading = "### `act update <id>`"
+		const plainKeys = "committed,id,ops_written"
+		const winKeys = "claimed,id,ok,ops_written,winner"
+		if got := sp9ExampleKeys(t, heading, "**JSON output (an update without `--claim`):**"); got != plainKeys {
+			t.Errorf("the spec's plain update example has keys %q, want %q", got, plainKeys)
+		}
+		if got := sp9ExampleKeys(t, heading, "**JSON output (claim win):**"); got != winKeys {
+			t.Errorf("the spec's claim-win example has keys %q, want %q", got, winKeys)
+		}
+		if got := sp9ExampleKeys(t, heading, "**JSON output (claim loss):**"); got != "claimed,error,id,ok,reason,winner" {
+			t.Errorf("the spec's claim-loss example has keys %q", got)
+		}
+		id := createIssue(t, dir, "sp9 updated")
+		// Two field flags: two ops, one result.
+		if out, _ := sp9JSON(t, dir, "update", "--json", "--priority", "0", "--assignee", "sp9-me", id); out != `{"id":"`+id+`","ops_written":2,"committed":true}` {
+			t.Errorf("act update --json --priority 0 --assignee sp9-me printed %s", out)
+		}
+		pass5Run(t, dir, 0, "", "update", "--json", "--assignee", "", id)
+		// already_blocked: the fourth key, and committed false with no op.
+		waiting := createIssue(t, dir, "sp9 waiting", "--blocked-by", id)
+		if out, _ := sp9JSON(t, dir, "update", "--json", "--status", "blocked", waiting); out != `{"id":"`+waiting+`","ops_written":0,"committed":false,"already_blocked":true}` {
+			t.Errorf("act update --json --status blocked on an issue with a blocker printed %s", out)
+		}
+		// --claim refuses every field flag but --machine.
+		body := filepath.Join(t.TempDir(), "sp9-body.txt")
+		if err := os.WriteFile(body, []byte("sp9 body"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", body, err)
+		}
+		for _, flag := range [][]string{
+			{"--title", "x"}, {"--status", "open"}, {"--priority", "1"}, {"--type", "bug"}, {"--parent", waiting},
+			{"--assignee", "x"}, {"--description", "x"}, {"--description-file", body}, {"--description-append", "x"},
+			{"--description-append-file", body}, {"--accept", "x"}, {"--accept-add", "x"}, {"--accept-rm", "0"},
+			{"--dep-rm", waiting}, {"--ext-rm", "sp9:ref"},
+		} {
+			out, _ := pass5Run(t, dir, 2, "bad_flag", append([]string{"update", "--json", "--claim", id}, flag...)...)
+			if !strings.Contains(out, "--claim is mutually exclusive with: ") {
+				t.Errorf("act update --claim %s: want the mutually-exclusive message\n%s", flag[0], out)
+			}
+		}
+		if st := sp8Str(sp8Show(t, dir, id)["status"]); st != "open" {
+			t.Fatalf("a refused --claim left the issue %q", st)
+		}
+		// The claim itself; --machine rides along and is ignored.
+		out, won := sp9JSON(t, dir, "update", "--json", "--claim", "--machine", "sp9-box", id)
+		if out != `{"ok":true,"claimed":true,"id":"`+id+`","winner":"`+node+`","ops_written":["claim"]}` || sp9KeysOf(won) != winKeys {
+			t.Errorf("act update --json --claim --machine sp9-box printed %s; want the claim-win result with winner %s", out, node)
+		}
+		if shown := sp8Show(t, dir, id); shown["machine"] != nil || sp8Str(shown["status"]) != "in_progress" {
+			t.Errorf("after --claim --machine: status %s, machine %s; want in_progress and no machine", shown["status"], shown["machine"])
+		}
+		// The loss shape cannot be provoked from one checkout; hold the
+		// example to the source that builds it.
+		src, err := os.ReadFile(filepath.Join(sp6RepoRoot(t), "internal", "cli", "update.go"))
+		if err != nil {
+			t.Fatalf("read internal/cli/update.go: %v", err)
+		}
+		for _, lit := range []string{"Error:   ErrClaimLost,", `Reason:  "lost-race",`, "OpsWritten []string `json:\"ops_written,omitempty\"`"} {
+			if !strings.Contains(string(src), lit) {
+				t.Errorf("internal/cli/update.go no longer contains %s; the claim-loss example was written from it", lit)
+			}
+		}
+		// --no-commit: committed false, the op still counted.
+		quiet := createIssue(t, noCommit, "sp9 quiet")
+		if out, _ := sp9JSON(t, noCommit, "update", "--json", "--no-commit", "--priority", "1", quiet); out != `{"id":"`+quiet+`","ops_written":1,"committed":false}` {
+			t.Errorf("act update --json --no-commit --priority 1 printed %s", out)
+		}
+	})
+
+	t.Run("close", func(t *testing.T) {
+		const want = "commit_marker,committed,id,ops_written,reason"
+		if got := sp9ExampleKeys(t, "### `act close <id>`", "**JSON output:**"); got != want {
+			t.Errorf("the spec's close example has keys %q, want %q", got, want)
+		}
+		id := createIssue(t, dir, "sp9 to close")
+		if out, _ := sp9JSON(t, dir, "close", "--json", "--no-doctor", "--reason", "shipped", id); out != `{"id":"`+id+`","ops_written":1,"committed":true,"commit_marker":"Act-Id: `+id+`","reason":"shipped"}` {
+			t.Errorf("act close --json --reason shipped printed %s", out)
+		}
+		// closed_at and closed_reason are show's to report.
+		if shown := sp8Show(t, dir, id); sp8Str(shown["closed_reason"]) != "shipped" || sp8Str(shown["closed_at"]) == "" {
+			t.Errorf("act show after the close: closed_reason %s, closed_at %s", shown["closed_reason"], shown["closed_at"])
+		}
+		if out, _ := sp9JSON(t, dir, "close", "--json", "--reason", "again", id); out != `{"id":"`+id+`","already_closed":true}` {
+			t.Errorf("act close --json of a closed issue printed %s", out)
+		}
+		bare := createIssue(t, dir, "sp9 no reason")
+		if _, closed := sp9JSON(t, dir, "close", "--json", "--no-doctor", bare); sp9KeysOf(closed) != want || closed["reason"] != `""` {
+			t.Errorf("act close --json without --reason: %v; want the five keys and reason \"\"", closed)
+		}
+		quiet := createIssue(t, noCommit, "sp9 quiet close")
+		if _, closed := sp9JSON(t, noCommit, "close", "--json", "--no-commit", quiet); sp9KeysOf(closed) != want || closed["committed"] != "false" {
+			t.Errorf("act close --json --no-commit: %v; want the five keys and committed false", closed)
+		}
+	})
+
+	t.Run("version", func(t *testing.T) {
+		const want = "binary_version,go_version,platform,writer_version"
+		if got := sp9ExampleKeys(t, "### `act version`", "**JSON output:**"); got != want {
+			t.Errorf("the spec's version example has keys %q, want %q", got, want)
+		}
+		if strings.Contains(sp6Spec(t), `"binary_version":"0.1.0"`) {
+			t.Errorf(`docs/spec.md still shows "binary_version":"0.1.0"`)
+		}
+		// Anywhere, repo or not: four keys, indented.
+		out, ver := sp9JSON(t, t.TempDir(), "version", "--json")
+		if sp9KeysOf(ver) != want || !strings.HasPrefix(out, "{\n  \"binary_version\": \"dev\",\n  \"go_version\": ") {
+			t.Errorf("act version --json: keys %q; want %q, indented, binary_version dev in a test build\n%s", sp9KeysOf(ver), want, out)
+		}
+		if ver["writer_version"] != `"0.1.0"` || ver["go_version"] != `"`+runtime.Version()+`"` || ver["platform"] != `"`+runtime.GOOS+"/"+runtime.GOARCH+`"` {
+			t.Errorf("act version --json: %v; want writer_version 0.1.0 and this build's go_version and platform", ver)
+		}
+		// --check-repo: a fifth key, "" before the first op.
+		fresh := sp6Site(t)
+		if _, ver = sp9JSON(t, fresh, "version", "--json", "--check-repo"); sp9KeysOf(ver) != "binary_version,go_version,max_op_version,platform,writer_version" || ver["max_op_version"] != `""` {
+			t.Errorf("act version --json --check-repo in a tracker with no op: %v; want the four keys plus max_op_version \"\"", ver)
+		}
+		createIssue(t, fresh, "sp9 first op")
+		if _, ver = sp9JSON(t, fresh, "version", "--json", "--check-repo"); ver["max_op_version"] != `"0.1.0"` {
+			t.Errorf("act version --json --check-repo after one op: max_op_version %s, want \"0.1.0\"", ver["max_op_version"])
+		}
+	})
 }

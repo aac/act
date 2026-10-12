@@ -3523,6 +3523,78 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`--force` on a `.act/` with existing ops leaves the op files untouched; it rewrites `config.json` and puts back what is missing.",
 		testName:     "TestDocClaim_Spec_InitForceRewritesConfig",
 	},
+	{
+		name:         "spec-pass9-create-json-seven-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "Those seven keys are always present. `prefix` is the id cut to `act-` plus six hex characters when the id is longer",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-create-json-warnings-key",
+		docFile:      "docs/spec.md",
+		claimPattern: "An eighth key, `warnings` (an array of strings), appears only when there is a warning: `[\"parent_closed\"]` when `--parent` names a closed issue.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-show-json-flat-eleven-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "there is no `ok` key, no `issue` wrapper and no `ops_count`. An issue created with a title and nothing else prints eleven keys:",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-show-json-optional-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "`machine` appears on a pinned issue, `assignee` and `claimed_at` once the issue is claimed, `closed_at`, `closed_reason` and `closed_by_node` once it is closed, and `ops` (the op envelopes, oldest first) only with `--include-ops`.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-show-json-tombstoned",
+		docFile:      "docs/spec.md",
+		claimPattern: "A tombstoned issue prints `{\"id\":\"<id>\",\"tombstoned\":true}` and nothing else.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-update-json-plain-three-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "**JSON output (an update without `--claim`):**\n```json\n{\"id\":\"act-ecf98c\",\"ops_written\":2,\"committed\":true}\n```\nThose three keys are always present, and there is no `ok` key.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-update-json-claim-writes-no-field-op",
+		docFile:      "docs/spec.md",
+		claimPattern: "Here `ops_written` is a list of op types, not a count, and it is always `[\"claim\"]`:",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-update-claim-ignores-machine",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--machine` is the one field flag `--claim` does not refuse, and there it is ignored: the claim is made and the label is not set.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-close-json-five-keys",
+		docFile:      "docs/spec.md",
+		claimPattern: "A close that writes its op prints those five keys.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-close-json-already-closed",
+		docFile:      "docs/spec.md",
+		claimPattern: "Closing an issue that is already closed prints `{\"id\":\"<id>\",\"already_closed\":true}` and nothing else.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-version-json-four-keys-indented",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act version --json` prints those four keys, indented over several lines as shown",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
+	{
+		name:         "spec-pass9-version-json-check-repo-fifth-key",
+		docFile:      "docs/spec.md",
+		claimPattern: "With `--check-repo` a fifth key, `max_op_version`, carries the highest `writer_version` found in the op files — `\"\"` when the tracker has no op yet. There is no `ok`, `schema_version` or `repo_max_writer_version` key.",
+		testName:     "TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

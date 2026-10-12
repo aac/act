@@ -770,9 +770,10 @@ The first seven keys are always present. `nested_committed` says whether this ru
 
 **JSON output:**
 ```json
-{"ok": true, "id": "act-a1b2c3d4e5f60718", "prefix": "act-a1b2",
- "op_id": "7f3a...", "committed": true, "pushed": false}
+{"ok":true,"id":"act-ecf98c","prefix":"act-ecf98c","op_id":"e540ea52","committed":true,"pushed":false,"title":"Fix the login redirect"}
 ```
+
+Those seven keys are always present. `prefix` is the id cut to `act-` plus six hex characters when the id is longer — the marker in the op commit's subject. `committed` is false only under `--no-commit`. `pushed` is true when `--push` was given, in a tracker with no remote to push to as well. An eighth key, `warnings` (an array of strings), appears only when there is a warning: `["parent_closed"]` when `--parent` names a closed issue.
 
 **Exit codes:** 0, including a create whose push was deferred; 1 if the `create` hook refuses the create (`hook_failed`), or the op cannot be written, committed or indexed (including `write_lock_timeout` and `stale_git_lock`); 2 on a usage error — an unknown flag, a missing or empty title, a value outside a flag's range or cap, a conflicting flag pair, or an ambiguous `--parent`/`--blocked-by`/`--blocks` prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), in a repo with no `.act/` (`act_not_initialized`, or `tracker_not_checked_out` when a configured tracker remote holds this repo's tracker), when a `--parent`/`--blocked-by`/`--blocks` id matches no issue (`issue_not_found`), or when `--description-file` names a file that does not exist (`file_not_found`). `act create` never exits 4: an op from a newer writer already in the tracker does not stop the write.
 
@@ -832,17 +833,13 @@ The object has five top-level keys: `issues`, `count`, `total`, `truncated` and 
 
 **JSON output:**
 ```json
-{"ok": true, "issue": {
-  "id":"act-a1b2c3d4e5f60718","title":"...","description":"...",
-  "status":"open","priority":1,"type":"task","parent":null,
-  "deps":[{"parent":"act-9c2b...","edge_type":"blocks"}],
-  "blocked_by":["act-9c2b..."],
-  "blocks":["act-ff3a..."],
-  "assignee":"agent-1","acceptance_criteria":["..."],
-  "created_at":"...","closed_at":null,"closed_reason":null,
-  "ops_count": 4
-}, "ops": [/* present iff --include-ops */]}
+{"accept":["covers the redirect loop"],"blocked_by":["act-ecf98c"],"blocks":[],"commits":[],
+ "created_at":"2026-10-12T08:40:11.157Z","deps":[{"edge_type":"blocks","parent":"act-ecf98c"}],
+ "description":"See the report.","id":"act-705248","parent":"act-ecf98c","priority":1,
+ "refresh":{"reason":"no_remote","fetched":false},"status":"open","title":"Add a regression test","type":"task"}
 ```
+
+The issue's fields are the top-level keys: there is no `ok` key, no `issue` wrapper and no `ops_count`. An issue created with a title and nothing else prints eleven keys: `accept`, `blocked_by`, `blocks`, `commits`, `created_at`, `id`, `priority`, `refresh`, `status`, `title` and `type`, the three lists among them as `[]`. A field the issue has no value for is left out, not printed as `null`; the example adds `deps`, `description` and `parent` because that issue has them. In the same way `machine` appears on a pinned issue, `assignee` and `claimed_at` once the issue is claimed, `closed_at`, `closed_reason` and `closed_by_node` once it is closed, and `ops` (the op envelopes, oldest first) only with `--include-ops`. The acceptance criteria are under `accept`; there is no `acceptance_criteria` key. A tombstoned issue prints `{"id":"<id>","tombstoned":true}` and nothing else.
 
 **Exit codes:** 0, including a tombstoned issue; 2 on a usage error — an unknown flag, a missing `<id>`, a second positional argument, or an ambiguous prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), when the id matches no issue (`issue_not_found`), when the issue's op stream cannot be read or folded (`fold_failed` — an op with an unknown `op_version` lands here), or when `--commit-marker` is asked of a tombstoned issue. In a git repo with no `.act/` and no tracker remote, `act show` prints the no-state line and exits 0. `act show` never exits 4: an op with a newer `writer_version` is applied like any other.
 
@@ -880,16 +877,24 @@ The object has five top-level keys: `issues`, `count`, `total`, `truncated` and 
 
 Each non-`--claim` field flag generates one op (so `--priority 0 --assignee "me"` writes two ops in one commit).
 
+**JSON output (an update without `--claim`):**
+```json
+{"id":"act-ecf98c","ops_written":2,"committed":true}
+```
+Those three keys are always present, and there is no `ok` key. `ops_written` is the number of ops the update wrote, and `committed` is false under `--no-commit` and when no op was written. A fourth key, `already_blocked: true`, appears only on the `--status blocked` result described above.
+
 **JSON output (claim win):**
 ```json
-{"ok": true, "claimed": true, "id":"act-a1b2c3d4e5f60718",
- "winner":"7f3a91c2","ops_written":["claim","set-priority"]}
+{"ok":true,"claimed":true,"id":"act-ecf98c","winner":"7bbfbf96","ops_written":["claim"]}
 ```
+Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. `--machine` is the one field flag `--claim` does not refuse, and there it is ignored: the claim is made and the label is not set. `winner` is the `node_id` of the checkout that holds the claim.
+
 **JSON output (claim loss):**
 ```json
 {"ok": false, "claimed": false, "id":"act-a1b2c3d4e5f60718",
  "winner":"9c2bdead","error":"claim_lost","reason":"lost-race"}
 ```
+A lost claim has no `ops_written` key.
 Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
 
 **Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
@@ -913,9 +918,10 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 
 **JSON output:**
 ```json
-{"ok": true, "id":"act-a1b2c3d4e5f60718", "closed_at":"...",
- "closed_reason":"shipped", "committed":true, "pushed":false}
+{"id":"act-ecf98c","ops_written":1,"committed":true,"commit_marker":"Act-Id: act-ecf98c","reason":"shipped"}
 ```
+
+A close that writes its op prints those five keys. `reason` is the `--reason` text, `""` without the flag; `commit_marker` is the trailer line a host commit for this issue carries; `committed` is false under `--no-commit`. There is no `ok`, `closed_at`, `closed_reason` or `pushed` key — `act show` reports `closed_at` and `closed_reason`. Closing an issue that is already closed prints `{"id":"<id>","already_closed":true}` and nothing else.
 
 **Exit codes:** 0, including a close of an issue that is already closed (no op is written; `--json` answers `already_closed: true`) and a close whose push was deferred; 1 if the `close` hook refuses the close (`hook_failed`), or the op cannot be written, committed or indexed (including `write_lock_timeout`, `stale_git_lock`, and an index the op log cannot rebuild); 2 on a usage error — an unknown flag, a missing `<id>`, a `--reason` over the cap, a conflicting flag pair, an ambiguous prefix (`id_ambiguous`), or an open external dep without `--force` (`blocked_by_external_dep`); 3 outside a git working tree (`not_in_git`), in a repo with no `.act/` (`act_not_initialized`, or `tracker_not_checked_out` when a configured tracker remote holds this repo's tracker), or when the id matches no issue (`issue_not_found`). `act close` never exits 4: an op from a newer writer already in the tracker does not stop the close.
 
@@ -1204,9 +1210,15 @@ Layers 1 and 2 are **explicit**; only they cause `act ready`/`act next` to filte
 
 **JSON output:**
 ```json
-{"ok": true, "binary_version":"0.1.0", "writer_version":"0.1.0",
- "schema_version":1, "repo_max_writer_version":"0.1.0"}
+{
+  "binary_version": "dev",
+  "go_version": "go1.27.1",
+  "platform": "darwin/arm64",
+  "writer_version": "0.1.0"
+}
 ```
+
+`act version --json` prints those four keys, indented over several lines as shown — the other commands print one line. `binary_version` is the release version stamped into the binary and `dev` in a local build; `writer_version` is the op-format version this binary writes; `go_version` and `platform` describe the build. With `--check-repo` a fifth key, `max_op_version`, carries the highest `writer_version` found in the op files — `""` when the tracker has no op yet. There is no `ok`, `schema_version` or `repo_max_writer_version` key.
 
 **Exit codes:** 0; 2 on an unknown flag. With `--check-repo` only: 3 outside a git working tree (`not_in_git`), when the repo has no `.act/` (`no_repo`), or when `.act/` cannot be read — the check resolves the repo root from the working directory like the other read commands, so it gives the same answer from any subdirectory of the repo; 4 on skew, meaning some op file carries a `writer_version` newer than this binary's (`version_skew`). `act version --check-repo` is the only command that reports `version_skew`; without the flag `act version` reads no repo and exits 0 anywhere. `--check-repo` is a guarded command: when a configured tracker remote holds a tracker this checkout has not cloned, it exits 3 with `tracker_not_checked_out` rather than `no_repo`.
 
