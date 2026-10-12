@@ -32,7 +32,7 @@ The brief commits to a fresh-eye pass against the minimal `(id, title, body, sta
 | `assignee` | Yes | Atomic claim writes it; loss detection compares it. |
 | `acceptance_criteria` | Yes | W1 sets them; W2 close requires all checked or `--reason` override. Without this field, "done" is ambiguous. |
 | `created_at` | Yes | Derived from create-op HLC; required for compaction age threshold. |
-| `closed_at` | Yes | Derived from close-op HLC; required for `closed_by_tree` reverse index. |
+| `closed_at` | Yes | Derived from close-op HLC; records when the issue was closed. |
 | `closed_reason` | Yes | W3 sets it; doctor uses it to distinguish abandoned vs completed. |
 | `machine` | Yes | A ticket that can only be done on one machine is not ready on the others; without this the constraint lives in prose in the title and every consumer has to parse it. Empty means "runs anywhere", which is the default and what every op written before the field folds to. |
 | labels/tags | **Dropped** | W1-W3 never need free-form tagging; `type` + `parent` cover grouping. Reintroduce only if a concrete workflow demands it. |
@@ -258,8 +258,7 @@ Tables (rebuilt from ops; never source of truth):
 issues(
   id TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT, priority INT,
   type TEXT, parent TEXT, assignee TEXT, machine TEXT,
-  created_at TEXT, closed_at TEXT, closed_reason TEXT,
-  closed_by_tree TEXT
+  created_at TEXT, closed_at TEXT, closed_reason TEXT
 )
 issue_deps(issue_id TEXT, parent_id TEXT, edge_type TEXT, PRIMARY KEY(issue_id, parent_id, edge_type))
 accept(issue TEXT, idx INT, text TEXT, done INT, PRIMARY KEY(issue, idx))
@@ -816,7 +815,7 @@ Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the univ
 - `--reason TEXT` (string, default ""). Stored as `closed_reason`.
 - `--json` (bool).
 
-**Behavior:** Builds a `close` op carrying `closed_at` and `closed_reason`; runs the `close` hook, and only once the hook passes writes the op file. The `close` hook runs before the close op file is written (§Hooks contract), so a refused close leaves no op file behind. It then computes and stores the `closed_by_tree` reverse index (git tree hash of `.act/ops/<id>/`) and commits with message `act-op: <id> close`.
+**Behavior:** Builds a `close` op carrying `closed_at` and `closed_reason`; runs the `close` hook, and only once the hook passes writes the op file. The `close` hook runs before the close op file is written (§Hooks contract), so a refused close leaves no op file behind. It then commits the op file on its own in the nested `.act/` repo. The close commit subject is `act-op: (<short-id>) close`, where `<short-id>` is `act-` plus the first six hex characters of the issue id — the parenthesized marker is what `act doctor`'s `orphan-close` check greps for. The close writes one op file and nothing else: there is no `closed_by_tree` value, and the index has no `closed_by_tree` column.
 
 **JSON output:**
 ```json
@@ -1001,7 +1000,7 @@ or missing `.act/`; otherwise the underlying claim/show envelope's code.
 | `dangling-deps` | Dep edges pointing at unknown ids (post-resolution). | Read-only. |
 | `time-travel` | Adjacent ops with HLC going backward more than the 5-minute drift bound. | Read-only. |
 | `cycle` | Cycle in the `blocks` subgraph. | Read-only. |
-| `unknown-op-version` | Any op with `writer_version > self`. | Cannot fix; exits 4. |
+| `unknown-op-version` | Any op file whose `op_version` is greater than the one this binary writes (1). It reads only that field from the raw JSON; `writer_version` is not examined, so an op from a newer writer with a known `op_version` is not a finding (that skew is `act version --check-repo`'s to report). | Read-only: `--fix` changes nothing and the op file is left in place. One error-severity finding per offending op file, so the run exits 1. |
 | `index-malformed` | Try `index.Open` and `PRAGMA integrity_check` on `.act/index.db`. The malformed signal is the canonical SQLite phrasing — `database disk image is malformed` (SQLITE_CORRUPT) or `file is not a database` (SQLITE_NOTADB). | With `--fix-index`: renames the broken file to `.act/index.db.malformed-<unix-nano>`, opens a fresh SQLite at the canonical path, and runs `index.Rebuild(paths.Ops)` to repopulate from the op log. Without `--fix-index`: emits an error-severity finding whose message ends with the literal `rebuild with 'act doctor --fix-index'`. |
 | `index-divergence` | Recompute index into a tmp SQLite from ops/snapshots; row-by-row diff against `.act/index.db` (recomputed = oracle). | Replaces `.act/index.db` with the recomputed db. When `.act/index.db` is malformed, this check defers to `index-malformed` (returns no finding) to avoid stderr-noise duplication. |
 | `index-schema` | Compare index schema version to expected. | Drops and rebuilds `.act/index.db`. When `.act/index.db` is malformed, this check defers to `index-malformed` to avoid stderr-noise duplication. |
@@ -1026,7 +1025,7 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 ], "summary":{"pass":7,"fail":1}}
 ```
 
-**Exit codes:** 0 on all-pass; 1 if any check fails (and `--fix` did not remediate); 4 on unknown-op-version; 2 on bad flags.
+**Exit codes:** 0 on all-pass; 1 if any check fails (and `--fix` did not remediate) — an `unknown-op-version` finding exits 1 like any other error finding, not 4; 2 on bad flags.
 
 ---
 
@@ -1235,9 +1234,9 @@ Unknown `op_type` in the input is rejected at step 1 with `import_invalid_jsonl`
 Two version axes live in every op payload:
 - `op_version` — increments when an op-type's payload shape changes.
 - `schema_version` — increments when the issue state schema (the folded shape) changes.
-- `writer_version` — the binary that produced the op; reader gate.
+- `writer_version` — the op-format version of the binary that produced the op. Informational on read: nothing in the fold compares it.
 
-Reader gate: on read, if `op.writer_version > binary.max_known_writer_version`, the binary refuses with `version_skew`. This is a hard failure, not a warning; it forces upgrade rather than silent miscomputation.
+There is no reader gate on `writer_version`. The fold never compares it (see "Version fields on read" under the fold pseudocode): an op from a newer writer is read and applied like any other, and no read or write command refuses with `version_skew` because of it. This is deliberate — an older reader must keep answering rather than crash on a tracker a newer binary has written to. Writer-version skew is reported only on request: `act version --check-repo` walks `.act/ops/` and exits 4 with `version_skew` when any op's `writer_version` is newer than this binary's. What does stop an older reader is a different `op_version` or `schema_version`, which fails the envelope's equality check and aborts the fold.
 
 Fold dispatch: the fold loop calls
 
@@ -1258,7 +1257,7 @@ Migration ops: `act migrate` is the only command that writes a `migrate` op. Its
  "writer_version": "<binary-semver>"}
 ```
 
-One `migrate` op per affected issue (not one global). The transform is referenced by name, not embedded as code; the binary that wrote the migrate op is the authority for what that name means at that `writer_version`. Replays on newer binaries follow the registry. Older binaries hit `version_skew` and refuse — correct behavior.
+One `migrate` op per affected issue (not one global). The transform is referenced by name, not embedded as code; the binary that wrote the migrate op is the authority for what that name means at that `writer_version`. Replays on newer binaries follow the registry. A binary older than the migration does not answer `version_skew`: an op carrying a newer `op_version` fails the envelope check, so the fold aborts with an error naming the op file and `op_version` (`act list` exits 1), exactly as for any other op whose `op_version` is not the one the binary writes.
 
 `act migrate --dry-run` lists affected issues and the transform that would apply, JSON output, no writes.
 
@@ -1304,17 +1303,25 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 - **Concurrent `act create` of the same title.** IDs derive from `(payload + nonce)`, never from title. Two creates produce two distinct ids; no conflict, no error. Operators sort it out via dep edges later.
 - **Redact of an already-redacted field.** Idempotent. A second redact op is written; fold output unchanged. Exit 0 with `{"changed": false}`.
 - **Prefix collision at create time.** The new id is checked against all existing ids. If the chosen 4-hex prefix already maps to a different id, `act` extends the displayed prefix length one hex at a time until unique, and stores the longer form in the per-session prefix map. The full id is unchanged.
-- **Squash-and-push refused on `version_skew`.** When `act` would squash a contiguous `act-op:` range and any op in the range has `writer_version > binary.max_known_writer_version`, it refuses with `version_skew` and prints: `upgrade act to >= <op_writer_version> before pushing; affected commits: <list>`. No partial squash.
-- **`act doctor --check unknown-op-version`** emits a finding per offending op with the same details payload, so the operator can correlate before attempting a push.
+- **No squash, and no `version_skew` refusal on write.** No command squashes `act-op:` commits: each op write is its own commit in the nested `.act/` repo and stays that way (`gitops.SquashActOpRange` exists, but nothing calls it). A tracker holding an op from a newer writer still accepts writes — `act update` and `act close` commit as usual while `act version --check-repo` reports the skew.
+- **`act doctor --check unknown-op-version`** is about `op_version`, not `writer_version` (see the doctor check table): it emits one finding per op file with a newer `op_version`, naming the file. It does not report writer-version skew.
 
 ### 7. Test plan
 
-Test code lives under `internal/.../*_test.go` (or equivalent if the Bun spike flips the language). Goldens live under `internal/fold/testdata/golden/`. Fuzz corpora under `internal/fold/testdata/fuzz/`. CI runs all tiers on every PR.
+Test code lives under `internal/.../*_test.go` (or equivalent if the Bun spike flips the language). Goldens live under `internal/fold/testdata/golden/`. Fuzz corpora under `internal/fold/testdata/fuzz/`. CI runs `go test ./...` on every PR.
 
 #### 7.1 Property tests
 
-- **`prop_fold_permutation_invariance`** — Generator produces a set of commutative-disjoint ops (different issues OR different fields on the same issue). For every permutation of the set, fold produces identical state JSON. Asserted via byte-equality after canonical JSON serialization.
-- **`prop_hlc_monotonicity`** — For any sequence of ops emitted by a single node within one process, the HLC strictly increases. Generator produces synthetic local-clock skews including backward jumps; the property holds across them.
+There is no property-testing library in the build. The property tests are ordinary Go tests in `internal/fold` that loop over fixed seeds of `math/rand`, so every run draws the same cases and a failure prints the seed that produced it. They run under plain `go test`.
+
+- **`TestPropertyLWWPermutationInvariance`** (`lww_test.go`) — 100 seeds, 12 random ops each on a single issue. Folding the ops is compared, byte-for-byte as canonical JSON, against folding five shuffles of the same ops.
+- **`TestPropertyFoldDeterminism`** (`property_test.go`) — 50 seeds, 10 to 30 random ops each. The ops are written to disk and folded, then written in three shuffled orders and folded again; the canonical render of the whole result must be byte-identical.
+- **`TestPropertyHLCMonotonicityPerNode`** — one node emits 1000 HLCs while its wall clock jitters forward and backward; each must be strictly greater than the one before.
+- **`TestPropertyAddRemoveDepIdempotent`** — a random run of `add_dep` / `remove_dep` ops on one edge; after the fold the edge is present exactly when the op with the largest HLC is an `add_dep`.
+- **`TestPropertyClaimEarliestWinner`** — several competing `claim` ops with random HLCs and node ids; the folded assignee is the claim with the smallest HLC.
+- **`TestPropertyGeneratorCovers12OpTypes`** and **`TestPropertyGeneratorReproducible`** check the op generator itself: it emits every op type it knows, and the same seed yields the same ops.
+
+The permutation tests shuffle arbitrary generated ops, not a hand-picked commutative-disjoint set: the fold sorts by HLC and op hash before applying, and that sort is what the tests pin.
 
 #### 7.2 Golden tests
 
@@ -1330,7 +1337,9 @@ That is every op type in the `op_type` enum except `redact` (parse-only, no appl
 
 #### 7.3 Fuzz
 
-- **`fuzz_fold_determinism`** — Random op-sequence generator with shrinking. For each generated sequence, fold twice (cold and warm) and assert byte-identical canonical JSON. Shrinker minimizes failing sequence length on regression. Corpus is committed; new findings are added back to the corpus.
+- **`FuzzFoldDeterminism`** (`internal/fold/fuzz_test.go`) — a Go native fuzz target. The input bytes are decoded into at most 24 well-formed ops (inputs are cut to 256 bytes); the ops are folded, shuffled by a PRNG seeded from the input, and folded again, and the two canonical renders must be byte-identical. Both folds are cold — there is no warm-versus-cold comparison. The target has four in-code seeds and two committed corpus files under `internal/fold/testdata/fuzz/FuzzFoldDeterminism/`.
+
+Plain `go test ./...` — which is what CI runs — executes the fuzz target against those seeds only, as a regression test. Actual fuzzing is a manual step, `make fuzz` (`go test -fuzz=Fuzz -fuzztime=10s ./internal/fold/`); a failing input found that way is minimized by the Go fuzzer and written to the corpus directory, to be committed by hand.
 
 #### 7.4 Concurrency tests
 
