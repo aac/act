@@ -211,30 +211,52 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 
 ```
 <repo-root>/
-  .act/
+  .gitignore                       # host repo: `act init` adds the line `.act/`
+  .act/                            # a git repo of its own (the nested repo); the host repo ignores all of it
+    .git/                          # the nested repo's git dir; .git/info/exclude holds the patterns listed under "excluded"
+
+    # tracked: committed in the nested repo; travels with the tracker
     config.json                    # see schema below
-    fold-checkpoint.json           # { "tree_hash": "<git-tree-of-.act/ops>", "computed_at": "...", "schema_version": 1 }
-    index.db                       # SQLite, gitignored, derived
     ops/
       act-a1b2/
         2026-04/
-          2026-04-29T14:23:01.000Z-7f3a9c1d-create.json
-          2026-04-29T14:24:15.123Z-9c2bf014-claim.json
-          2026-04-29T15:02:44.901Z-3e1f88a2-update_field.json
+          2026-04-29T14-23-01.000Z-7f3a9c1d-create.json
+          2026-04-29T14-24-15.123Z-9c2bf014-claim.json
+          2026-04-29T15-02-44.901Z-3e1f88a2-update_field.json
         2026-05/
           ...
-    snapshots/
-      act-a1b2.json                # canonical folded state at last compaction
-    imports/
-      2026-04-29T14:23:01.000Z.json   # { "source": "...", "mapping": { ... } }
     hooks/
-      create                       # executable
-      close                        # executable
-      claim                        # executable
-    .lock                          # advisory lock file (POSIX flock / Windows LockFileEx)
+      close.sample                 # written and committed by `act init`; "Hooks contract" names the files that are run
+    snapshots/
+      act-a1b2.json                # canonical folded state at last compaction (see "Compaction")
+    imports/
+      2026-04-29T14-23-01.000Z.json   # { "source": "...", "mapping": { ... } }
+
+    # excluded: machine-local working files; never staged, matched by .git/info/exclude
+    .write.lock                    # flock target that serializes act writers in this checkout
+    .slow-writes                   # slow-write log (see "Slow-write observation")
+    .pending-pushes                # commits not pushed yet (see "Offline mode")
+    .sync-log                      # `act remote sync` log
+    .compact.lock                  # flock target for compaction
+    index.db                       # SQLite, derived from ops/
+    index.db-wal
+    index.db-shm
+    index.db-journal
+    index.db.malformed-*           # corrupt index kept by `act doctor --fix-index`
+    .doctor-rebuild.db*            # doctor's scratch index
+    fold-checkpoint.json           # { "tree_hash": "<git-tree-of-.act/ops>", "computed_at": "...", "schema_version": 1 }
+    fold-checkpoint.json.tmp
+    .bootstrap-meta.json           # stamp `act bootstrap-worker` leaves in a worker's copy
+    .sync-log.tmp
+    .tmp-*                         # temp file of an atomic rewrite
+    config-*.json.tmp              # temp file of the config.json rewrite
+
+    # untracked: op files act moved aside; never staged and not excluded, so `git -C .act status` shows them
+    .failed-ops/                   # ops whose stage or commit failed
+    .collisions/                   # local op files that differed from origin's copy
 ```
 
-`.act/index.db` MUST appear in `.gitignore` (writer ensures this on `act init`). Everything else under `.act/` is committed.
+The tree lists every path act writes at the top of `.act/`, in three groups. The host repo sees none of them: `act init` adds the line `.act/` to the host `.gitignore`, and the `gitignore-effective` doctor check reports a host repo that does not ignore it. Inside the nested repo, only the paths under "tracked" are committed. The paths under "excluded" are kept out of the nested repo by `.act/.git/info/exclude`, not by a `.gitignore`: `act init` writes those patterns there, and the `nested-exclude` doctor check repairs a store that lacks them. `.failed-ops/` and `.collisions/` are neither committed nor excluded. Nothing writes a `.act/.lock`.
 
 #### `.act/config.json`
 

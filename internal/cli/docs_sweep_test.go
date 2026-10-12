@@ -3016,6 +3016,25 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "and so does `act state import` in every mode, so only a store made by an older act, or one cloned by hand with `git clone`, lacks them.",
 		testName:     "TestDocClaim_StateImport_WritesNestedExclude",
 	},
+	// --- seventh spec pass (act-8a0322, act-870488): one contiguous block ---
+	{
+		name:         "spec-layout-tree-tracked-group",
+		docFile:      "docs/spec.md",
+		claimPattern: "Inside the nested repo, only the paths under \"tracked\" are committed.",
+		testName:     "TestDocClaim_Spec_LayoutTreeMatchesTopLevelPaths",
+	},
+	{
+		name:         "spec-layout-tree-excluded-by-info-exclude",
+		docFile:      "docs/spec.md",
+		claimPattern: "are kept out of the nested repo by `.act/.git/info/exclude`, not by a `.gitignore`",
+		testName:     "TestDocClaim_Spec_LayoutTreeMatchesTopLevelPaths",
+	},
+	{
+		name:         "spec-layout-tree-no-dot-lock",
+		docFile:      "docs/spec.md",
+		claimPattern: "Nothing writes a `.act/.lock`.",
+		testName:     "TestDocClaim_Spec_LayoutTreeMatchesTopLevelPaths",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives
