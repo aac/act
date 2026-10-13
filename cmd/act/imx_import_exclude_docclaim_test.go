@@ -105,6 +105,10 @@ func TestDocClaim_StateImport_WritesNestedExclude(t *testing.T) {
 		src := imxSource(t, false)
 		target := imxEmptyHost(t)
 		imxGit(t, "", "clone", "-q", filepath.Join(src, ".act", ".git"), filepath.Join(target, ".act"))
+		// A clone act never sees gets its commit identity from the
+		// user's git, not from act; give it one, as a CI runner has none.
+		imxGit(t, filepath.Join(target, ".act"), "config", "user.email", "test@example.com")
+		imxGit(t, filepath.Join(target, ".act"), "config", "user.name", "Test")
 		out, _, code := runActIn(t, target, "doctor", "--check", "nested-exclude")
 		if code != 0 || !strings.Contains(out, "[warn] [nested-exclude]") || !strings.Contains(out, "1 findings") {
 			t.Fatalf("doctor on a hand-cloned store: exit %d, want one warn nested-exclude finding; out=%s", code, out)

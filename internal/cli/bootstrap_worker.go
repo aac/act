@@ -536,6 +536,18 @@ func copyTreeWithStatsOpts(src, dst string, excludeIndex bool) (copyStats, error
 // that runs the git command (act-005965). A copy with no nested .git
 // (nothing to reconcile) is a no-op. Returns combined git output on
 // failure.
+// gitHasHeadCommit reports whether the repo at dir has a HEAD that
+// resolves to a commit (false for an unborn branch).
+func gitHasHeadCommit(dir string) bool {
+	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "-q", "HEAD^{commit}").Run() == nil
+}
+
+// remoteHasBranch reports whether url advertises refs/heads/<branch>.
+func remoteHasBranch(ctx context.Context, url, branch string) bool {
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", "--heads", url, "refs/heads/"+branch).Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
 func excludeHooksFromCopiedRepo(stagingAct string) (string, error) {
 	if _, err := os.Stat(filepath.Join(stagingAct, ".git")); err != nil {
 		if os.IsNotExist(err) {
@@ -954,6 +966,17 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 
 	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", opts.FromRemoteURL, stagingAct)
 	cloneOut, cloneErr := cloneCmd.CombinedOutput()
+	// act-db83b7: a bare made by a plain `git init --bare` on a machine
+	// whose git still defaults to master has a HEAD naming refs/heads/master,
+	// while act's tracker branch is main (RunInit creates it with -b main).
+	// `git clone` follows the dangling HEAD and reports an empty repository,
+	// so the import would land an empty tracker. When the clone has no HEAD
+	// commit but the remote has a main, clone that branch by name instead.
+	if cloneErr == nil && !gitHasHeadCommit(stagingAct) && remoteHasBranch(ctx, opts.FromRemoteURL, "main") {
+		_ = os.RemoveAll(stagingAct)
+		cloneCmd = exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", "main", opts.FromRemoteURL, stagingAct)
+		cloneOut, cloneErr = cloneCmd.CombinedOutput()
+	}
 	if cloneErr != nil {
 		// Tear down any partial staging dir before deciding which
 		// error code to surface — both branches benefit from a clean
@@ -1021,6 +1044,18 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		}, 3
 	}
 	if err := ensureImportedNestedExclude(stagingAct); err != nil {
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": %v", err),
+		}, 3
+	}
+	// act-db83b7: a fresh clone has no local identity, unlike the nested
+	// repo act init makes, so pin the same one or the first write fails
+	// "Author identity unknown" on a host with no global identity. The
+	// email is the target host's, as act init uses.
+	hostEmail, _ := exec.Command("git", "-C", absTarget, "config", "user.email").Output()
+	if err := pinNestedCommitIdentity(stagingAct, strings.TrimSpace(string(hostEmail))); err != nil {
+		_ = os.RemoveAll(stagingAct)
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf(cmd+": %v", err),

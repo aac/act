@@ -490,6 +490,27 @@ func writeCloseHookSample(hooksDir string) error {
 	return os.WriteFile(path, []byte(closeHookSample), 0o644)
 }
 
+// pinNestedCommitIdentity sets user.email (gitEmail, or a placeholder when
+// empty) and a deterministic user.name in the nested repo's local config,
+// so op commits never depend on a global identity and the audit trail
+// attributes them to act. It also disables signing for act's commits; the
+// operator can re-enable it. act init and state import --from-remote
+// (act-db83b7) both use it.
+func pinNestedCommitIdentity(actDir, gitEmail string) error {
+	commitEmail := gitEmail
+	if commitEmail == "" {
+		commitEmail = "act@example.invalid"
+	}
+	if err := runActGitIn(actDir, "config", "user.email", commitEmail); err != nil {
+		return fmt.Errorf("git config user.email: %w", err)
+	}
+	if err := runActGitIn(actDir, "config", "user.name", "act init"); err != nil {
+		return fmt.Errorf("git config user.name: %w", err)
+	}
+	_ = runActGitIn(actDir, "config", "commit.gpgsign", "false")
+	return nil
+}
+
 // bootstrapNestedRepo runs `git init` inside actDir and, if the repo has no
 // commits yet, creates an initial commit pinning the current contents
 // (config.json, hooks/, ops/.gitkeep, etc.) as the act state's history root.
@@ -520,21 +541,10 @@ func bootstrapNestedRepo(actDir, machineID, gitEmail string) (bool, error) {
 	// Pin commit identity locally so the initial commit doesn't fail on
 	// hosts with no global user.{name,email} set (CI containers, fresh
 	// installs). We use the same email act already collected for node_id
-	// derivation, and a deterministic name so the audit trail attributes
-	// the bootstrap to act init.
-	commitEmail := gitEmail
-	if commitEmail == "" {
-		commitEmail = "act@example.invalid"
+	// derivation.
+	if err := pinNestedCommitIdentity(actDir, gitEmail); err != nil {
+		return false, err
 	}
-	if err := runActGitIn(actDir, "config", "user.email", commitEmail); err != nil {
-		return false, fmt.Errorf("git config user.email: %w", err)
-	}
-	if err := runActGitIn(actDir, "config", "user.name", "act init"); err != nil {
-		return false, fmt.Errorf("git config user.name: %w", err)
-	}
-	// Disable commit signing for the bootstrap commit; the operator can
-	// enable it on subsequent op commits if their global config wants it.
-	_ = runActGitIn(actDir, "config", "commit.gpgsign", "false")
 
 	// Skip the initial commit if the repo already has one (re-init case).
 	if hasHEAD(actDir) {
