@@ -592,3 +592,23 @@ func TestBootstrapFromRemote_RemoteHeadNamesAMissingBranch(t *testing.T) {
 		t.Errorf("imported tracker's branch = %q (err %v), want main", strings.TrimSpace(string(branch)), err)
 	}
 }
+
+// TestBootstrapFromRemote_PinsNestedCommitIdentity: act init pins
+// user.name/user.email in the nested repo so op commits work on a host
+// with no global git identity (CI runners, fresh installs). A tracker
+// cloned by --from-remote is a fresh repo with no local identity, so it
+// must get the same pin or its first write fails "Author identity unknown".
+func TestBootstrapFromRemote_PinsNestedCommitIdentity(t *testing.T) {
+	remoteURL, _, _ := makeFromRemoteSource(t)
+	targetRoot := makeBootstrapTarget(t)
+	if out, code := RunBootstrapWorker(BootstrapWorkerOptions{FromRemoteURL: remoteURL, Target: targetRoot}); code != 0 {
+		t.Fatalf("from-remote exit=%d, out=%+v", code, out)
+	}
+	targetAct := filepath.Join(targetRoot, ".act")
+	for _, key := range []string{"user.name", "user.email"} {
+		out, err := exec.Command("git", "-C", targetAct, "config", "--local", key).Output()
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			t.Errorf("imported tracker has no local %s (err %v)", key, err)
+		}
+	}
+}
