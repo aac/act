@@ -565,3 +565,30 @@ func TestBootstrapFromRemote_StrippedHooksLeaveCleanTree(t *testing.T) {
 		t.Errorf("worker tree dirty after rebase:\n%s", s)
 	}
 }
+
+// TestBootstrapFromRemote_RemoteHeadNamesAMissingBranch covers a shared
+// bare made by a plain `git init --bare` on a machine whose git still
+// defaults to master: its HEAD names refs/heads/master, while act's
+// tracker branch is main (act init creates it with -b main). `git clone`
+// follows the dangling HEAD and reports an empty repository, and the
+// import used to succeed with an empty tracker on an unborn master.
+func TestBootstrapFromRemote_RemoteHeadNamesAMissingBranch(t *testing.T) {
+	remoteURL, _, issueID := makeFromRemoteSource(t)
+	runGit(t, "", "--git-dir", remoteURL, "symbolic-ref", "HEAD", "refs/heads/master")
+	targetRoot := makeBootstrapTarget(t)
+
+	if out, code := RunBootstrapWorker(BootstrapWorkerOptions{FromRemoteURL: remoteURL, Target: targetRoot}); code != 0 {
+		t.Fatalf("from-remote exit=%d, out=%+v", code, out)
+	}
+	targetAct := filepath.Join(targetRoot, ".act")
+	if _, err := os.Stat(filepath.Join(targetAct, "config.json")); err != nil {
+		t.Errorf("imported tracker has no config.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetAct, "ops", issueID)); err != nil {
+		t.Errorf("imported tracker is missing the seeded issue's ops: %v", err)
+	}
+	branch, err := exec.Command("git", "-C", targetAct, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(branch)) != "main" {
+		t.Errorf("imported tracker's branch = %q (err %v), want main", strings.TrimSpace(string(branch)), err)
+	}
+}
