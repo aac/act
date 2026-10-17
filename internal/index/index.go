@@ -139,8 +139,26 @@ func IsMalformed(err error) bool {
 // page tree is corrupt passes Open; callers that care must invoke
 // IntegrityCheck on the returned handle.
 func Open(dbPath string) (*Index, error) {
-	// modernc.org/sqlite accepts query parameters via the DSN:
-	dsn := dbPath + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+	// modernc.org/sqlite accepts query parameters via the DSN. Pragmas run
+	// in order on every new connection.
+	//
+	// busy_timeout comes first (act-cdc0db). index.db is shared by every act
+	// process in a checkout, and act holds no lock of its own around it:
+	// reads, EnsureCurrent rebuilds and the post-write RefreshIndexForIssue
+	// all open it independently. Without a timeout SQLite fails SQLITE_BUSY
+	// the instant another process holds a lock — including inside the
+	// journal_mode(WAL) pragma below, which is how `act create` failed
+	// "index: ping ...: database is locked" under TestWriteLockStress on
+	// CI. Locks here last milliseconds (an upsert) up to a full rebuild, so
+	// 10s rides out real contention while a stuck holder still surfaces.
+	//
+	// _txlock=immediate: every transaction this package opens writes. A
+	// deferred BEGIN takes a read snapshot first and upgrades on the first
+	// write; under WAL, if another process commits while it waits, the
+	// upgrade fails SQLITE_BUSY_SNAPSHOT even after waiting, and
+	// busy_timeout does not retry that. BEGIN IMMEDIATE takes the write lock
+	// up front, so the wait is covered by busy_timeout.
+	dsn := dbPath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("index: open %s: %w", dbPath, err)
