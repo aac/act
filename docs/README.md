@@ -24,3 +24,4 @@ history and (for live work) in the `act` tracker under `.act/`.
 |-----|-------|------------|
 | [coordination-plane-design.md](coordination-plane-design.md) | authoritative | The coordination-plane design (nested `.act/` git repo, marker placement, multi-writer model). Cited by code and by the doc-claim sweep. |
 | [claim-identity-design.md](claim-identity-design.md) | authoritative | Who a claimant is (one checkout, identity in `.act/.git/config`), when a re-claim must consult `origin`, and why an unconfirmed claim is not a win (exit 6 `claim_unconfirmed`). Ends with the implementation plan. |
+| [host-affinity-design.md](host-affinity-design.md) | authoritative | Machine affinity: how a ticket names the machine it can run on (the `machine` field), and why the filter fails open. Section 6 records what design review changed. |

@@ -262,12 +262,8 @@ The tree lists every path act writes at the top of `.act/`, in three groups. The
 
 ```jsonc
 {
-  "schema_version": 1,
-  "writer_version": "0.1.0",                    // version that ran `act init`
-  "fold_checkpoint": ".act/fold-checkpoint.json",
-  "auto_commit":    true,
-  "auto_push":      false,
-  "hlc_drift_budget_seconds": 300
+  "created_at": "2026-04-29T14:23:01.000Z",     // RFC3339 UTC time `act init` ran (reset by `--force`)
+  "version":    "0.1.0"                         // version that ran `act init`
 }
 ```
 
