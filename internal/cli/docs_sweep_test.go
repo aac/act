@@ -3989,8 +3989,14 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "mcp-description-next-names-its-extra-keys",
 		docFile:      "internal/mcp/server.go",
-		claimPattern: "A `claimed: true` result may also carry `warnings`, and `push_deferred` with `push_deferred_reason` when the claim commit did not reach origin: the claim stands either way, so do not claim again.",
+		claimPattern: "A `claimed: true` result may also carry `warnings`.",
 		testName:     "TestDocClaim_FnwMCP_NextCarriesTheClaimsWarnings",
+	},
+	{
+		name:         "mcp-description-next-names-claim-unconfirmed",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "When origin has not seen the claim (unreachable, or it refused the push) the result is an error, `claim_unconfirmed`, carrying `push_deferred` and `push_deferred_reason`: the issue is not yours yet",
+		testName:     "TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred",
 	},
 	{
 		name:         "mcp-description-finish-names-its-extra-keys",
@@ -4007,7 +4013,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "mcp-descriptions-name-extra-keys-at-the-wire",
 		docFile:      "internal/mcp/server.go",
-		claimPattern: "so do not claim again.",
+		claimPattern: "the issue is not yours yet, so do not work it",
 		testName:     "TestDocClaim_EdgMCP_ComposedToolDescriptionsNameTheirExtraKeys",
 	},
 	// act-4a538e: credentials embedded in a remote URL never reach act's

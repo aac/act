@@ -35,7 +35,7 @@ func TestDocClaim_EdgMCP_ComposedToolDescriptionsNameTheirExtraKeys(t *testing.T
 	}
 
 	for tool, wants := range map[string][]string{
-		"act_next":   {"`warnings`", "`push_deferred`", "`push_deferred_reason`", "do not claim again"},
+		"act_next":   {"`warnings`", "`claim_unconfirmed`", "`push_deferred`", "`push_deferred_reason`", "not yours yet"},
 		"act_finish": {"`warnings`", "`push_deferred`", "`push_deferred_reason`", "do not retry"},
 		"act_block":  {"`warnings`", "`push_no_remote`"},
 	} {
@@ -51,13 +51,14 @@ func TestDocClaim_EdgMCP_ComposedToolDescriptionsNameTheirExtraKeys(t *testing.T
 		}
 	}
 
-	// The one key the act_next sentence names that no tools/call test
-	// provoked: a claim whose push does not reach origin.
+	// The keys the act_next sentence names that no other tools/call test
+	// here provokes: a claim origin has not seen is an error result,
+	// claim_unconfirmed, with the deferral keys (act-c30acd).
 	repo := makeRealRepo(t)
-	id := seedIssue(t, repo, "edg mcp next, unreachable origin")
+	seedIssue(t, repo, "edg mcp next, unreachable origin")
 	fnwAddMissingOrigin(t, repo)
-	out, text := fnwCall(t, repo, "act_next", map[string]any{})
-	if !out.Claimed || !strings.Contains(text, id) || !out.PushDeferred || out.PushDeferredReason == "" {
-		t.Errorf("act_next with an unreachable origin = %s; want claimed:true for %s, push_deferred:true and a push_deferred_reason", text, id)
+	res, text := callTool(t, repo, "act_next", map[string]any{})
+	if isErr, _ := res["isError"].(bool); !isErr || !strings.Contains(text, `"claim_unconfirmed"`) || !strings.Contains(text, `"push_deferred":true`) || !strings.Contains(text, `"push_deferred_reason"`) {
+		t.Errorf("act_next with an unreachable origin = isError %v, %s; want an error result, claim_unconfirmed, push_deferred:true and a push_deferred_reason", res["isError"], text)
 	}
 }
