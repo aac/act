@@ -51,7 +51,7 @@ func TestBootstrapWorker_CopyOmitsNodeIDLock(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			srcRoot, _ := makeBootstrapSource(t)
 			nlkLock := filepath.Join(config.Layout(srcRoot).Root, ".git", config.NodeIDLockFile)
-			if err := os.WriteFile(nlkLock, nil, 0o644); err != nil {
+			if err := os.WriteFile(nlkLock, []byte("source-lock"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			targetRoot := makeBootstrapTarget(t)
@@ -63,8 +63,11 @@ func TestBootstrapWorker_CopyOmitsNodeIDLock(t *testing.T) {
 				t.Fatalf("bootstrap (%s) code=%d out=%+v", mode, code, out)
 			}
 			got := filepath.Join(config.Layout(targetRoot).Root, ".git", config.NodeIDLockFile)
-			if _, err := os.Stat(got); !os.IsNotExist(err) {
-				t.Fatalf("target has %s (stat err=%v); want it excluded from the copy", got, err)
+			// The target may legitimately create its own (empty) lock when it
+			// mints its node_id after the copy; what it must not hold is the
+			// source's file.
+			if b, err := os.ReadFile(got); err == nil && string(b) == "source-lock" {
+				t.Fatalf("target carries the source's %s; want it excluded from the copy", got)
 			}
 		})
 	}
