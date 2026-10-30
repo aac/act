@@ -87,8 +87,10 @@ type InitOptions struct {
 	// the configured tracker remote exists (act-ef5a69). Without it init
 	// refuses with tracker_not_checked_out and names the clone recovery.
 	ForceNew bool
-	// MachineID and GitEmail feed node_id derivation and the nested
-	// repo's commit identity. Empty is allowed (MCP passes empty).
+	// MachineID is unused (node_id is minted per checkout, not derived
+	// from the machine); it is kept so existing callers compile. GitEmail
+	// sets the nested repo's commit identity (user.email). Empty is
+	// allowed (MCP passes empty).
 	MachineID string
 	GitEmail  string
 	// Contributing opts in to appending the Act-Id trailer stanza to the
@@ -267,8 +269,6 @@ func RunInit(repoRoot string, opts InitOptions) (any, int) {
 		}, 1
 	}
 
-	nodeID := config.ComputeNodeID(machineID, gitEmail)
-
 	// ---------- Step 1: nested .act/ git repo bootstrap ----------
 	//
 	// Before any host-side change, lay down the nested act state and its
@@ -283,7 +283,6 @@ func RunInit(repoRoot string, opts InitOptions) (any, int) {
 	}
 
 	cfg := config.Config{
-		NodeID:    nodeID,
 		CreatedAt: now().UTC().Format(rfc3339Millis),
 		Version:   writerVersion,
 		LastHLC:   config.HLCState{},
@@ -329,6 +328,18 @@ func RunInit(repoRoot string, opts InitOptions) (any, int) {
 		return errorOutput{
 			Error:   "nested_init_failed",
 			Message: nerr.Error(),
+		}, 1
+	}
+
+	// The claim identity is per checkout and lives in the nested repo's own
+	// git config (act.nodeId), so it never travels with a clone; config.json
+	// no longer carries it (docs/claim-identity-design.md §2). On --force
+	// re-init of the same checkout the stored id is kept.
+	nodeID, nidErr := config.ResolveNodeID(paths)
+	if nidErr != nil {
+		return errorOutput{
+			Error:   "node_id_failed",
+			Message: nidErr.Error(),
 		}, 1
 	}
 
@@ -540,8 +551,7 @@ func bootstrapNestedRepo(actDir, machineID, gitEmail string) (bool, error) {
 
 	// Pin commit identity locally so the initial commit doesn't fail on
 	// hosts with no global user.{name,email} set (CI containers, fresh
-	// installs). We use the same email act already collected for node_id
-	// derivation.
+	// installs).
 	if err := pinNestedCommitIdentity(actDir, gitEmail); err != nil {
 		return false, err
 	}

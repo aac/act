@@ -45,7 +45,6 @@ func setup(t *testing.T) string {
 		t.Fatalf("init dirs: %v", err)
 	}
 	cfg := config.Config{
-		NodeID:    "deadbeef",
 		CreatedAt: "2026-04-29T00:00:00Z",
 		Version:   "0.1.0",
 	}

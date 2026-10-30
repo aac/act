@@ -41,37 +41,6 @@ func TestLayoutPaths(t *testing.T) {
 	}
 }
 
-func TestComputeNodeID(t *testing.T) {
-	a1 := ComputeNodeID("machine-abc", "alice@example.com")
-	a2 := ComputeNodeID("machine-abc", "alice@example.com")
-	if a1 != a2 {
-		t.Errorf("ComputeNodeID not deterministic: %s vs %s", a1, a2)
-	}
-	if len(a1) != 8 {
-		t.Errorf("ComputeNodeID length = %d, want 8", len(a1))
-	}
-	for _, c := range a1 {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			t.Errorf("ComputeNodeID = %q contains non-hex char %q", a1, c)
-		}
-	}
-
-	b := ComputeNodeID("machine-xyz", "alice@example.com")
-	if b == a1 {
-		t.Errorf("ComputeNodeID should differ on different machine-id")
-	}
-	c := ComputeNodeID("machine-abc", "bob@example.com")
-	if c == a1 {
-		t.Errorf("ComputeNodeID should differ on different email")
-	}
-
-	// Spec's ordering: machine-id || email. Verify concat order matters.
-	d := ComputeNodeID("alice@example.com", "machine-abc")
-	if d == a1 {
-		t.Errorf("ComputeNodeID should depend on argument order")
-	}
-}
-
 func TestInitDirsCreatesAll(t *testing.T) {
 	repo := t.TempDir()
 	paths := Layout(repo)
@@ -116,7 +85,6 @@ func TestWriteReadConfigRoundTrip(t *testing.T) {
 		t.Fatalf("InitDirs: %v", err)
 	}
 	want := Config{
-		NodeID:    "7f3a91c2",
 		CreatedAt: "2026-04-29T14:23:01.000Z",
 		Version:   "0.1.0",
 		LastHLC:   HLCState{Wall: 1714400000000, Logical: 7},
@@ -140,7 +108,6 @@ func TestWriteConfigDeterministicAndSortedKeys(t *testing.T) {
 		t.Fatalf("InitDirs: %v", err)
 	}
 	c := Config{
-		NodeID:    "abcdef01",
 		CreatedAt: "2026-04-29T00:00:00.000Z",
 		Version:   "0.1.0",
 		LastHLC:   HLCState{Wall: 42, Logical: 0},
@@ -164,10 +131,14 @@ func TestWriteConfigDeterministicAndSortedKeys(t *testing.T) {
 	}
 
 	// Top-level keys must appear in lexicographic order:
-	// created_at < last_hlc < node_id < version.
+	// created_at < last_hlc < version. node_id is not a config.json key
+	// (it is per checkout, in .act/.git/config).
 	s := string(first)
 	idx := func(key string) int { return strings.Index(s, `"`+key+`"`) }
-	keys := []string{"created_at", "last_hlc", "node_id", "version"}
+	keys := []string{"created_at", "last_hlc", "version"}
+	if strings.Contains(s, `"node_id"`) {
+		t.Errorf("config.json must not carry node_id: %s", s)
+	}
 	prev := -1
 	for _, k := range keys {
 		i := idx(k)
@@ -195,7 +166,6 @@ func TestWriteConfigNoTrailingNewline(t *testing.T) {
 		t.Fatalf("InitDirs: %v", err)
 	}
 	c := Config{
-		NodeID:    "00000000",
 		CreatedAt: "2026-04-29T00:00:00.000Z",
 		Version:   "0.1.0",
 	}
@@ -223,8 +193,8 @@ func TestWriteConfigOverwritesAtomically(t *testing.T) {
 	if err := InitDirs(paths); err != nil {
 		t.Fatalf("InitDirs: %v", err)
 	}
-	c1 := Config{NodeID: "11111111", CreatedAt: "t1", Version: "0.1.0"}
-	c2 := Config{NodeID: "22222222", CreatedAt: "t2", Version: "0.1.0"}
+	c1 := Config{CreatedAt: "t1", Version: "0.1.0"}
+	c2 := Config{CreatedAt: "t2", Version: "0.1.0"}
 	if err := WriteConfig(paths, c1); err != nil {
 		t.Fatalf("write c1: %v", err)
 	}
@@ -235,8 +205,8 @@ func TestWriteConfigOverwritesAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadConfig: %v", err)
 	}
-	if got.NodeID != "22222222" {
-		t.Errorf("expected overwrite to NodeID=22222222, got %s", got.NodeID)
+	if got.CreatedAt != "t2" {
+		t.Errorf("expected overwrite to CreatedAt=t2, got %s", got.CreatedAt)
 	}
 	// No leftover .tmp files in .act/.
 	entries, err := os.ReadDir(paths.Root)
@@ -247,5 +217,26 @@ func TestWriteConfigOverwritesAtomically(t *testing.T) {
 		if strings.HasSuffix(e.Name(), ".tmp") {
 			t.Errorf("leftover temp file: %s", e.Name())
 		}
+	}
+}
+
+// TestReadConfig_LegacyNodeIDKeyIgnored: a config.json written before
+// node_id moved to .act/.git/config still carries a node_id key; it is
+// ignored on read rather than failing the parse.
+func TestReadConfig_LegacyNodeIDKeyIgnored(t *testing.T) {
+	paths := Layout(t.TempDir())
+	if err := InitDirs(paths); err != nil {
+		t.Fatalf("InitDirs: %v", err)
+	}
+	legacy := `{"created_at":"t0","last_hlc":{"logical":0,"wall":0},"node_id":"f188029a","version":"0.1.0"}`
+	if err := os.WriteFile(paths.ConfigJSON, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadConfig(paths)
+	if err != nil {
+		t.Fatalf("ReadConfig on legacy config.json: %v", err)
+	}
+	if got.CreatedAt != "t0" || got.Version != "0.1.0" {
+		t.Fatalf("legacy config read wrong: %#v", got)
 	}
 }

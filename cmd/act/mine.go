@@ -46,15 +46,22 @@ func runMine(args []string) int {
 	identity := *as
 	if identity == "" {
 		paths := config.Layout(root)
-		cfg, cerr := config.ReadConfig(paths)
-		if cerr != nil {
+		if _, cerr := config.ReadConfig(paths); cerr != nil {
 			emitEnvelope(*asJSON, map[string]any{
 				"error":   "no_repo",
 				"message": fmt.Sprintf("act mine: cannot read .act/config.json: %v; run 'act init' first or pass --as <id>", cerr),
 			})
 			return 3
 		}
-		identity = cfg.NodeID
+		nodeID, nerr := config.ResolveNodeID(paths)
+		if nerr != nil {
+			emitEnvelope(*asJSON, map[string]any{
+				"error":   "node_id_failed",
+				"message": fmt.Sprintf("act mine: cannot resolve this checkout's node_id: %v; pass --as <id>", nerr),
+			})
+			return 3
+		}
+		identity = nodeID
 	}
 
 	// Delegate to RunList with the canonical mine filters.

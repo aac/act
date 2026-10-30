@@ -289,20 +289,27 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 	ordered := append([]string{full}, rest...)
 
 	// Step 6b: build envelopes.
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return DeleteErrorOutput{
 			Error:   "config_read_failed",
 			Message: cerr.Error(),
 		}, 1
 	}
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return DeleteErrorOutput{
+			Error:   "node_id_failed",
+			Message: nerr.Error(),
+		}, 1
+	}
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 
 	envs := make([]op.Envelope, 0, len(ordered))
 	bodies := make([][]byte, 0, len(ordered))
 	for _, id := range ordered {
 		stamp := clock.Send()
-		stamp.NodeID = cfg.NodeID
+		stamp.NodeID = nodeID
 
 		payload := op.TombstonePayload{
 			DeletedAt: formatRFC3339Millis(stamp.Wall),
@@ -329,7 +336,7 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 			IssueID:       id,
 			Payload:       bodyPayload,
 			HLC:           stamp,
-			NodeID:        cfg.NodeID,
+			NodeID:        nodeID,
 		}
 		if verr := env.Validate(); verr != nil {
 			return DeleteErrorOutput{

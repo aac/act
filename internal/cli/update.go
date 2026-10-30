@@ -509,11 +509,18 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 
 	// Step 6: read config (for node id) and rebuild the index so --dep-rm
 	// can verify existing edges.
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return UpdateErrorOutput{
 			Error:   "config_read_failed",
 			Message: cerr.Error(),
+		}, 1
+	}
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return UpdateErrorOutput{
+			Error:   "node_id_failed",
+			Message: nerr.Error(),
 		}, 1
 	}
 
@@ -739,7 +746,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	// Step 7: assemble per-flag op envelopes. Each non-empty mutating flag
 	// produces one op (per spec §3 `act update`: "Each non-`--claim`
 	// field flag generates one op").
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 
 	var envelopes []op.Envelope
 	var bodies [][]byte
@@ -760,7 +767,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			}, 1
 		}
 		stamp := clock.Send()
-		stamp.NodeID = cfg.NodeID
+		stamp.NodeID = nodeID
 		env := op.Envelope{
 			OpVersion:     op.CurrentOpVersion,
 			SchemaVersion: op.CurrentSchemaVersion,
@@ -769,7 +776,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			IssueID:       full,
 			Payload:       bodyPayload,
 			HLC:           stamp,
-			NodeID:        cfg.NodeID,
+			NodeID:        nodeID,
 		}
 		if verr := env.Validate(); verr != nil {
 			return UpdateErrorOutput{
@@ -1146,14 +1153,21 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		}
 	}
 
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return UpdateErrorOutput{
 			Error:   "config_read_failed",
 			Message: cerr.Error(),
 		}, 1
 	}
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return UpdateErrorOutput{
+			Error:   "node_id_failed",
+			Message: nerr.Error(),
+		}, 1
+	}
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 
 	// Default WaitTimeout if --wait is set but no timeout supplied.
 	wait := opts.WaitTimeout
@@ -1177,7 +1191,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	wrapped := &claimGitOps{inner: gops, branch: opts.Branch}
 
 	res, err := claim.RunClaim(repoRoot, full, claim.Options{
-		Assignee:    cfg.NodeID, // assignee defaults to the local node id
+		Assignee:    nodeID, // assignee defaults to the local node id
 		Wait:        opts.Wait,
 		WaitTimeout: wait,
 		Isolated:    opts.Isolated,

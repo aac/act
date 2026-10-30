@@ -193,7 +193,6 @@ func TestRunClaim_HLCDriftFailFast(t *testing.T) {
 	now := int64(1_700_000_000_000)
 	farFutureRef := now + hlc.PlausibilityBudgetMs + 60_000
 	cfg := config.Config{
-		NodeID:    "abcdef01",
 		CreatedAt: "2026-04-29T00:00:00Z",
 		Version:   "0.1.0",
 		LastHLC:   config.HLCState{Wall: farFutureRef, Logical: 0},

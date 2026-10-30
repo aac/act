@@ -148,13 +148,17 @@ func Run(repoRoot string, opts Options, gitops gitOpsCommitter) (Result, error) 
 		return Result{}, err
 	}
 
-	// Step 2: read the local config so we can stamp the local node_id and
-	// initialize a fresh HLC clock.
-	cfg, err := config.ReadConfig(paths)
-	if err != nil {
+	// Step 2: confirm the tracker is initialized, then resolve this
+	// checkout's node_id (per checkout, in .act/.git/config) to stamp ops
+	// and seed a fresh HLC clock.
+	if _, err := config.ReadConfig(paths); err != nil {
 		return Result{}, fmt.Errorf("importer: read config: %w", err)
 	}
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return Result{}, fmt.Errorf("importer: resolve node_id: %w", nerr)
+	}
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 
 	// Step 3: enumerate currently known ids on disk so PickUnique avoids
 	// collisions with the existing repo state.
@@ -246,7 +250,7 @@ func Run(repoRoot string, opts Options, gitops gitOpsCommitter) (Result, error) 
 			IssueID:       localID,
 			Payload:       payloadBytes,
 			HLC:           stamp,
-			NodeID:        cfg.NodeID,
+			NodeID:        nodeID,
 		}
 		if verr := env.Validate(); verr != nil {
 			rollback()

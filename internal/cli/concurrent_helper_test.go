@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/aac/act/internal/config"
 )
 
 // actBinaryPath is set by TestMain to the absolute path of the freshly-built
@@ -249,20 +251,15 @@ func workingTreeClean(t *testing.T, dir string) bool {
 	return strings.TrimSpace(out) == ""
 }
 
-// readNodeID reads .act/config.json from dir and returns the node_id.
+// readNodeID returns the node_id of the checkout rooted at dir, resolved the
+// way every writer resolves it (per checkout, in .act/.git/config).
 func readNodeID(t *testing.T, dir string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, ".act", "config.json"))
+	id, err := config.ResolveNodeID(config.Layout(dir))
 	if err != nil {
 		t.Fatalf("readNodeID: %v", err)
 	}
-	var cfg struct {
-		NodeID string `json:"node_id"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("readNodeID unmarshal: %v", err)
-	}
-	return cfg.NodeID
+	return id
 }
 
 // listOpFiles returns the relative paths of every op file under

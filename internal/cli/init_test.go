@@ -109,8 +109,12 @@ func TestRunInit_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadConfig: %v", err)
 	}
-	if cfg.NodeID != succ.NodeID {
-		t.Errorf("config node_id = %q, want %q", cfg.NodeID, succ.NodeID)
+	stored, gerr := config.GetGitConfig(config.ActGitConfigPath(paths.Root), config.NodeIDKey)
+	if gerr != nil {
+		t.Fatalf("read act.nodeId: %v", gerr)
+	}
+	if stored != succ.NodeID {
+		t.Errorf("act.nodeId in .act/.git/config = %q, want init's node_id %q", stored, succ.NodeID)
 	}
 	if cfg.Version != "0.1.0" {
 		t.Errorf("version = %q, want 0.1.0", cfg.Version)
@@ -209,12 +213,13 @@ func TestRunInit_RejectsReinitWithoutForce(t *testing.T) {
 func TestRunInit_ForceReinitOverwrites(t *testing.T) {
 	root := makeRepo(t)
 	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: fakeNow(t1)}); code != 0 {
+	first, code := RunInit(root, InitOptions{Force: false, MachineID: "m", GitEmail: "e", Now: fakeNow(t1)})
+	if code != 0 {
 		t.Fatalf("first init code = %d", code)
 	}
 
 	t2 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	_, code := RunInit(root, InitOptions{Force: true, MachineID: "m2", GitEmail: "e2", Now: fakeNow(t2)})
+	second, code := RunInit(root, InitOptions{Force: true, MachineID: "m2", GitEmail: "e2", Now: fakeNow(t2)})
 	if code != 0 {
 		t.Fatalf("force re-init code = %d, want 0", code)
 	}
@@ -226,8 +231,10 @@ func TestRunInit_ForceReinitOverwrites(t *testing.T) {
 	if cfg.CreatedAt != "2026-06-01T00:00:00.000Z" {
 		t.Errorf("created_at = %q, want overwritten value", cfg.CreatedAt)
 	}
-	if cfg.NodeID != config.ComputeNodeID("m2", "e2") {
-		t.Errorf("node_id was not overwritten: %q", cfg.NodeID)
+	// node_id is per checkout (.act/.git/config), not derived from the
+	// machine: --force re-init of the same checkout keeps it.
+	if a, b := first.(successOutput).NodeID, second.(successOutput).NodeID; a == "" || a != b {
+		t.Errorf("node_id across --force re-init of one checkout: %q then %q, want equal and non-empty", a, b)
 	}
 }
 

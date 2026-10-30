@@ -207,14 +207,14 @@ func mustCreate(t *testing.T, root, title string) string {
 func writeRawOp(t *testing.T, root, issueID, opType string, payload map[string]string, logical uint32) {
 	t.Helper()
 	paths := config.Layout(root)
-	cfg, err := config.ReadConfig(paths)
+	nodeID, err := config.ResolveNodeID(paths)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("resolve node_id: %v", err)
 	}
 	stamp := hlc.HLC{
 		Wall:    time.Now().UnixMilli(),
 		Logical: logical,
-		NodeID:  cfg.NodeID,
+		NodeID:  nodeID,
 	}
 	pjson, err := canonicaljson.Marshal(payload)
 	if err != nil {
@@ -228,7 +228,7 @@ func writeRawOp(t *testing.T, root, issueID, opType string, payload map[string]s
 		IssueID:       issueID,
 		Payload:       pjson,
 		HLC:           stamp,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	body, err := env.Marshal()
 	if err != nil {

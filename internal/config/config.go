@@ -2,8 +2,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,10 +22,13 @@ type HLCState struct {
 
 // Config is the on-disk shape of .act/config.json.
 //
+// It carries no node_id: the claim identity is per checkout and lives in
+// .act/.git/config (see ResolveNodeID). A node_id key left in an older
+// config.json is ignored on read and never rewritten.
+//
 // Field order in this struct does not matter for serialization: writes use
 // canonicaljson which sorts keys lexicographically.
 type Config struct {
-	NodeID    string   `json:"node_id"`
 	CreatedAt string   `json:"created_at"`
 	Version   string   `json:"version"`
 	LastHLC   HLCState `json:"last_hlc"`
@@ -64,21 +65,6 @@ func Layout(repoRoot string) LayoutPaths {
 		ConfigJSON:     filepath.Clean(filepath.Join(root, "config.json")),
 		CompactLock:    filepath.Clean(filepath.Join(root, ".lock")),
 	}
-}
-
-// ComputeNodeID derives the per-installation node identifier as the first 8
-// hex characters of sha256(machineID || gitEmail).
-//
-// The two inputs are concatenated as raw bytes with no separator; this matches
-// the spec's `sha256(machine-id || git user.email)[0:8]` definition. Callers
-// are responsible for normalizing inputs (trimming trailing newlines from
-// machine-id, lowercasing email if desired) before invocation.
-func ComputeNodeID(machineID, gitEmail string) string {
-	h := sha256.New()
-	h.Write([]byte(machineID))
-	h.Write([]byte(gitEmail))
-	sum := h.Sum(nil)
-	return hex.EncodeToString(sum[:4]) // 4 bytes -> 8 hex chars
 }
 
 // InitDirs creates all directories listed in paths. It is idempotent: if a

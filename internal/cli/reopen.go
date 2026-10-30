@@ -215,11 +215,18 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 	}
 
 	// Step 4: build and write the reopen envelope.
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return ReopenErrorOutput{
 			Error:   "config_read_failed",
 			Message: cerr.Error(),
+		}, 1
+	}
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return ReopenErrorOutput{
+			Error:   "node_id_failed",
+			Message: nerr.Error(),
 		}, 1
 	}
 	payload := op.ReopenPayload{Reason: opts.Reason}
@@ -237,9 +244,9 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 	stamp := clock.Send()
-	stamp.NodeID = cfg.NodeID
+	stamp.NodeID = nodeID
 
 	env := op.Envelope{
 		OpVersion:     op.CurrentOpVersion,
@@ -249,7 +256,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 		IssueID:       full,
 		Payload:       bodyPayload,
 		HLC:           stamp,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	if verr := env.Validate(); verr != nil {
 		return ReopenErrorOutput{

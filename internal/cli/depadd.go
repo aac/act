@@ -307,11 +307,18 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 	}
 
 	// Step 6: build the add_dep envelope and write/auto-commit.
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return DepAddErrorOutput{
 			Error:   "config_read_failed",
 			Message: cerr.Error(),
+		}, 1
+	}
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return DepAddErrorOutput{
+			Error:   "node_id_failed",
+			Message: nerr.Error(),
 		}, 1
 	}
 
@@ -333,9 +340,9 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 	stamp := clock.Send()
-	stamp.NodeID = cfg.NodeID
+	stamp.NodeID = nodeID
 
 	env := op.Envelope{
 		OpVersion:     op.CurrentOpVersion,
@@ -345,7 +352,7 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 		IssueID:       childFull,
 		Payload:       bodyPayload,
 		HLC:           stamp,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	if verr := env.Validate(); verr != nil {
 		return DepAddErrorOutput{
@@ -592,11 +599,15 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 	if code != 0 {
 		return errOut, code
 	}
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return DepAddErrorOutput{Error: "config_read_failed", Message: cerr.Error()}, 1
 	}
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return DepAddErrorOutput{Error: "node_id_failed", Message: nerr.Error()}, 1
+	}
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 	var gops *gitops.ActGitOps
 	if !opts.NoCommit {
 		gops = gitops.NewActGitOps(paths.Root)
@@ -608,7 +619,7 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 			return DepAddErrorOutput{Error: "marshal_failed", Message: perr.Error()}, 1
 		}
 		stamp := clock.Send()
-		stamp.NodeID = cfg.NodeID
+		stamp.NodeID = nodeID
 		env := op.Envelope{
 			OpVersion:     op.CurrentOpVersion,
 			SchemaVersion: op.CurrentSchemaVersion,
@@ -617,7 +628,7 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 			IssueID:       full,
 			Payload:       bodyPayload,
 			HLC:           stamp,
-			NodeID:        cfg.NodeID,
+			NodeID:        nodeID,
 		}
 		if verr := env.Validate(); verr != nil {
 			return DepAddErrorOutput{Error: "envelope_invalid", Message: verr.Error()}, 1

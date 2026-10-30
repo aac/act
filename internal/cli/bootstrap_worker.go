@@ -396,6 +396,14 @@ func RunBootstrapWorker(opts BootstrapWorkerOptions) (any, int) {
 		}, 3
 	}
 
+	if err := resolveTargetNodeID(targetAct); err != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": resolve node_id for %s: %v", targetAct, err),
+		}, 3
+	}
+
 	// Round-trip validation: run a ready-equivalent against the new
 	// target to make sure the copy produced a usable state directory.
 	// We call RunReady directly (rather than shelling out) for hermetic
@@ -626,23 +634,28 @@ func dirNonEmpty(path string) (bool, error) {
 	return len(names) > 0, nil
 }
 
-// readSourceNodeID pulls node_id from the source `.act/config.json`. Falls
-// back to a zero-hex node_id only if the read fails — the dispatch HLC is
-// diagnostic-only so a missing node_id is recoverable, but in practice
-// every initialized source has a config.
-func readSourceNodeID(srcAct string) string {
-	body, err := os.ReadFile(filepath.Join(srcAct, "config.json"))
-	if err != nil {
+// readSourceNodeID returns the node_id of the checkout whose state root is
+// actRoot, resolved the same way every writer resolves it
+// (config.ResolveNodeID: per checkout, kept in <actRoot>/.git/config).
+// Falls back to a zero-hex node_id only if resolution fails — the dispatch
+// HLC is diagnostic-only, so a missing node_id is recoverable.
+func readSourceNodeID(actRoot string) string {
+	id, err := config.ResolveNodeID(config.LayoutPaths{Root: actRoot})
+	if err != nil || id == "" {
 		return "00000000"
 	}
-	var cfg config.Config
-	if err := json.Unmarshal(body, &cfg); err != nil {
-		return "00000000"
-	}
-	if cfg.NodeID == "" {
-		return "00000000"
-	}
-	return cfg.NodeID
+	return id
+}
+
+// resolveTargetNodeID gives a freshly bootstrapped checkout its own node_id.
+// A copy carries the source's .act/.git/config (and with it the source's
+// act.nodeId); the path fingerprint makes ResolveNodeID re-mint for the new
+// state root, so the worker and the checkout it was copied from are never
+// the same claimant. Called after the staging→target rename so the stored
+// act.nodeIdPath is the target's final path.
+func resolveTargetNodeID(targetAct string) error {
+	_, err := config.ResolveNodeID(config.LayoutPaths{Root: targetAct})
+	return err
 }
 
 // runBootstrapFromCWD handles the worker-cwd mode (act-40fce0):
@@ -848,6 +861,14 @@ func runBootstrapFromCWD(opts BootstrapWorkerOptions) (any, int) {
 		return map[string]any{
 			"error":   ErrWriteFailed,
 			"message": fmt.Sprintf(cmd+": --from-cwd rename %s → %s: %v", stagingAct, targetAct, err),
+		}, 3
+	}
+
+	if err := resolveTargetNodeID(targetAct); err != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": --from-cwd resolve node_id for %s: %v", targetAct, err),
 		}, 3
 	}
 
@@ -1088,6 +1109,14 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 		}, 3
 	}
 
+	if err := resolveTargetNodeID(targetAct); err != nil {
+		_ = os.RemoveAll(targetAct)
+		return map[string]any{
+			"error":   ErrWriteFailed,
+			"message": fmt.Sprintf(cmd+": resolve node_id for %s: %v", targetAct, err),
+		}, 3
+	}
+
 	// Stamp act.role=worker into the new clone's nested .git/config.
 	// This is the load-bearing post-bootstrap action — without it the
 	// upstream-sync trigger doesn't know it's running on a worker.
@@ -1113,7 +1142,9 @@ func runBootstrapFromRemote(opts BootstrapWorkerOptions) (any, int) {
 	stats := countActFiles(targetAct)
 
 	// Derive a dispatch_hlc from the cloned tree's node_id for envelope
-	// parity with the cwd-source path.
+	// parity with the cwd-source path. resolveTargetNodeID above minted the
+	// clone's own node_id (a clone gets a fresh .git/config, so it never
+	// inherits the remote's); this reads it back.
 	now := opts.Now()
 	dispatchHLC := hlc.HLC{
 		Wall:    now.UTC().UnixMilli(),

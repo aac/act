@@ -70,15 +70,22 @@ func runReady(args []string) int {
 		assigneeFilter = *as
 		if assigneeFilter == "" {
 			paths := config.Layout(root)
-			cfg, cerr := config.ReadConfig(paths)
-			if cerr != nil {
+			if _, cerr := config.ReadConfig(paths); cerr != nil {
 				emitReadyError(*asJSON, map[string]any{
 					"error":   "no_repo",
 					"message": fmt.Sprintf("act ready: --mine cannot read .act/config.json: %v; run 'act init' first or pass --as <id>", cerr),
 				})
 				return 3
 			}
-			assigneeFilter = cfg.NodeID
+			nodeID, nerr := config.ResolveNodeID(paths)
+			if nerr != nil {
+				emitReadyError(*asJSON, map[string]any{
+					"error":   "node_id_failed",
+					"message": fmt.Sprintf("act ready: --mine cannot resolve this checkout's node_id: %v; pass --as <id>", nerr),
+				})
+				return 3
+			}
+			assigneeFilter = nodeID
 		}
 	}
 

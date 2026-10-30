@@ -215,14 +215,14 @@ func TestIDWidth_DoctorMarkerScanMatchesBothForms(t *testing.T) {
 func seedHistoricalCreateOp(t *testing.T, root, issueID string) {
 	t.Helper()
 	paths := config.Layout(root)
-	cfg, err := config.ReadConfig(paths)
+	nodeID, err := config.ResolveNodeID(paths)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("resolve node_id: %v", err)
 	}
 	stamp := hlc.HLC{
 		Wall:    time.Now().UnixMilli(),
 		Logical: 0,
-		NodeID:  cfg.NodeID,
+		NodeID:  nodeID,
 	}
 	payload := map[string]any{
 		"title":       "historical",
@@ -245,7 +245,7 @@ func seedHistoricalCreateOp(t *testing.T, root, issueID string) {
 		IssueID:       issueID,
 		Payload:       pjson,
 		HLC:           stamp,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	writeRawEnvelopeAndCommit(t, root, env, "create", stamp)
 }
@@ -257,14 +257,14 @@ func seedHistoricalCreateOp(t *testing.T, root, issueID string) {
 func seedHistoricalCloseOp(t *testing.T, root, issueID string) {
 	t.Helper()
 	paths := config.Layout(root)
-	cfg, err := config.ReadConfig(paths)
+	nodeID, err := config.ResolveNodeID(paths)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("resolve node_id: %v", err)
 	}
 	stamp := hlc.HLC{
 		Wall:    time.Now().UnixMilli() + 1, // strictly after create
 		Logical: 0,
-		NodeID:  cfg.NodeID,
+		NodeID:  nodeID,
 	}
 	payload := map[string]any{
 		"reason": "test-historical-close",
@@ -281,7 +281,7 @@ func seedHistoricalCloseOp(t *testing.T, root, issueID string) {
 		IssueID:       issueID,
 		Payload:       pjson,
 		HLC:           stamp,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	writeRawEnvelopeAndCommit(t, root, env, "close", stamp)
 }

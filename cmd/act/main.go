@@ -264,7 +264,6 @@ func runInit(args []string) int {
 	out, code := cli.RunInit(root, cli.InitOptions{
 		Force:        *force,
 		ForceNew:     *forceNew,
-		MachineID:    getMachineID(),
 		GitEmail:     getGitEmail(),
 		Contributing: *contributing,
 		CommitHost:   *commitHost,
@@ -584,26 +583,10 @@ func versionRepoRoot(checkRepo bool) (string, error) {
 	return findRepoRoot()
 }
 
-// getMachineID returns a stable per-host identifier. Order:
-// 1. /etc/machine-id (Linux/systemd).
-// 2. os.Hostname() if reachable.
-// 3. A constant fallback so node_id derivation never fails.
-func getMachineID() string {
-	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
-		s := strings.TrimSpace(string(data))
-		if s != "" {
-			return s
-		}
-	}
-	if h, err := os.Hostname(); err == nil && h != "" {
-		return h
-	}
-	return "act-unknown-machine"
-}
-
 // getGitEmail shells out to `git config user.email`. Empty string is returned
-// when git is missing, the config is unset, or anything else goes wrong; the
-// node_id derivation tolerates an empty email.
+// when git is missing, the config is unset, or anything else goes wrong; act
+// init then pins a placeholder commit email in the nested repo. (It no longer
+// feeds node_id, which is minted per checkout.)
 func getGitEmail() string {
 	cmd := exec.Command("git", "config", "user.email")
 	out, err := cmd.Output()

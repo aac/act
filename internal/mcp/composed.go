@@ -386,12 +386,16 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		return errEnvelope("bad_args", "act_block: id and blocked_by must differ"), true
 	}
 
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return errEnvelope("config_read_failed", cerr.Error()), true
 	}
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return errEnvelope("node_id_failed", nerr.Error()), true
+	}
 
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 
 	// Only op: add_dep type=blocks (full → parentFull). Blocked status is
 	// DERIVED from the dep edge, so no update_field status=blocked op is
@@ -405,7 +409,7 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		return errEnvelope("marshal_failed", perr.Error()), true
 	}
 	stamp1 := clock.Send()
-	stamp1.NodeID = cfg.NodeID
+	stamp1.NodeID = nodeID
 	envDep := op.Envelope{
 		OpVersion:     op.CurrentOpVersion,
 		SchemaVersion: op.CurrentSchemaVersion,
@@ -414,7 +418,7 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 		IssueID:       full,
 		Payload:       depBody,
 		HLC:           stamp1,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	if verr := envDep.Validate(); verr != nil {
 		return errEnvelope("envelope_invalid", verr.Error()), true

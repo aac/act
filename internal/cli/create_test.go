@@ -48,7 +48,6 @@ func makeCreateRepo(t *testing.T) string {
 		t.Fatalf("InitDirs: %v", err)
 	}
 	cfg := config.Config{
-		NodeID:    "0123abcd",
 		CreatedAt: "2026-04-29T00:00:00.000Z",
 		Version:   "0.1.0",
 	}

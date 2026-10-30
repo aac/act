@@ -320,11 +320,18 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 
 	// Step 5: build the create-op payload + derive the issue id by
 	// retrying nonces up to 8 times (spec §"Edge cases").
-	cfg, cerr := config.ReadConfig(paths)
+	_, cerr := config.ReadConfig(paths) // initialized-tracker check; node_id is per checkout
 	if cerr != nil {
 		return CreateErrorOutput{
 			Error:   "config_read_failed",
 			Message: cerr.Error(),
+		}, 1
+	}
+	nodeID, nerr := config.ResolveNodeID(paths)
+	if nerr != nil {
+		return CreateErrorOutput{
+			Error:   "node_id_failed",
+			Message: nerr.Error(),
 		}, 1
 	}
 
@@ -390,9 +397,9 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		}, 1
 	}
 
-	clock := hlc.NewClock(cfg.NodeID, func() int64 { return time.Now().UnixMilli() })
+	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 	stamp := clock.Send()
-	stamp.NodeID = cfg.NodeID
+	stamp.NodeID = nodeID
 
 	env := op.Envelope{
 		OpVersion:     op.CurrentOpVersion,
@@ -402,7 +409,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 		IssueID:       issueID,
 		Payload:       bodyPayload,
 		HLC:           stamp,
-		NodeID:        cfg.NodeID,
+		NodeID:        nodeID,
 	}
 	if verr := env.Validate(); verr != nil {
 		return CreateErrorOutput{
@@ -499,7 +506,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			return op.Envelope{}, nil, &CreateErrorOutput{Error: "marshal_failed", Message: perr.Error()}, 1
 		}
 		depStamp := clock.Send()
-		depStamp.NodeID = cfg.NodeID
+		depStamp.NodeID = nodeID
 		depEnv := op.Envelope{
 			OpVersion:     op.CurrentOpVersion,
 			SchemaVersion: op.CurrentSchemaVersion,
@@ -508,7 +515,7 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			IssueID:       envIssueID,
 			Payload:       depBody,
 			HLC:           depStamp,
-			NodeID:        cfg.NodeID,
+			NodeID:        nodeID,
 		}
 		if verr := depEnv.Validate(); verr != nil {
 			return op.Envelope{}, nil, &CreateErrorOutput{Error: "envelope_invalid", Message: verr.Error()}, 1
