@@ -149,6 +149,25 @@ func runNext(args []string) int {
 			lost[pick.ID] = true
 			continue
 		}
+		if claimCode == 6 {
+			// act-c30acd: claim_unconfirmed — origin has not seen the
+			// claim. Stop (every other pick would be unconfirmed the same
+			// way) and print the claim result as `act update --claim`
+			// does, deferral keys included.
+			if cl, ok := claimOut.(cli.UpdateClaimResult); ok {
+				if *asJSON {
+					data, jerr := json.Marshal(cl)
+					if jerr != nil {
+						fmt.Fprintf(os.Stderr, "act next: json marshal: %v\n", jerr)
+						return 1
+					}
+					fmt.Println(string(data))
+				} else {
+					fmt.Print(cli.FormatUpdateClaimHuman(cl))
+				}
+				return claimCode
+			}
+		}
 		if claimCode != 0 {
 			// Any other failure (e.g. the id vanished, bad state) is a real
 			// error — surface its envelope verbatim.

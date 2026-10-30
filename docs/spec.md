@@ -505,6 +505,17 @@ is *not* used for tiebreaking — it is already mixed into `op_hash`.
 `act update <id> --claim` and the bare `act claim <id>` execute exactly:
 
 ```
+0. If the active claim window's winner is already this checkout:
+     if --isolated, or origin/<branch> contains HEAD (or no origin):
+       emit the win with "already_held": true; exit 0   (no op, no pull)
+     else (this checkout has commits origin has not seen):
+       git fetch origin <branch> && git rebase origin/<branch>
+       re-run step 5 on the ops now on disk, writing no op:
+         still ours  → publish the stranded commit; already_held win
+         another's   → loss, exit 5
+       a rebase that fails once origin was fetched → exit 1 claim_failed
+       origin not reached → exit 6 claim_unconfirmed
+
 1. Generate claim op locally:
      op = { op_type: "claim", issue_id, payload: {assignee: $user},
             hlc: send(now, last_hlc), node_id, schema_version, writer_version }
@@ -527,12 +538,16 @@ is *not* used for tiebreaking — it is already mixed into `op_hash`.
    If winner.op_hash == our_op_hash:
      unless --isolated or --offline: git push
        (see "Auto-publish on write"; --push is not needed)
-     emit {"claimed": true, "issue": <id>, "op_hash": <hash>}
+     if the fetch in step 3 or this push did not reach origin
+     (and not --isolated / --offline):
+       emit {"claimed": false, "error": "claim_unconfirmed", ...}
+       exit 6
+     emit {"claimed": true, "id": <id>, "winner": <assignee>}
      exit 0
    else:
      emit {"claimed": false, "winner": <assignee>,
-           "your_op_hash": <hash>, "winning_op_hash": <hash>}
-     exit 1
+           "error": "claim_lost", "reason": "lost-race"}
+     exit 5
 ```
 
 Note the winner is the *earliest* claim, not the latest: claim is a race to
@@ -540,12 +555,15 @@ file first, and the HLC tuple determines order globally.
 
 **The rebase names `origin` and the tracker's branch (act-2bd35b).** Step 3 is `git fetch origin <branch>` followed by `git rebase origin/<branch>`. It runs whenever the tracker has an `origin` remote and does not depend on the branch having an upstream configured, so a tracker that has only ever auto-published — whose pushes pass no `-u` — still rebases before deciding who won: a claim of an issue another checkout has already claimed and pushed is lost there too (exit 5, `claim_lost`). With no `origin` remote, or when `origin` does not have the branch yet, the step is a no-op.
 
-**A claim that cannot reach `origin` is unconfirmed, not failed (act-2bd35b).** The claim op is committed in step 2, before the fetch, so a fetch that does not reach `origin` — an unreachable or refusing remote, a fetch that times out — cannot undo it and does not fail the command. The winner is decided among the ops already in the checkout. If the claim is the earliest of those, the command exits 0 with `claimed: true` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once: the issue is claimed in this checkout and no other checkout can see that yet. Such a claim is unconfirmed — `origin` may hold an earlier claim this checkout has not seen, and when the two histories meet the earlier one wins and the later one reads as lost. If another checkout's earlier claim is already in this checkout, the claim is lost exactly as when the fetch succeeds (exit 5, `claim_lost`, `claimed: false`); the deferral never turns a lost race into a win. A fetch that succeeds followed by a rebase that fails is different and stays exit 1 `claim_failed`: `origin`'s ops were received but are not in the tree, so act cannot tell who holds the issue and reports no win. The rebase is aborted and the claim op stays committed locally.
+**A claim `origin` has not seen is unconfirmed, and an unconfirmed claim is not a win (act-2bd35b, act-c30acd).** The claim op is committed in step 2, before the fetch, so a fetch that does not reach `origin` — an unreachable or refusing remote, a fetch that times out — cannot undo it and does not fail the command. The winner is decided among the ops already in the checkout. If the claim is the earliest of those, the command exits 6 with `"error": "claim_unconfirmed"`, `"claimed": false`, `"reason": "origin_unreachable"` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once. The same holds when the fetch reaches `origin` but the claim's push does not (a rejecting receive, a push that times out): exit 6, `"reason": "push_failed"`. Nothing is retracted — the op stays committed and queued — but the issue is not this checkout's yet: `origin` may hold an earlier claim this checkout has not seen, and when the two histories meet the earlier one wins. Do not dispatch on exit 6. Re-run the same claim later, which writes no second op and answers 0 (held, `already_held: true`), 5 (lost) or 6 again, or take other work. `--isolated` and `--offline` ask for no confirmation and are exempt: their local win is exit 0 `claimed: true`, and `--offline` queues the commit. If another checkout's earlier claim is already in this checkout, the claim is lost exactly as when the fetch succeeds (exit 5, `claim_lost`, `claimed: false`); the deferral never turns a lost race into a win. A fetch that succeeds followed by a rebase that fails is different and stays exit 1 `claim_failed`: `origin`'s ops were received but are not in the tree, so act cannot tell who holds the issue and reports no win. The rebase is aborted and the claim op stays committed locally.
+
+**A re-claim of a hold `origin` has not seen consults `origin` first (act-c30acd).** Re-claiming an issue this checkout already holds writes no op. When `origin/<branch>` contains the checkout's `HEAD` — the hold was published — the answer comes from local state with no fetch: exit 0, `already_held: true`. When the checkout has commits `origin` has not seen, the hold may be one a failed rebase or a failed push left stranded, so the re-claim runs step 3 first and decides on the ops then on disk: still this checkout's, it publishes the stranded commit and answers exit 0 `already_held: true` (exit 6 if that publish does not reach `origin`); another checkout's earlier claim, it answers exit 5 `claim_lost` naming that winner; a rebase that fails once `origin` was fetched is exit 1 `claim_failed`, so a claim whose rebase conflicted keeps failing until the conflict is resolved and never reads as held; `origin` not reached is exit 6 `claim_unconfirmed`. `--isolated` skips the check and answers from local state.
 
 **`claim_failed` keeps git's output out of `message` (act-2bd35b).** `message` names the failing step and its error — `claim: commit: …` or `claim: pull --rebase: …` — and git's own output is in `details.stderr_tail`. Without `--json` the message is printed on stderr and git's output after it.
 
 `--wait` retries the full sequence on loss with backoff `1s, 2s, 4s, 8s, ...`
-capped at `--wait-timeout` (default 30s, max 600s). Each retry re-issues a
+capped at `--wait-timeout` (default 30s, max 600s). It does not retry an
+unconfirmed claim or hold: one that `origin` has not seen returns exit 6 at once. Each retry re-issues a
 fresh claim op with a fresh HLC; prior losing ops remain in history but are
 ignored once a different writer's claim has won and is unrebutted by a close.
 
@@ -640,7 +658,7 @@ Precedence rules:
 
 Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `origin` configured, every successful auto-commit on a write subcommand (`create`, `update`, `close`, `dep add`, `reopen`, `delete`) is followed by a synchronous `git push` via the retry helper documented in §"push retry". `--push` becomes redundant in that case; setting it is harmless. No-origin repos skip the publish step silently — the op log stays local-only without ceremony.
 
-**A won claim is published too (act-2cfc30).** The claim is the write other checkouts most need to see, since it is what tells them the issue is taken. In a tracker with `origin`, the claim commit of a won `act update --claim`, `act next` or MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing; `--offline` queues the claim commit in `.act/.pending-pushes` instead of pushing; a claim push that does not reach `origin` is a deferral like any other, reported on `act update --claim --json` as `push_deferred`. Re-claiming an issue the checkout already holds writes no op and pushes nothing.
+**A won claim is published too (act-2cfc30).** The claim is the write other checkouts most need to see, since it is what tells them the issue is taken. In a tracker with `origin`, the claim commit of a won `act update --claim`, `act next` or MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing; `--offline` queues the claim commit in `.act/.pending-pushes` instead of pushing; a claim push that does not reach `origin` is queued like any other deferral, but the claim is then unconfirmed and is answered exit 6 `claim_unconfirmed` with `push_deferred` (see "Atomic claim protocol"). Re-claiming an issue the checkout already holds writes no op; it pushes nothing when the hold is already on `origin`, and publishes the stranded claim commit when it is not.
 
 **Publish failure is a deferral, not an error (act-89a595).** Once the auto-commit lands, the op is durable, so the publish leg can no longer fail the command. When the push does not reach origin — retry exhaustion, an unreachable remote, a rejecting receive — the command **exits 0**, appends the commit to `.act/.pending-pushes`, and writes an unmissable `act: WARNING:` block to stderr saying the op was committed but not pushed. `act close --json` and `act update --json` additionally set `push_deferred: true` (and `push_deferred_reason`) on their results, so JSON consumers can tell "peers can't see it yet" from "it didn't land". `act create --json`, `act reopen --json`, `act dep add --json` (both the edge form and `--external`) and `act delete --json` set the same two keys when their push is deferred, and omit both otherwise; `act create` reports `"pushed": false` beside them. The deferred commit publishes on the next write without `--offline` or `--isolated`; a bare push on the nested repo covers every local commit reachable from HEAD, so nothing is lost by waiting. `act remote sync` does not retry it: that command pushes to `origin-upstream` and never to `origin`. The `push_exhausted` envelope (exit 4) that this path used to emit is **retired** — it reported failure on a write that had already landed, and callers applying the ordinary `rc != 0 ⇒ the write didn't happen` rule retried and duplicated the op.
 
@@ -714,6 +732,8 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 - `2` — usage error: bad flag combination, unknown flag, missing required argument, ambiguous id prefix.
 - `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
 - `4` — not one meaning. Three commands exit 4, each for its own condition: `act version --check-repo` when some op file carries a `writer_version` newer than this binary's (`version_skew`); `act doctor` when `origin` is configured but unreachable (the `remote-reachable` finding); and `act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`). No other command exits 4 — reads and writes apply an op from a newer writer like any other op.
+- `5` — `claim_lost` (a claim another checkout won) and `act migrate`'s `migration_not_found`.
+- `6` — `claim_unconfirmed`: a claim whose op is committed and queued but that `origin` has not seen (act-c30acd). Not a win; see "Atomic claim protocol".
 
 A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has those three keys and no others; the codes, and the failures of `act migrate` and `act version --check-repo` that leave `details` out, are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
 
@@ -907,7 +927,7 @@ Those three keys are always present, and there is no `ok` key. `ops_written` is 
 ```json
 {"ok":true,"claimed":true,"id":"act-ecf98c","winner":"7bbfbf96","ops_written":["claim"]}
 ```
-Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--machine`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another. `winner` is the `node_id` of the checkout that holds the claim. A won claim carries `warnings` on the same terms: `--claim --push` in a tracker with no `origin` remote exits 0 with the issue claimed and `"warnings":["push_no_remote"]`, and without `--json` the warning is a line on stderr.
+Here `ops_written` is a list of op types, not a count, and it is always `["claim"]`: `--claim` together with `--title`, `--status`, `--priority`, `--type`, `--parent`, `--assignee`, `--machine`, `--description`, `--description-append`, `--accept`, `--accept-add`, `--accept-rm`, `--dep-rm` or `--ext-rm` is exit 2 (`bad_flag`), so a claim writes no field op. No field flag is let through: the refused call names the flag, claims nothing and changes nothing, so pin an issue with one `act update` and claim it with another. `winner` is the `node_id` of the checkout that holds the claim. A re-claim of an issue this checkout already held writes no op and adds `"already_held": true` (act-c30acd); whether the earlier claim was this session's or a sibling session's in the same checkout is the caller's to know. Without `--json` it reads `Claimed <id> (winner=<id>, already held by this checkout)`. A won claim carries `warnings` on the same terms: `--claim --push` in a tracker with no `origin` remote exits 0 with the issue claimed and `"warnings":["push_no_remote"]`, and without `--json` the warning is a line on stderr.
 
 **JSON output (claim loss):**
 ```json
@@ -915,9 +935,17 @@ Here `ops_written` is a list of op types, not a count, and it is always `["claim
  "winner":"9c2bdead","error":"claim_lost","reason":"lost-race"}
 ```
 A lost claim has no `ops_written` key.
-Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
 
-**A push that does not reach `origin`.** When the tracker has an `origin` that cannot be reached or that rejects the push, the update is still written and committed and `act update` exits 0, with or without `--push`: the result carries `"push_deferred": true` and `push_deferred_reason` (the push error's text), the commit is queued in `.act/.pending-pushes`, and the `act: WARNING:` block goes to stderr. A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `"claimed": true`, `"push_deferred": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`. A won `--claim` without `--push` is deferred and reported identically. Both keys are absent when nothing was deferred. `act update` never answers `push_failed`.
+**JSON output (claim unconfirmed, act-c30acd):**
+```json
+{"ok":false,"claimed":false,"id":"act-ecf98c","error":"claim_unconfirmed",
+ "reason":"origin_unreachable","push_deferred":true,
+ "push_deferred_reason":"claim: pull --rebase: origin not reached, ..."}
+```
+`reason` is `origin_unreachable` when the claim's fetch did not reach `origin` and `push_failed` when the fetch did and the claim's push did not. There is no `winner` key: no winner is known until `origin` has seen the claim. The claim op is committed and queued in `.act/.pending-pushes`, and the `act: WARNING:` block's last line says to re-run the claim once `origin` is reachable — a re-claim writes no second op. Without `--json` the line reads `Claim of <id> unconfirmed (<reason>): …`.
+Exit codes for `--claim`: `0` win, `5` loss (envelope `claim_lost`, per the universal exit-code table in §error-envelope), `6` unconfirmed (`claim_unconfirmed`: `origin` has not seen the claim; not under `--isolated` or `--offline`), `1` other logical error, `2` usage. Other update modes follow universal exit codes.
+
+**A push that does not reach `origin`.** When the tracker has an `origin` that cannot be reached or that rejects the push, the update is still written and committed and `act update` exits 0, with or without `--push`: the result carries `"push_deferred": true` and `push_deferred_reason` (the push error's text), the commit is queued in `.act/.pending-pushes`, and the `act: WARNING:` block goes to stderr. A claim is the exception: a won `--claim`, with or without `--push`, whose push does not reach `origin` is not a win — exit 6, `"claimed": false`, `"error": "claim_unconfirmed"`, `"reason": "push_failed"`, `"push_deferred": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`. Both keys are absent when nothing was deferred. `act update` never answers `push_failed` as an error code.
 
 **Edge cases:** `--claim` with no remote configured warns on stderr and proceeds local-only; HLC drift >5min from repo reference refuses the op (exit 1); `--dep-rm` of a non-existent edge → exit 1 (logical, not usage); `--wait` without `--claim` → exit 2.
 
@@ -1057,7 +1085,7 @@ release command, so a caller who reaches for the wrong one sees it on line one.
 ```json
 {"claimed": true, "issue": {...}, "commit_marker": "Act-Id: act-XXXX"}
 ```
-The claiming form also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when `act update --claim` set them, under those same keys. Without `--json` an `index_update_failed` warning is a line on stderr that starts `act next: warning:`.
+The claiming form also carries the claim's `warnings` when `act update --claim` set them, under that same key. A claim `origin` has not seen is not a claim (act-c30acd): `act next` exits 6 and prints the `claim_unconfirmed` result of `act update --claim`, with its `push_deferred` and `push_deferred_reason`, and claims nothing else — with `origin` down every pick would be unconfirmed. Without `--json` an `index_update_failed` warning is a line on stderr that starts `act next: warning:`.
 **JSON output** — `--peek`:
 ```json
 {"claimed": false, "peek": true, "would_claim": {...}}
@@ -1068,7 +1096,8 @@ a claim. An empty or fully-contended frontier returns `{"claimed": false,
 "candidates": [...]}` in both forms, exit 0.
 
 **Exit codes:** 0 (including "nothing claimable"); 2 bad flags; 3 not in a git repo
-or missing `.act/`; otherwise the underlying claim/show envelope's code.
+or missing `.act/`; 6 when the claim is unconfirmed (`claim_unconfirmed`); otherwise
+the underlying claim/show envelope's code.
 
 ---
 
@@ -1266,7 +1295,7 @@ Input:
   "under":{"type":"string"}
 }}
 ```
-Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming. A `claimed: true` result also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when the claim set them.
+Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming. A `claimed: true` result also carries the claim's `warnings` when the claim set them. A claim `origin` has not seen (`act update --claim` exit 6) ends the loop: the tool returns the `claim_unconfirmed` result, with its `push_deferred` and `push_deferred_reason`, as an error result (`isError: true`) and tries no other candidate (act-c30acd).
 
 Output:
 ```json
@@ -1306,7 +1335,7 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 
 The table lists every code the CLI emits — every code that some non-test source line under `cmd/` or `internal/` puts in an envelope's `error` field — and no other. A constant that is declared but never emitted has no row. Codes only the MCP server emits are in the second table. `TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet` holds both tables, and `act help errors`, to that rule.
 
-The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4) and `claim_lost`/`migration_not_found` (5) the only rows outside 1–3. Where a row lists two exit codes the command decides which: an index that cannot be opened is exit 1 from `act list` and exit 3 from `act search`. In the message column `<cmd>` is the command as invoked (`act state import`, `act close`, ...), and "the underlying error's text" means the message is whatever the failing library call reported, with no fixed format.
+The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4), `claim_lost`/`migration_not_found` (5) and `claim_unconfirmed` (6) the only rows outside 1–3. Where a row lists two exit codes the command decides which: an index that cannot be opened is exit 1 from `act list` and exit 3 from `act search`. In the message column `<cmd>` is the command as invoked (`act state import`, `act close`, ...), and "the underlying error's text" means the message is whatever the failing library call reported, with no fixed format.
 
 | code                       | exit | human message format                                                       | details keys                                  |
 |----------------------------|------|----------------------------------------------------------------------------|-----------------------------------------------|
@@ -1316,6 +1345,7 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `id_ambiguous`             | 2    | by command, e.g. `act show: prefix "<prefix>" matches <N> issues` | `prefix`, `candidates` |
 | `version_skew`             | 4    | `repo writer_version <N> exceeds this binary's writer_version <M>; upgrade act` | `max_op_version`, `writer_version`, `binary_version` |
 | `claim_lost`               | 5    | no message: a lost claim prints the claim result shown under `act update`, with `"error":"claim_lost"`, not an envelope | none |
+| `claim_unconfirmed`        | 6    | no message: prints the claim result shown under `act update`, with `"error":"claim_unconfirmed"`, not an envelope | none |
 | `cycle_detected`           | 2    | by case, e.g. `act update: --parent: <id> cannot be its own parent` | none (`path` when the loop runs through other issues) |
 | `dep_not_found`            | 1    | `act update: --dep-rm: no <type>-edge to remove: <child> is blocked by <parent> does not exist` | none |
 | `hook_failed`              | 1    | `hook exited <rc>:<a newline, then the hook's stderr>` | `hook_cause`, `hook_exit_code`, `hook_stderr`, `hook_truncated` |

@@ -179,7 +179,9 @@ func clrStatus(t *testing.T, dir, id string) string {
 // committed before the rebase step runs, so a fetch that cannot reach origin
 // used to answer exit 1 `claim_failed` for a write that had landed — and a
 // second claim then answered exit 0, already held, with nothing said about
-// origin. It now exits 0 with `claimed: true` and the deferral reported.
+// origin. act-2bd35b made it exit 0 with `claimed: true`; act-c30acd makes it
+// exit 6 `claim_unconfirmed` — committed and queued, not a win. The re-run
+// that confirms it is TestDocClaim_Clr_UnreachableOriginClaimIsUnconfirmed.
 //
 // Run both with an upstream branch configured (a `git clone`d tracker, the
 // only shape whose claim reached origin before act-2bd35b) and without one
@@ -198,9 +200,9 @@ func TestDocClaim_Spec_ClrClaimWithUnreachableOriginIsUnconfirmed(t *testing.T) 
 			dplRepoint(t, dir, "origin", clrMissingOrigin(t))
 
 			res, stdout, stderr, code := clrRunClaim(t, dir, id)
-			if code != 0 || !res.Claimed || res.Error != "" {
-				t.Fatalf("claim with an unreachable origin: exit %d claimed=%v error=%q; want exit 0, claimed true\nstdout=%s",
-					code, res.Claimed, res.Error, stdout)
+			if code != 6 || res.Claimed || res.Error != "claim_unconfirmed" || res.Reason != "origin_unreachable" {
+				t.Fatalf("claim with an unreachable origin: exit %d claimed=%v error=%q reason=%q; want exit 6, claimed false, claim_unconfirmed, origin_unreachable\nstdout=%s",
+					code, res.Claimed, res.Error, res.Reason, stdout)
 			}
 			if !res.PushDeferred || res.PushDeferredReason == "" {
 				t.Errorf("claim with an unreachable origin: push_deferred=%v push_deferred_reason=%q; want true and a reason\nstdout=%s",

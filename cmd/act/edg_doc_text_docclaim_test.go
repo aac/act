@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,12 +33,18 @@ func TestDocClaim_Help_ClaimFailedRowDoesNotNameThePush(t *testing.T) {
 		t.Errorf("act help errors: claim_failed row still names the push, which no longer fails a claim: %q", row)
 	}
 
+	// act-c30acd: such a claim is now unconfirmed (exit 6), still not a
+	// claim_failed.
 	dir := sp6Site(t)
 	made, _ := wfxCreate(t, dir, "edg claim_failed row target")
 	upuAddMissingOrigin(t, dir)
-	res, _ := upuUpdate(t, dir, made.ID, "--claim", "--push")
-	if !res.Claimed || res.Error != "" || !res.PushDeferred {
-		t.Errorf("update --claim --push with an unreachable origin: claimed %v, error %q, push_deferred %v; want a won claim with the push deferred, not claim_failed",
+	out, _ := pass5Run(t, dir, 6, "", "update", "--json", made.ID, "--claim", "--push")
+	var res upuUpdated
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil {
+		t.Fatalf("parse: %v\n%s", err, out)
+	}
+	if res.Error != "claim_unconfirmed" || !res.PushDeferred {
+		t.Errorf("update --claim --push with an unreachable origin: claimed %v, error %q, push_deferred %v; want claim_unconfirmed with the push deferred, not claim_failed",
 			res.Claimed, res.Error, res.PushDeferred)
 	}
 }

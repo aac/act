@@ -23,6 +23,18 @@ func clpNextClaimed(t *testing.T, dir string, args ...string) (string, string) {
 	return res.Issue.ID, stderr
 }
 
+// u2Unconfirmed runs `act update --json <id> --claim`, wants exit 6, and
+// returns the parsed result and stderr (act-c30acd).
+func u2Unconfirmed(t *testing.T, dir, id string) (upuUpdated, string) {
+	t.Helper()
+	out, stderr := pass5Run(t, dir, 6, "", "update", "--json", id, "--claim")
+	var res upuUpdated
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil {
+		t.Fatalf("act update --json %s --claim: not a JSON object (%v)\nstdout=%s\nstderr=%s", id, err, out, stderr)
+	}
+	return res, stderr
+}
+
 // TestDocClaim_Spec_ClaimIsAutoPublished asserts the claim sentences of the
 // "Auto-publish on write" paragraph in docs/spec.md: in a tracker with an
 // `origin`, a won claim is pushed like every other write, without `--push`,
@@ -79,9 +91,10 @@ func TestDocClaim_Spec_ClaimIsAutoPublished(t *testing.T) {
 		made, _ := wfxCreate(t, dir, "clp deferred claim target")
 		upuAddMissingOrigin(t, dir)
 
-		res, stderr := upuUpdate(t, dir, made.ID, "--claim")
-		if res.Error != "" || !res.Claimed || !res.PushDeferred || res.PushDeferredReason == "" {
-			t.Errorf("act update --json --claim with an unreachable origin: error %q, claimed %v, push_deferred %v, push_deferred_reason %q; want no error, claimed, deferred, a reason\nstderr=%s",
+		// act-c30acd: queued like any deferral, but not a win — exit 6.
+		res, stderr := u2Unconfirmed(t, dir, made.ID)
+		if res.Error != "claim_unconfirmed" || res.Claimed || !res.PushDeferred || res.PushDeferredReason == "" {
+			t.Errorf("act update --json --claim with an unreachable origin: error %q, claimed %v, push_deferred %v, push_deferred_reason %q; want claim_unconfirmed, not claimed, deferred, a reason\nstderr=%s",
 				res.Error, res.Claimed, res.PushDeferred, res.PushDeferredReason, stderr)
 		}
 		if st := sp8Str(sp8Show(t, dir, made.ID)["status"]); st != "in_progress" {
@@ -112,18 +125,42 @@ func TestDocClaim_Spec_ClaimIsAutoPublished(t *testing.T) {
 		}
 	})
 
-	t.Run("re-claim of a held issue, unreachable origin", func(t *testing.T) {
+	t.Run("re-claim of a published hold, unreachable origin", func(t *testing.T) {
+		dir := sp6Site(t)
+		bare := wfxAddBareOrigin(t, dir)
+		made, _ := wfxCreate(t, dir, "clp re-claim target")
+		upuUpdate(t, dir, made.ID, "--claim")
+		if !wfxOriginHasHead(t, dir, bare) {
+			t.Fatalf("setup: the claim was not published")
+		}
+		dplRepoint(t, dir, "origin", clrMissingOrigin(t))
+
+		// The hold is on origin, so the answer is local: no fetch, no push.
+		res, stderr := upuUpdate(t, dir, made.ID, "--claim")
+		if !res.Claimed || res.PushDeferred || stderr != "" {
+			t.Errorf("re-claim of an issue this checkout holds and published, origin unreachable: claimed %v, push_deferred %v, stderr %q; want claimed, no deferral, quiet (it wrote no op, so there is nothing to push)", res.Claimed, res.PushDeferred, stderr)
+		}
+		if q := pnrPendingPushes(t, dir); q != "" {
+			t.Errorf("re-claim of a held issue queued a push in .act/.pending-pushes:\n%s", q)
+		}
+	})
+
+	t.Run("re-claim of an unpublished hold, unreachable origin", func(t *testing.T) {
 		dir := sp6Site(t)
 		made, _ := wfxCreate(t, dir, "clp re-claim target")
 		upuUpdate(t, dir, made.ID, "--claim") // no origin yet: local only
 		upuAddMissingOrigin(t, dir)
 
-		res, stderr := upuUpdate(t, dir, made.ID, "--claim")
-		if !res.Claimed || res.PushDeferred || stderr != "" {
-			t.Errorf("re-claim of an issue this checkout holds, origin unreachable: claimed %v, push_deferred %v, stderr %q; want claimed, no deferral, quiet (it wrote no op, so there is nothing to push)", res.Claimed, res.PushDeferred, stderr)
+		// act-c30acd: origin has never seen this hold, so the re-claim
+		// consults it, cannot reach it, and answers unconfirmed — writing
+		// no second op.
+		before := len(u2ClaimOpFiles(t, dir, made.ID))
+		res, _ := u2Unconfirmed(t, dir, made.ID)
+		if res.Error != "claim_unconfirmed" || res.Claimed {
+			t.Errorf("re-claim of an unpublished hold, origin unreachable: error %q claimed %v; want claim_unconfirmed, not claimed", res.Error, res.Claimed)
 		}
-		if q := pnrPendingPushes(t, dir); q != "" {
-			t.Errorf("re-claim of a held issue queued a push in .act/.pending-pushes:\n%s", q)
+		if n := len(u2ClaimOpFiles(t, dir, made.ID)); n != before {
+			t.Errorf("the re-claim wrote a claim op: %d, was %d", n, before)
 		}
 	})
 

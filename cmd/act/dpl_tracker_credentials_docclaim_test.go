@@ -203,13 +203,14 @@ func TestDocClaim_Spec_DplClaimFailedStderrTailIsMasked(t *testing.T) {
 	}
 	dplWantNoSecret(t, "act update --claim (claim_failed, human)", stdout+stderr)
 
-	// The unreachable-origin claim is a deferral, and its reason is masked.
+	// The unreachable-origin claim is unconfirmed (exit 6, act-c30acd), a
+	// deferral, and its reason is masked.
 	third := createIssue(t, dir, "dpl third claim target", "--isolated")
 	dplFakeGit(t)
 	stdout, stderr, code = runActIn(t, dir, "update", "--json", third, "--claim")
 	t.Logf("act update --claim --json, fetch fails: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
-	if code != 0 || !strings.Contains(stdout, `"push_deferred":true`) || !strings.Contains(stdout, "unable to look up ***@127.0.0.1") {
-		t.Errorf("act update --claim with a failing fetch: exit %d, want 0 with push_deferred and git's message masked\nstdout=%s", code, stdout)
+	if code != 6 || !strings.Contains(stdout, `"claim_unconfirmed"`) || !strings.Contains(stdout, `"push_deferred":true`) || !strings.Contains(stdout, "unable to look up ***@127.0.0.1") {
+		t.Errorf("act update --claim with a failing fetch: exit %d, want 6 claim_unconfirmed with push_deferred and git's message masked\nstdout=%s", code, stdout)
 	}
 	dplWantNoSecret(t, "act update --claim --json (deferred)", stdout+stderr)
 }

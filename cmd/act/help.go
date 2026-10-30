@@ -353,7 +353,9 @@ THE LOOP IN DETAIL
     auto-commit. If two sessions claim the same issue concurrently,
     the loser learns by running 'act show' and seeing a different
     assignee. 'act show <id>' is cheap; check it after claim if the
-    work is expensive to redo.
+    work is expensive to redo. Exit 6 (claim_unconfirmed) means origin
+    has not seen the claim: it is not yours yet — re-run it to confirm,
+    or take other work.
 
   Releasing a claim
     $ act update --unclaim <id>
@@ -762,6 +764,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     version_skew            an op's writer_version is newer than this binary's;
                             reported only by 'act version --check-repo' (exit 4)
     claim_lost              concurrent claim won the race
+    claim_unconfirmed       claim op committed and queued, but origin has not
+                            seen it (exit 6); re-run the claim to confirm
     cycle_detected          dep edge would close a cycle
     dep_not_found           dep target id resolved to nothing
     hook_failed             a .act/hooks/<event> script exited non-zero or timed out
@@ -771,7 +775,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     bad_flag                argparse rejected a flag/value
     cycle                   legacy alias used by 'dep add'
     claim_failed            claim could not be written, committed or rebased
-                            (a failed push defers a won claim; it does not fail it)
+                            (a fetch or push that does not reach origin makes a
+                            won claim claim_unconfirmed, exit 6; not this)
     config_read_failed      .act/config.json unreadable, or node_id
                             unreadable/unwritable in .act/.git/config
     index_open_failed       SQLite open failed
@@ -906,6 +911,11 @@ EXIT CODES
   exit 3   issue_not_found — id resolved to nothing (zero prefix matches)
   exit 4   bootstrap_timeout — 'act state import' clone exceeded its budget
   exit 5   claim_lost — concurrent claimer won; this claim lost the race
+  exit 6   claim_unconfirmed — the claim op is committed and queued, but
+           origin has not seen it (reason origin_unreachable or push_failed),
+           so it is not yours yet. Do not dispatch on it: re-run the same
+           claim later (it writes no second op and answers 0, 5 or 6) or
+           take other work. Not under --isolated or --offline.
   The envelope is emitted before exit; success paths emit no envelope at all.
 
   A FAILED PUSH IS NOT A FAILED WRITE. Once a write's op is committed in
@@ -919,6 +929,11 @@ EXIT CODES
   origin-upstream, never to origin).
   'act create', 'act reopen', 'act dep add' and 'act delete' --json set
   push_deferred: true and push_deferred_reason the same way.
+  A CLAIM IS THE EXCEPTION. A claim is the fleet's mutual-exclusion
+  signal, so one origin has not seen is not a win: 'act update --claim',
+  'act next' and MCP act_next answer exit 6 claim_unconfirmed (the op
+  still committed and queued). Re-running the claim is how to confirm
+  it: a re-claim writes no second op.
   Failures BEFORE the commit — op write, staging, hook, commit — still
   exit non-zero, because nothing landed. (The old push_exhausted exit-4
   envelope was retired for exactly this reason; see act help errors.)

@@ -73,17 +73,34 @@ func TestDocClaim_Spec_PdfMCPBlockReportsPushDeferred(t *testing.T) {
 }
 
 // TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred asserts the
-// `act_next` sentence "A `claimed: true` result also carries the claim's
-// `warnings`, `push_deferred` and `push_deferred_reason`" for the deferral:
-// a claim whose push does not reach `origin` answers claimed:true with both
-// keys (act-087b2b: confirmed at f904fc6, no test held it).
+// `act_next` sentence on a claim `origin` has not seen (act-c30acd; act-087b2b
+// had it answer claimed:true): the tool returns the claim_unconfirmed result,
+// push_deferred and push_deferred_reason included, as an error result, and
+// tries no other candidate.
 func TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred(t *testing.T) {
 	root := makeRealRepo(t)
 	id := seedIssue(t, root, "pdf mcp next target")
+	seedIssue(t, root, "pdf mcp next second target")
 	pdfAddMissingOrigin(t, root)
 
-	out, text := pdfCall(t, root, "act_next", map[string]any{})
-	if !out.Claimed || !strings.Contains(text, id) || !out.PushDeferred || out.PushDeferredReason == "" {
-		t.Errorf("act_next with an unreachable origin = %s; want claimed:true for %s, push_deferred:true and a push_deferred_reason", text, id)
+	res, text := callTool(t, root, "act_next", map[string]any{})
+	t.Logf("act_next: isError=%v text=%s", res["isError"], text)
+	if isErr, _ := res["isError"].(bool); !isErr {
+		t.Errorf("act_next with an unreachable origin is not an error result: %s", text)
+	}
+	var out struct {
+		pdfToolResult
+		Error string `json:"error"`
+		ID    string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse act_next result %q: %v", text, err)
+	}
+	if out.Claimed || out.Error != "claim_unconfirmed" || out.ID == "" || !out.PushDeferred || out.PushDeferredReason == "" {
+		t.Errorf("act_next with an unreachable origin = %s; want claimed:false, claim_unconfirmed, an id, push_deferred:true and a push_deferred_reason", text)
+	}
+	claims, _ := filepath.Glob(filepath.Join(root, ".act", "ops", "*", "*", "*-claim.json"))
+	if len(claims) != 1 {
+		t.Errorf("act_next wrote %d claim ops, want 1: it must stop on an unconfirmed claim, not try the next candidate (first seeded %s)", len(claims), id)
 	}
 }

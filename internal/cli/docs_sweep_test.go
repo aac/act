@@ -3723,7 +3723,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-update-claim-push-unreachable-origin-defers",
 		docFile:      "docs/spec.md",
-		claimPattern: "A won `--claim --push` whose push does not reach `origin` is reported the same way: exit 0, `\"claimed\": true`, `\"push_deferred\": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`.",
+		claimPattern: "A claim is the exception: a won `--claim`, with or without `--push`, whose push does not reach `origin` is not a win — exit 6, `\"claimed\": false`, `\"error\": \"claim_unconfirmed\"`, `\"reason\": \"push_failed\"`, `\"push_deferred\": true` and `push_deferred_reason`, the claim commit queued in `.act/.pending-pushes`.",
 		testName:     "TestDocClaim_Spec_UpdateClaimPushUnreachableOriginDefers",
 	},
 	// act-c3aa0b: an index failure after the commit is a warning on every
@@ -3852,13 +3852,13 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-next-carries-the-claims-warnings",
 		docFile:      "docs/spec.md",
-		claimPattern: "The claiming form also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when `act update --claim` set them, under those same keys.",
+		claimPattern: "The claiming form also carries the claim's `warnings` when `act update --claim` set them, under that same key.",
 		testName:     "TestDocClaim_FnwNext_ClaimWarningsReachTheCaller",
 	},
 	{
 		name:         "spec-mcp-next-carries-the-claims-warnings",
 		docFile:      "docs/spec.md",
-		claimPattern: "A `claimed: true` result also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason` when the claim set them.",
+		claimPattern: "A `claimed: true` result also carries the claim's `warnings` when the claim set them.",
 		testName:     "TestDocClaim_FnwMCP_NextCarriesTheClaimsWarnings",
 	},
 	{
@@ -3877,7 +3877,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-claim-is-auto-published",
 		docFile:      "docs/spec.md",
-		claimPattern: "In a tracker with `origin`, the claim commit of a won `act update --claim`, `act next` or MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing; `--offline` queues the claim commit in `.act/.pending-pushes` instead of pushing; a claim push that does not reach `origin` is a deferral like any other, reported on `act update --claim --json` as `push_deferred`. Re-claiming an issue the checkout already holds writes no op and pushes nothing.",
+		claimPattern: "In a tracker with `origin`, the claim commit of a won `act update --claim`, `act next` or MCP `act_next` is pushed without `--push`. `--isolated` pushes nothing and queues nothing; `--offline` queues the claim commit in `.act/.pending-pushes` instead of pushing; a claim push that does not reach `origin` is queued like any other deferral, but the claim is then unconfirmed and is answered exit 6 `claim_unconfirmed` with `push_deferred` (see \"Atomic claim protocol\"). Re-claiming an issue the checkout already holds writes no op; it pushes nothing when the hold is already on `origin`, and publishes the stranded claim commit when it is not.",
 		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
 	},
 	{
@@ -3895,8 +3895,8 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-update-claim-without-push-defers",
 		docFile:      "docs/spec.md",
-		claimPattern: "A won `--claim` without `--push` is deferred and reported identically.",
-		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
+		claimPattern: "A claim is the exception: a won `--claim`, with or without `--push`, whose push does not reach `origin` is not a win",
+		testName:     "TestDocClaim_Spec_UpdateClaimPushUnreachableOriginDefers",
 	},
 	// act-087b2b: every write command's JSON result says when its push was
 	// deferred, not only close's and update's.
@@ -3921,13 +3921,13 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-pdf-next-carries-the-claims-push-deferred",
 		docFile:      "docs/spec.md",
-		claimPattern: "The claiming form also carries the claim's `warnings`, `push_deferred` and `push_deferred_reason`",
+		claimPattern: "A claim `origin` has not seen is not a claim (act-c30acd): `act next` exits 6 and prints the `claim_unconfirmed` result of `act update --claim`, with its `push_deferred` and `push_deferred_reason`, and claims nothing else",
 		testName:     "TestDocClaim_Spec_PdfNextCarriesTheClaimsPushDeferred",
 	},
 	{
 		name:         "spec-pdf-mcp-next-carries-the-claims-push-deferred",
 		docFile:      "docs/spec.md",
-		claimPattern: "A `claimed: true` result also carries the claim's `warnings`, `push_deferred`",
+		claimPattern: "A claim `origin` has not seen (`act update --claim` exit 6) ends the loop: the tool returns the `claim_unconfirmed` result, with its `push_deferred` and `push_deferred_reason`, as an error result (`isError: true`) and tries no other candidate",
 		testName:     "TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred",
 	},
 	// act-a85bc9: the create section's optional-keys sentence names all
@@ -3969,7 +3969,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "help-errors-claim-failed-row-push-defers",
 		docFile:      "cmd/act/help.go",
-		claimPattern: "(a failed push defers a won claim; it does not fail it)",
+		claimPattern: "(a fetch or push that does not reach origin makes a",
 		testName:     "TestDocClaim_Help_ClaimFailedRowDoesNotNameThePush",
 	},
 	// act-11d2e2 item 6: the recovery paragraph said create does "not
@@ -4060,8 +4060,52 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-clr-claim-unreachable-origin-is-unconfirmed",
 		docFile:      "docs/spec.md",
-		claimPattern: "If the claim is the earliest of those, the command exits 0 with `claimed: true` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once: the issue is claimed in this checkout and no other checkout can see that yet.",
+		claimPattern: "If the claim is the earliest of those, the command exits 6 with `\"error\": \"claim_unconfirmed\"`, `\"claimed\": false`, `\"reason\": \"origin_unreachable\"` and `push_deferred: true`, `push_deferred_reason` carries the fetch error, the commit is queued in `.act/.pending-pushes` and the `act: WARNING:` block is printed once.",
 		testName:     "TestDocClaim_Spec_ClrClaimWithUnreachableOriginIsUnconfirmed",
+	},
+	// act-c30acd (docs/claim-identity-design.md §3-§5 U2): a claim is won
+	// when origin has seen it.
+	{
+		name:         "spec-u2-unconfirmed-rerun-confirms",
+		docFile:      "docs/spec.md",
+		claimPattern: "Re-run the same claim later, which writes no second op and answers 0 (held, `already_held: true`), 5 (lost) or 6 again, or take other work.",
+		testName:     "TestDocClaim_Clr_UnreachableOriginClaimIsUnconfirmed",
+	},
+	{
+		name:         "spec-u2-push-failed-is-unconfirmed",
+		docFile:      "docs/spec.md",
+		claimPattern: "The same holds when the fetch reaches `origin` but the claim's push does not (a rejecting receive, a push that times out): exit 6, `\"reason\": \"push_failed\"`.",
+		testName:     "TestDocClaim_Clr_PushFailedClaimIsUnconfirmed",
+	},
+	{
+		name:         "spec-u2-reclaim-after-rebase-conflict-consults-origin",
+		docFile:      "docs/spec.md",
+		claimPattern: "a rebase that fails once `origin` was fetched is exit 1 `claim_failed`, so a claim whose rebase conflicted keeps failing until the conflict is resolved and never reads as held",
+		testName:     "TestDocClaim_Clr_ReclaimAfterRebaseConflictConsultsOrigin",
+	},
+	{
+		name:         "spec-u2-two-checkouts-never-both-hold",
+		docFile:      "docs/spec.md",
+		claimPattern: "A re-claim of an issue this checkout already held writes no op and adds `\"already_held\": true`",
+		testName:     "TestDocClaim_Clr_TwoCheckoutsNeverBothHold",
+	},
+	{
+		name:         "spec-u2-published-hold-answers-locally",
+		docFile:      "docs/spec.md",
+		claimPattern: "When `origin/<branch>` contains the checkout's `HEAD` — the hold was published — the answer comes from local state with no fetch: exit 0, `already_held: true`.",
+		testName:     "TestDocClaim_Spec_ClaimIsAutoPublished",
+	},
+	{
+		name:         "help-u2-exit-6-claim-unconfirmed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "exit 6   claim_unconfirmed — the claim op is committed and queued, but",
+		testName:     "TestDocClaim_Clr_UnreachableOriginClaimIsUnconfirmed",
+	},
+	{
+		name:         "skill-u2-claim-unconfirmed",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "**Claim not confirmed — `claim_unconfirmed`.**",
+		testName:     "TestDocClaim_Clr_UnreachableOriginClaimIsUnconfirmed",
 	},
 	{
 		name:         "spec-clr-claim-lost-to-a-rival-is-never-a-win",

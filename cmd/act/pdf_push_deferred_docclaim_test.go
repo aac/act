@@ -133,22 +133,33 @@ func TestDocClaim_Spec_PdfWritesReportPushDeferred(t *testing.T) {
 }
 
 // TestDocClaim_Spec_PdfNextCarriesTheClaimsPushDeferred asserts the `act
-// next` sentence "The claiming form also carries the claim's `warnings`,
-// `push_deferred` and `push_deferred_reason`" for the deferral: `act next
-// --json` whose claim push does not reach `origin` exits 0, claims, and
-// carries both keys (act-087b2b: confirmed at f904fc6, no test held it).
+// next` sentence on a claim `origin` has not seen: `act next --json` exits 6
+// with the claim_unconfirmed result and both deferral keys, and claims
+// nothing else (act-c30acd; act-087b2b had it exit 0 claimed).
 func TestDocClaim_Spec_PdfNextCarriesTheClaimsPushDeferred(t *testing.T) {
+	// act-c30acd: such a claim is unconfirmed. `act next` exits 6 with the
+	// claim_unconfirmed result of `act update --claim`, deferral keys
+	// included, and claims nothing else.
 	dir := sp6Site(t)
-	id := createIssue(t, dir, "pdf next target")
+	createIssue(t, dir, "pdf next target")
+	createIssue(t, dir, "pdf next second target")
 	pdfAddMissingOrigin(t, dir)
 
-	res, out, _ := pdfRun(t, dir, "next", "--json")
+	out, _ := pass5Run(t, dir, 6, "", "next", "--json")
 	t.Logf("act next --json, origin unreachable: stdout=%s", strings.TrimSpace(out))
-	if !res.Claimed || !strings.Contains(out, id) || !res.PushDeferred || res.PushDeferredReason == "" {
-		t.Errorf("act next --json with an unreachable origin = %s; want claimed:true for %s, push_deferred:true and a push_deferred_reason",
-			strings.TrimSpace(out), id)
+	var res pdfDeferred
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &res); err != nil {
+		t.Fatalf("act next --json: not a JSON object (%v)\n%s", err, out)
+	}
+	if res.Claimed || res.Error != "claim_unconfirmed" || !res.PushDeferred || res.PushDeferredReason == "" {
+		t.Errorf("act next --json with an unreachable origin = %s; want claimed:false, claim_unconfirmed, push_deferred:true and a push_deferred_reason",
+			strings.TrimSpace(out))
 	}
 	if q := pnrPendingPushes(t, dir); q == "" {
 		t.Errorf("act next with an unreachable origin queued nothing in .act/.pending-pushes")
+	}
+	claims, _ := filepath.Glob(filepath.Join(dir, ".act", "ops", "*", "*", "*-claim.json"))
+	if len(claims) != 1 {
+		t.Errorf("act next wrote %d claim ops, want 1: it must stop on an unconfirmed claim, not try the next candidate", len(claims))
 	}
 }

@@ -83,6 +83,13 @@ you've read it.
    The `winner` field names the node that holds the issue. **Do not proceed** — you
    don't own the issue. Go back to step 1 and claim a different unblocked issue.
 
+   **Claim not confirmed — `claim_unconfirmed`.** If origin has not seen the claim (it
+   could not be reached, or refused the push), `act update --claim` and `act next` exit
+   **6** with `{"ok":false,"claimed":false,"error":"claim_unconfirmed","reason":"origin_unreachable"|"push_failed",…}`,
+   and MCP `act_next` returns that as an error result. The issue is **not yours yet**:
+   re-run the same claim later to confirm it (a re-claim writes no second op and answers
+   0 held, 5 lost or 6 again), or take other work. **Never dispatch on it.**
+
 2. **Do the work, and verify it.** Whatever "verify" means for this issue — run the
    tests if the project has them, exercise the change, re-read against the acceptance
    criteria. "Done" is checked, not assumed.
@@ -123,7 +130,8 @@ you've read it.
      the op is committed locally, queued in `.act/.pending-pushes`, and an
      `act: WARNING:` block on stderr says so (`push_deferred: true` in `--json`). Do
      **not** re-run the command — re-running duplicates the op. A later write publishes
-     the backlog. Anything that fails *before* the commit still exits non-zero.
+     the backlog. Anything that fails *before* the commit still exits non-zero. A claim
+     is the exception: see `claim_unconfirmed` in step 1.
 
 5. **Repeat** until `act ready` (or `act_next`) returns empty.
 
