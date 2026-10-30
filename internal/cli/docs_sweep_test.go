@@ -3998,6 +3998,20 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "When origin has not seen the claim (unreachable, or it refused the push) the result is an error, `claim_unconfirmed`, carrying `push_deferred` and `push_deferred_reason`: the issue is not yours yet",
 		testName:     "TestDocClaim_Spec_PdfMCPNextCarriesTheClaimsPushDeferred",
 	},
+	// act-11b323: act_next retries only a lost race; any other claim
+	// failure is returned as an error result.
+	{
+		name:         "spec-nxe-mcp-next-returns-non-loss-claim-failures",
+		docFile:      "docs/spec.md",
+		claimPattern: "Only a lost race (`act update --claim` exit 5, `claim_lost`) moves the loop to the next candidate; any other claim failure, such as exit 1 `claim_failed`, is returned as its error envelope (`isError: true`), not retried on the next candidate",
+		testName:     "TestDocClaim_Spec_NxeMCPNextReturnsClaimFailed",
+	},
+	{
+		name:         "mcp-description-nxe-next-returns-non-loss-claim-failures",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "Any other claim failure (e.g. `claim_failed`) is returned as an error, not retried on the next candidate.",
+		testName:     "TestDocClaim_Spec_NxeMCPNextReturnsClaimFailed",
+	},
 	{
 		name:         "mcp-description-finish-names-its-extra-keys",
 		docFile:      "internal/mcp/server.go",

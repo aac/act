@@ -1291,7 +1291,7 @@ Input:
   "under":{"type":"string"}
 }}
 ```
-Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming. A `claimed: true` result also carries the claim's `warnings` when the claim set them. A claim `origin` has not seen (`act update --claim` exit 6) ends the loop: the tool returns the `claim_unconfirmed` result, with its `push_deferred` and `push_deferred_reason`, as an error result (`isError: true`) and tries no other candidate (act-c30acd).
+Behavior: `ready` → claim first candidate → `show`. On claim loss, exponential backoff: 3 attempts at 100ms, 400ms, 1.6s with ±25% jitter; refold and exclude just-lost ids each attempt. On exhaustion, return candidates without claiming. A `claimed: true` result also carries the claim's `warnings` when the claim set them. A claim `origin` has not seen (`act update --claim` exit 6) ends the loop: the tool returns the `claim_unconfirmed` result, with its `push_deferred` and `push_deferred_reason`, as an error result (`isError: true`) and tries no other candidate (act-c30acd). Only a lost race (`act update --claim` exit 5, `claim_lost`) moves the loop to the next candidate; any other claim failure, such as exit 1 `claim_failed`, is returned as its error envelope (`isError: true`), not retried on the next candidate (act-11b323).
 
 Output:
 ```json

@@ -1094,7 +1094,7 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_next",
-			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue. A `claimed: true` result may also carry `warnings`. When origin has not seen the claim (unreachable, or it refused the push) the result is an error, `claim_unconfirmed`, carrying `push_deferred` and `push_deferred_reason`: the issue is not yours yet, so do not work it — call again later to confirm (a re-claim writes no second op) or take other work.",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue. A `claimed: true` result may also carry `warnings`. When origin has not seen the claim (unreachable, or it refused the push) the result is an error, `claim_unconfirmed`, carrying `push_deferred` and `push_deferred_reason`: the issue is not yours yet, so do not work it — call again later to confirm (a re-claim writes no second op) or take other work. Any other claim failure (e.g. `claim_failed`) is returned as an error, not retried on the next candidate.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Optional id prefix; restrict to descendants."),
 			}, nil),
