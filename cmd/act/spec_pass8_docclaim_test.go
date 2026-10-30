@@ -1533,6 +1533,7 @@ var sp8Provokers = map[string]sp8Provoker{
 // source.
 var sp8NotProvoked = map[string]string{
 	"claim_lost":                  "needs two writers racing through a shared remote",
+	"claim_unconfirmed":           "prints the claim result, not an envelope; TestDocClaim_Clr_UnreachableOriginClaimIsUnconfirmed runs it",
 	"bootstrap_timeout":           "needs a clone that outlasts its budget",
 	"bootstrap_validation_failed": "needs an import whose result fails its own check",
 	"claim_failed":                "needs the claim's write or pull to fail",
