@@ -43,6 +43,11 @@ const (
 // keep their checks unexported, so the regexp is restated here.
 var nodeIDRe = regexp.MustCompile(`^[0-9a-f]{8}$`)
 
+// NodeIDLockFile is the flock file ResolveNodeID takes inside .act/.git
+// while minting a node_id. It is checkout-local state: copies of .act/
+// (bootstrap-worker) must not carry it.
+const NodeIDLockFile = "act-nodeid.lock"
+
 // nodeIDLockWait bounds how long ResolveNodeID waits for a sibling process
 // that is minting the id for the same checkout at the same moment.
 const nodeIDLockWait = 10 * time.Second
@@ -71,7 +76,7 @@ func ResolveNodeID(paths LayoutPaths) (string, error) {
 	// Mint under a lock so two processes resolving a fresh checkout at the
 	// same moment agree on one id instead of the later write silently
 	// replacing the id the earlier process already used.
-	release, err := lockNodeID(filepath.Join(gitDir, "act-nodeid.lock"))
+	release, err := lockNodeID(filepath.Join(gitDir, NodeIDLockFile))
 	if err != nil {
 		return "", err
 	}

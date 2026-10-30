@@ -488,6 +488,11 @@ func copyTreeWithStatsOpts(src, dst string, excludeIndex bool) (copyStats, error
 			}
 			return nil
 		}
+		// Skip the source checkout's node-id mint lock: it is local to the
+		// checkout that minted the id, and the copy resolves its own.
+		if rel == filepath.Join(".git", config.NodeIDLockFile) {
+			return nil
+		}
 		// Worker-cwd mode: skip the live index.db + journals (act-40fce0).
 		// These are top-level files under `.act/`; the rebuild happens
 		// after the copy from the copied op log.
