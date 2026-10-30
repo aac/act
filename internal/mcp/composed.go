@@ -392,7 +392,7 @@ func (s *Server) callBlockWithGops(raw json.RawMessage, factory gopsFactory) (an
 	}
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
-		return errEnvelope("node_id_failed", nerr.Error()), true
+		return errEnvelope("config_read_failed", nerr.Error()), true
 	}
 
 	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })

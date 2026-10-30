@@ -251,6 +251,19 @@ func workingTreeClean(t *testing.T, dir string) bool {
 	return strings.TrimSpace(out) == ""
 }
 
+// setNodeID overwrites the checkout's stored act.nodeId (keeping
+// act.nodeIdPath), so the next act process in dir runs as a different
+// claimant. Returns a restore func that puts the previous id back.
+func setNodeID(t *testing.T, dir, id string) (restore func()) {
+	t.Helper()
+	prev := readNodeID(t, dir)
+	cfgPath := config.ActGitConfigPath(config.Layout(dir).Root)
+	if err := config.SetGitConfig(cfgPath, config.NodeIDKey, id); err != nil {
+		t.Fatalf("setNodeID: %v", err)
+	}
+	return func() { _ = config.SetGitConfig(cfgPath, config.NodeIDKey, prev) }
+}
+
 // readNodeID returns the node_id of the checkout rooted at dir, resolved the
 // way every writer resolves it (per checkout, in .act/.git/config).
 func readNodeID(t *testing.T, dir string) string {

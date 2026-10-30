@@ -823,20 +823,8 @@ func TestDocClaim_ClaimLost_LastWriteWins(t *testing.T) {
 	createOut, _ := mustRunAct(t, site, 0, "create", "last-write-wins probe", "--json")
 	id := pickIDFromJSON(t, createOut)
 
-	// Read the current (winner's) config.json.
-	cfgPath := filepath.Join(site, ".act", "config.json")
-	cfgData, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("read .act/config.json: %v", err)
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal(cfgData, &cfg); err != nil {
-		t.Fatalf("unmarshal config.json: %v", err)
-	}
-	winnerNodeID, _ := cfg["node_id"].(string)
-	if winnerNodeID == "" {
-		t.Fatalf("node_id missing from config.json")
-	}
+	// Read the current (winner's) node_id: per checkout, in .act/.git/config.
+	winnerNodeID := readNodeID(t, site)
 
 	// First claim: winner path. --isolated skips pull-rebase.
 	winOut, _, winCode := runAct(t, site, "update", "--claim", "--isolated", "--json", id)
@@ -847,15 +835,10 @@ func TestDocClaim_ClaimLost_LastWriteWins(t *testing.T) {
 		t.Errorf("winner claim: stdout missing claimed:true\n%s", winOut)
 	}
 
-	// Swap config.json to a different node_id (simulates a second agent).
+	// Swap the checkout's node_id (simulates a second agent); restored
+	// after the test.
 	const loserNodeID = "deadbeef"
-	cfg["node_id"] = loserNodeID
-	loserCfg, _ := json.Marshal(cfg)
-	if err := os.WriteFile(cfgPath, loserCfg, 0o600); err != nil {
-		t.Fatalf("write loser config: %v", err)
-	}
-	// Restore winner's config.json after the test.
-	t.Cleanup(func() { _ = os.WriteFile(cfgPath, cfgData, 0o600) })
+	t.Cleanup(setNodeID(t, site, loserNodeID))
 
 	// Second claim: loser path. Fold sees two ops; winner's earlier HLC wins.
 	loseOut, _, loseCode := runAct(t, site, "update", "--claim", "--isolated", "--json", id)

@@ -76,7 +76,7 @@ GETTING STARTED
 
   Then, in any git repo:
 
-    act init                 # creates .act/, records a node_id
+    act init                 # creates .act/, mints this checkout's node_id
     act ready                # the canonical first loop step
 
   Other binary-only alternates (brew tap, prebuilt release binaries)
@@ -153,8 +153,9 @@ CONCURRENCY
   ties broken by op hash. There is no manual merge step.
 
 IDENTITY
-  Each .act/ has a node_id derived at init from machine-id + git email.
-  'assignee' strings tag work with the node that owns it. The MCP
+  Each checkout of a tracker has a node_id, minted on first use and
+  kept in .act/.git/config (act.nodeId); it never travels with a clone.
+  'assignee' strings tag work with the checkout that holds it. The MCP
   composed tools resolve identity automatically.
 
 DEEPER DIVES
@@ -173,8 +174,8 @@ DEEPER DIVES
 
   'act mine' lists issues currently assigned to your node that are
   in_progress or blocked. 'act ready --mine' filters the ready queue
-  to issues already assigned to you. Both default to identity from
-  .act/config.json node_id; --as <id> overrides.
+  to issues already assigned to you. Both default to this checkout's
+  node_id (act.nodeId in .act/.git/config); --as <id> overrides.
 
 IMPORTING STATE INTO A DIRECTORY
   'act state import' copies this repo's .act/ state tree into another
@@ -771,7 +772,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     cycle                   legacy alias used by 'dep add'
     claim_failed            claim could not be written, committed or rebased
                             (a failed push defers a won claim; it does not fail it)
-    config_read_failed      .act/config.json unreadable
+    config_read_failed      .act/config.json unreadable, or node_id
+                            unreadable/unwritable in .act/.git/config
     index_open_failed       SQLite open failed
     index_query_failed      SQLite query failed
     index_rebuild_failed    cache rebuild failed

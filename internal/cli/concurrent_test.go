@@ -25,8 +25,6 @@ package cli
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -145,19 +143,7 @@ func TestConcurrentClaimRace(t *testing.T) {
 			id := pickIDFromJSON(t, createOut)
 
 			// Step 1: read the current node_id (winner's identity).
-			cfgPath := filepath.Join(site, ".act", "config.json")
-			cfgData, err := os.ReadFile(cfgPath)
-			if err != nil {
-				t.Fatalf("read .act/config.json: %v", err)
-			}
-			var cfg map[string]any
-			if err := json.Unmarshal(cfgData, &cfg); err != nil {
-				t.Fatalf("unmarshal config.json: %v", err)
-			}
-			winnerNodeID, _ := cfg["node_id"].(string)
-			if winnerNodeID == "" {
-				t.Fatalf("node_id missing from config.json")
-			}
+			winnerNodeID := readNodeID(t, site)
 
 			// Step 2: invocation A (winner). Uses --isolated so pull-rebase
 			// is skipped; only this process's op file lands on disk.
@@ -177,26 +163,14 @@ func TestConcurrentClaimRace(t *testing.T) {
 				t.Errorf("iter %d: winner claim: winner=%v, want %v", iter, winResult["winner"], winnerNodeID)
 			}
 
-			// Step 3: change config.json to a different node_id so the
-			// second invocation runs as a different "agent". The loser's
-			// op will have a later wall-clock HLC (it runs after the
-			// winner) and thus loses the fold ordering.
+			// Step 3: change the checkout's node_id (act.nodeId in
+			// .act/.git/config) so the second invocation runs as a
+			// different "agent". The loser's op will have a later
+			// wall-clock HLC (it runs after the winner) and thus loses the
+			// fold ordering. Restored on cleanup so subsequent iterations
+			// see consistent state.
 			const loserNodeID = "deadbeef"
-			cfg["node_id"] = loserNodeID
-			newCfg, err := json.Marshal(cfg)
-			if err != nil {
-				t.Fatalf("marshal modified config: %v", err)
-			}
-			if err := os.WriteFile(cfgPath, newCfg, 0o600); err != nil {
-				t.Fatalf("write modified config: %v", err)
-			}
-			t.Cleanup(func() {
-				// Restore winner's config.json so subsequent
-				// iterations see consistent state.
-				if wErr := os.WriteFile(cfgPath, cfgData, 0o600); wErr != nil {
-					t.Logf("restore config.json: %v (test isolation may be affected)", wErr)
-				}
-			})
+			t.Cleanup(setNodeID(t, site, loserNodeID))
 
 			// Step 4: invocation B (loser). Runs after A with a later
 			// wall-clock HLC. After committing its own op, fold sees

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -92,27 +90,6 @@ func sp9Files(t *testing.T, host string) string {
 	return strings.Join(files, ",")
 }
 
-// sp9NodeID is the node_id the spec's `act init` Behavior paragraph gives
-// for a host repo: the first 8 hex characters of sha256(machine id ||
-// user.email), the machine id being /etc/machine-id or else the hostname.
-func sp9NodeID(t *testing.T, host string) string {
-	t.Helper()
-	machine := ""
-	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
-		machine = strings.TrimSpace(string(data))
-	}
-	if machine == "" {
-		h, err := os.Hostname()
-		if err != nil || h == "" {
-			t.Skipf("no /etc/machine-id and no hostname (%v); the expected node_id cannot be worked out", err)
-		}
-		machine = h
-	}
-	email, _ := sp7GitOut("-C", host, "config", "user.email")
-	sum := sha256.Sum256([]byte(machine + email))
-	return hex.EncodeToString(sum[:4])
-}
-
 // sp9Config reads <host>/.act/config.json as raw bytes and as a map from key
 // to value, string values unquoted.
 func sp9Config(t *testing.T, host string) (string, map[string]string) {
@@ -136,8 +113,8 @@ func sp9Exists(host, rel string) bool {
 
 // TestDocClaim_Spec_InitWritesAndCommits asserts the Behavior paragraphs and
 // the "Side effects" line of the `act init` section: what init creates under
-// .act/ (and that index.db is not part of it), the four keys of config.json
-// and how node_id is derived, the one commit in the nested repo, and that the
+// .act/ (and that index.db is not part of it), the three keys of config.json
+// and that node_id is not among them, the one commit in the nested repo, and that the
 // host repo gets files but no commit unless --commit-host.
 func TestDocClaim_Spec_InitWritesAndCommits(t *testing.T) {
 	brokencoIsolateEnv(t)
@@ -157,16 +134,16 @@ func TestDocClaim_Spec_InitWritesAndCommits(t *testing.T) {
 		}
 	}
 
-	// config.json: exactly four keys.
+	// config.json: exactly three keys; node_id lives in .act/.git/config.
 	raw, cfg := sp9Config(t, host)
-	if keys := sp7Keys(sp8Object(t, ".act/config.json", raw)); keys != "created_at,last_hlc,node_id,version" {
-		t.Errorf("config.json keys %q, want created_at,last_hlc,node_id,version\n%s", keys, raw)
+	if keys := sp7Keys(sp8Object(t, ".act/config.json", raw)); keys != "created_at,last_hlc,version" {
+		t.Errorf("config.json keys %q, want created_at,last_hlc,version\n%s", keys, raw)
 	}
 	if cfg["version"] != "0.1.0" || cfg["last_hlc"] != `{"logical":0,"wall":0}` {
 		t.Errorf("config.json: version %q, last_hlc %s; want 0.1.0 and a zero last_hlc", cfg["version"], cfg["last_hlc"])
 	}
-	if want := sp9NodeID(t, host); cfg["node_id"] != want {
-		t.Errorf("config.json node_id %q, want %q = sha256(machine id || user.email)[0:8]", cfg["node_id"], want)
+	if id := idStoredNodeID(t, host); len(id) != 8 {
+		t.Errorf("act.nodeId in .act/.git/config after act init: %q, want 8 hex characters", id)
 	}
 	if _, err := time.Parse("2006-01-02T15:04:05.000Z", cfg["created_at"]); err != nil {
 		t.Errorf("config.json created_at %q is not a millisecond UTC timestamp: %v", cfg["created_at"], err)
@@ -216,8 +193,8 @@ func TestDocClaim_Spec_InitWritesAndCommits(t *testing.T) {
 
 // TestDocClaim_Spec_InitForceRewritesConfig asserts the --force bullet and
 // the --force edge case of the `act init` section: a re-run puts back what is
-// missing, always rewrites config.json (node_id derived again, created_at
-// new), makes no commit in a nested repo that has one — so the rewrite is an
+// missing, always rewrites config.json (created_at new, the checkout's
+// node_id kept), makes no commit in a nested repo that has one — so the rewrite is an
 // uncommitted change there — and leaves op files and snapshots alone.
 func TestDocClaim_Spec_InitForceRewritesConfig(t *testing.T) {
 	brokencoIsolateEnv(t)
@@ -237,10 +214,11 @@ func TestDocClaim_Spec_InitForceRewritesConfig(t *testing.T) {
 		t.Fatalf("write %s: %v", snapshot, err)
 	}
 	rawBefore, before := sp9Config(t, host)
+	nodeBefore := idStoredNodeID(t, host)
 	commitsBefore, _ := sp7GitOut("-C", nested, "rev-list", "--count", "HEAD")
 
 	// Take away one of each thing a re-run puts back, and change the email
-	// node_id is derived from.
+	// node_id used to be derived from (it no longer is).
 	for _, rel := range []string{"imports", "ops/.gitkeep", "hooks/close.sample"} {
 		if err := os.Remove(filepath.Join(nested, filepath.FromSlash(rel))); err != nil {
 			t.Fatalf("remove .act/%s: %v", rel, err)
@@ -267,11 +245,14 @@ func TestDocClaim_Spec_InitForceRewritesConfig(t *testing.T) {
 
 	// config.json is rewritten although it was there.
 	rawAfter, after := sp9Config(t, host)
-	if keys := sp7Keys(sp8Object(t, ".act/config.json", rawAfter)); keys != "created_at,last_hlc,node_id,version" {
+	if keys := sp7Keys(sp8Object(t, ".act/config.json", rawAfter)); keys != "created_at,last_hlc,version" {
 		t.Errorf("config.json keys after --force: %q", keys)
 	}
-	if want := sp9NodeID(t, host); after["node_id"] != want || after["node_id"] == before["node_id"] {
-		t.Errorf("node_id after --force with a new user.email: %q (was %q); want it derived again, %q", after["node_id"], before["node_id"], want)
+	if nodeAfter := idStoredNodeID(t, host); nodeAfter == "" || nodeAfter != nodeBefore {
+		t.Errorf("node_id after --force with a new user.email: %q (was %q); want the checkout's node_id kept", nodeAfter, nodeBefore)
+	}
+	if got := sp8Str(sp8Object(t, "act init --force --json", out)["node_id"]); got != nodeBefore {
+		t.Errorf("act init --force --json node_id %q, want the kept %q", got, nodeBefore)
 	}
 	if after["created_at"] == before["created_at"] {
 		t.Errorf("created_at after --force is still %q; want the time of the re-run", after["created_at"])
@@ -334,8 +315,7 @@ func sp9KeysOf(vals map[string]string) string {
 // so.
 func TestDocClaim_Spec_CreateShowUpdateCloseVersionJSONExamplesMatchBinary(t *testing.T) {
 	dir := sp6Site(t)
-	_, cfg := sp9Config(t, dir)
-	node := cfg["node_id"]
+	node := idNodeIDOf(t, dir)
 	// noCommit is a second tracker for the --no-commit calls, which leave an
 	// uncommitted op file behind.
 	noCommit := sp6Site(t)

@@ -399,7 +399,7 @@ func TestDocClaim_Spec_ErrorEnvelopeHasNoKindKey(t *testing.T) {
 		t.Fatalf("plant lock: %v", err)
 	}
 	out, _, code = runActIn(t, dir, "doctor", "--json", "--check", "stale-git-lock")
-	if doc := sp8Object(t, "act doctor --json with a finding", out); code != 1 || sp7Keys(doc) != "count,findings,remote_status" {
+	if doc := sp8Object(t, "act doctor --json with a finding", out); code != 1 || sp7Keys(doc) != "count,findings,node_id,remote_status" {
 		t.Errorf("act doctor --json with an error finding: exit %d, keys %q; want 1 and the findings document, not an envelope", code, sp7Keys(doc))
 	}
 	if err := os.Remove(lock); err != nil {
@@ -864,14 +864,7 @@ func TestDocClaim_Spec_FlagBulletsReadyMineAsFresh(t *testing.T) {
 	mine := createIssue(t, dir, "sp8 mine")
 	theirs := createIssue(t, dir, "sp8 theirs")
 	nobody := createIssue(t, dir, "sp8 nobody")
-	cfg, err := os.ReadFile(filepath.Join(dir, ".act", "config.json"))
-	if err != nil {
-		t.Fatalf("read config.json: %v", err)
-	}
-	node := sp8Str(sp8Object(t, ".act/config.json", string(cfg))["node_id"])
-	if node == "" {
-		t.Fatalf("config.json has no node_id: %s", cfg)
-	}
+	node := idNodeIDOf(t, dir)
 	pass5Run(t, dir, 0, "", "update", "--json", "--assignee", node, mine)
 	pass5Run(t, dir, 0, "", "update", "--json", "--assignee", "sp8-other-node", theirs)
 	all := []string{mine, theirs, nobody}

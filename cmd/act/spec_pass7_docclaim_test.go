@@ -396,7 +396,7 @@ func TestDocClaim_Spec_DoctorJSONExampleMatchesBinary(t *testing.T) {
 	example := section[i+len("**JSON output:**\n```json\n"):]
 	example = example[:strings.Index(example, "\n```")]
 	exTop, exFinding, exRemote, _ := sp7DoctorShape(t, "the spec's example", example)
-	const wantTop = "count,findings,remote_status"
+	const wantTop = "count,findings,node_id,remote_status"
 	if exTop != wantTop {
 		t.Errorf("the spec's example has top-level keys %q, want %q", exTop, wantTop)
 	}

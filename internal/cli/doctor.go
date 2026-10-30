@@ -71,9 +71,14 @@ type Finding struct {
 // key existing — its inner fields default to RemoteReachable=true and
 // 0/"" for the rest, including on a run where phase2-reconciliation
 // did not run at all (a failed fold, `--check <another check>`).
+//
+// NodeID is this checkout's claim identity (config.ResolveNodeID): the
+// node_id its claims and op files carry. Empty only when it cannot be
+// resolved.
 type DoctorResult struct {
 	Findings     []Finding    `json:"findings"`
 	Count        int          `json:"count"`
+	NodeID       string       `json:"node_id"`
 	RemoteStatus RemoteStatus `json:"remote_status"`
 }
 
@@ -283,9 +288,11 @@ func RunDoctor(repoRoot string, opts DoctorOptions) (output any, exitCode int) {
 	if phase2Exit > exit {
 		exit = phase2Exit
 	}
+	nodeID, _ := config.ResolveNodeID(paths)
 	return DoctorResult{
 		Findings:     findings,
 		Count:        len(findings),
+		NodeID:       nodeID,
 		RemoteStatus: remoteStatus,
 	}, exit
 }

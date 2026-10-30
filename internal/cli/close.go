@@ -324,7 +324,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
 		return CloseErrorOutput{
-			Error:   "node_id_failed",
+			Error:   "config_read_failed",
 			Message: nerr.Error(),
 		}, 1
 	}

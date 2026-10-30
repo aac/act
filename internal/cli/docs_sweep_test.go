@@ -3110,7 +3110,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-doctor-json-three-top-level-keys",
 		docFile:      "docs/spec.md",
-		claimPattern: "The object has exactly three top-level keys: `findings`, `count` and `remote_status`.",
+		claimPattern: "The object has exactly four top-level keys: `findings`, `count`, `node_id` and `remote_status`.",
 		testName:     "TestDocClaim_Spec_DoctorJSONExampleMatchesBinary",
 	},
 	{
@@ -3368,7 +3368,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-ready-flag-mine",
 		docFile:      "docs/spec.md",
-		claimPattern: "- `--mine` (bool). Only the ready issues whose assignee is this checkout's `node_id`, read from `.act/config.json`.",
+		claimPattern: "- `--mine` (bool). Only the ready issues whose assignee is this checkout's `node_id`, read from `.act/.git/config` (`act.nodeId`).",
 		testName:     "TestDocClaim_Spec_FlagBulletsReadyMineAsFresh",
 	},
 	{
@@ -3476,9 +3476,9 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
 	},
 	{
-		name:         "spec-pass9-init-config-four-keys",
+		name:         "spec-pass9-init-config-three-keys",
 		docFile:      "docs/spec.md",
-		claimPattern: "`config.json` holds exactly four keys:",
+		claimPattern: "`config.json` holds exactly three keys:",
 		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
 	},
 	{
@@ -3508,7 +3508,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-pass9-init-force-always-rewrites-config",
 		docFile:      "docs/spec.md",
-		claimPattern: "and always rewrites `config.json`: `node_id` is worked out again from the machine id and `user.email` as they are now, and `created_at` becomes the time of the re-run",
+		claimPattern: "and always rewrites `config.json`: `created_at` becomes the time of the re-run. The checkout's `node_id` is kept.",
 		testName:     "TestDocClaim_Spec_InitForceRewritesConfig",
 	},
 	{
@@ -4098,6 +4098,36 @@ var docClaimRegistry = []docClaim{
 		docFile:      "internal/mcp/server.go",
 		claimPattern: "It carries `push_deferred` with `push_deferred_reason` when the edge's commit did not reach origin: the edge is recorded either way, so do not retry.",
 		testName:     "TestDocClaim_DplMCP_BlockSchemaAdvertisesPush",
+	},
+	{
+		name:         "help-identity-per-checkout-never-travels",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "kept in .act/.git/config (act.nodeId); it never travels with a clone.",
+		testName:     "TestDocClaim_Identity_StateImportGetsItsOwnNodeID",
+	},
+	{
+		name:         "spec-config-json-no-node-id-per-clone",
+		docFile:      "docs/spec.md",
+		claimPattern: "`.act/.git/config` is per clone, so the id never travels with one;",
+		testName:     "TestDocClaim_Identity_StateImportGetsItsOwnNodeID",
+	},
+	{
+		name:         "spec-concurrent-claim-checkouts-never-share-node-id",
+		docFile:      "docs/spec.md",
+		claimPattern: "Two checkouts of one tracker never share a `node_id`: each mints its own",
+		testName:     "TestDocClaim_Identity_StateImportGetsItsOwnNodeID",
+	},
+	{
+		name:         "spec-init-config-json-has-no-node-id",
+		docFile:      "docs/spec.md",
+		claimPattern: "It has no `node_id`, `schema_version` or `writer_version` key and no fold-checkpoint placeholder.",
+		testName:     "TestDocClaim_Identity_InitDoesNotWriteNodeIDToConfig",
+	},
+	{
+		name:         "spec-doctor-json-node-id-is-claim-identity",
+		docFile:      "docs/spec.md",
+		claimPattern: "`node_id` is this checkout's claim identity — the `node_id` its claims and op files carry.",
+		testName:     "TestDocClaim_Identity_InitDoesNotWriteNodeIDToConfig",
 	},
 }
 

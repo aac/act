@@ -228,7 +228,7 @@ func unknownDepVerbMsg(verb string) string {
 }
 
 // runInit dispatches `act init`. It resolves the repo root from cwd, gathers
-// machine-id + git email for node_id derivation, then delegates to RunInit.
+// git email for the nested repo's commit identity, then delegates to RunInit.
 //
 // Phase 1 (docs/coordination-plane-design.md) removed the pre-existing
 // `--no-commit` flag: the nested .act/ repo's initial commit is what `act

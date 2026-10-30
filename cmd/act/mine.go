@@ -19,7 +19,7 @@ import (
 func runMine(args []string) int {
 	fs := flag.NewFlagSet("mine", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
-	as := fs.String("as", "", "override identity; defaults to .act/config.json node_id")
+	as := fs.String("as", "", "override identity; defaults to this checkout's node_id (act.nodeId in .act/.git/config)")
 	rearranged, err := rearrangeArgs(args, fs)
 	if err != nil {
 		return 2
@@ -56,7 +56,7 @@ func runMine(args []string) int {
 		nodeID, nerr := config.ResolveNodeID(paths)
 		if nerr != nil {
 			emitEnvelope(*asJSON, map[string]any{
-				"error":   "node_id_failed",
+				"error":   "config_read_failed",
 				"message": fmt.Sprintf("act mine: cannot resolve this checkout's node_id: %v; pass --as <id>", nerr),
 			})
 			return 3

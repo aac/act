@@ -317,7 +317,7 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
 		return DepAddErrorOutput{
-			Error:   "node_id_failed",
+			Error:   "config_read_failed",
 			Message: nerr.Error(),
 		}, 1
 	}
@@ -605,7 +605,7 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 	}
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
-		return DepAddErrorOutput{Error: "node_id_failed", Message: nerr.Error()}, 1
+		return DepAddErrorOutput{Error: "config_read_failed", Message: nerr.Error()}, 1
 	}
 	clock := hlc.NewClock(nodeID, func() int64 { return time.Now().UnixMilli() })
 	var gops *gitops.ActGitOps

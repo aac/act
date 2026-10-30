@@ -263,7 +263,6 @@ The tree lists every path act writes at the top of `.act/`, in three groups. The
 ```jsonc
 {
   "schema_version": 1,
-  "node_id":        "7f3a91c2",                 // 8 hex; sha256(machine-id || git user.email)[0:8]
   "writer_version": "0.1.0",                    // version that ran `act init`
   "fold_checkpoint": ".act/fold-checkpoint.json",
   "auto_commit":    true,
@@ -271,6 +270,8 @@ The tree lists every path act writes at the top of `.act/`, in three groups. The
   "hlc_drift_budget_seconds": 300
 }
 ```
+
+`config.json` is committed in the nested repo, so it travels with every clone; it carries no `node_id`. Each checkout of a tracker has its own `node_id` (8 lowercase hex characters), minted at random on first use and kept in the nested repo's own git config as `act.nodeId`, with the checkout's state-root path beside it as `act.nodeIdPath`. `.act/.git/config` is per clone, so the id never travels with one; a checkout whose stored `act.nodeIdPath` is not its own state root (a copied `.act/.git`) mints a fresh id. A `node_id` key left in an older `config.json` is ignored.
 
 #### `.act/index.db` schema
 
@@ -364,9 +365,9 @@ Each writer maintains an HLC of three fields:
 HLC := { wall: int64_ms_unix_utc, logical: uint32, node_id: hex8 }
 ```
 
-`node_id` is fixed per repo, generated at `act init` as
-`sha256(machine-id || git-config user.email)[0:8]`, persisted in
-`.act/config.json`. Writers never mutate `node_id` after init.
+`node_id` is fixed per checkout: minted at random on first use and kept
+in `.act/.git/config` as `act.nodeId` (see `.act/config.json` above).
+Writers never mutate it.
 
 #### 1.2 Persistence
 
@@ -740,12 +741,12 @@ Resolution happens before any op is written, so a write command never partially 
 
 **Synopsis:** `act init [--force] [--force-new] [--contributing] [--commit-host] [--json]`
 
-**Behavior:** Creates `.act/` with the directories `ops/`, `snapshots/`, `hooks/` and `imports/`, the placeholder file `ops/.gitkeep`, the inert hook template `hooks/close.sample`, and `config.json`. `config.json` holds exactly four keys: `node_id` (the first 8 hex characters of `sha256(machine-id || git-config user.email)`, where the machine id is the content of `/etc/machine-id` or, on a machine without that file, the hostname), `created_at`, `version` (the writer version, `0.1.0`) and `last_hlc` (`{"logical": 0, "wall": 0}`). It has no `schema_version` or `writer_version` key and no fold-checkpoint placeholder. `act init` does not create `index.db`: the first command that reads the index does (`act list` on a new tracker, for one).
+**Behavior:** Creates `.act/` with the directories `ops/`, `snapshots/`, `hooks/` and `imports/`, the placeholder file `ops/.gitkeep`, the inert hook template `hooks/close.sample`, and `config.json`. `config.json` holds exactly three keys: `created_at`, `version` (the writer version, `0.1.0`) and `last_hlc` (`{"logical": 0, "wall": 0}`). It has no `node_id`, `schema_version` or `writer_version` key and no fold-checkpoint placeholder. The checkout's `node_id` is minted at random and kept in the nested repo's git config (`act.nodeId`), never in `config.json`. `act init` does not create `index.db`: the first command that reads the index does (`act list` on a new tracker, for one).
 
 `act init` then makes `.act/` a git repository of its own, on branch `main`, and commits what it wrote there as that repo's first commit, with the subject `act init: nested act state bootstrap`. In the host repo it adds the line `.act/` to `.gitignore` and installs a `pre-commit` hook block that rejects staged `.act/` paths. It makes no commit in the host repo unless `--commit-host` is given.
 
 **Flags:**
-- `--force` (bool, default false). Run even though `.act/config.json` already exists. The run puts back whatever `act init` creates that is missing — a subdirectory, `ops/.gitkeep`, `hooks/close.sample` — and always rewrites `config.json`: `node_id` is worked out again from the machine id and `user.email` as they are now, and `created_at` becomes the time of the re-run. A nested repo that already has a commit gets no new one, so the rewritten `config.json` is left there as an uncommitted change. Op files and snapshots are never changed or removed.
+- `--force` (bool, default false). Run even though `.act/config.json` already exists. The run puts back whatever `act init` creates that is missing — a subdirectory, `ops/.gitkeep`, `hooks/close.sample` — and always rewrites `config.json`: `created_at` becomes the time of the re-run. The checkout's `node_id` is kept. A nested repo that already has a commit gets no new one, so the rewritten `config.json` is left there as an uncommitted change. Op files and snapshots are never changed or removed.
 - `--force-new` (bool, default false). Start a new tracker even though a configured tracker remote (`$ACT_TRACKER_REMOTE`, else `~/.config/act/tracker-remote`) already holds one for this repo. Without it `act init` refuses that case with exit 3 and `tracker_not_checked_out`. It is a different switch from `--force`, which does not lift the refusal.
 - `--contributing` (bool, default false). Append a short section about the `Act-Id:` commit trailer to the host repo's `CONTRIBUTING.md`, creating the file if there is none and keeping what it already holds. Without the flag `act init` never touches `CONTRIBUTING.md`; a host with a public-looking remote (github.com, gitlab.com, bitbucket.org) only gets the suggestion to re-run with it. The section is written once: a later run that finds it adds nothing.
 - `--commit-host` (bool, default false). Commit the host-side files this run wrote — `.gitignore`, and `CONTRIBUTING.md` under `--contributing` — as one commit in the host repo. Without the flag those files are written to the working tree and left uncommitted. Nothing is committed when the host repo has no commit yet, or when the run wrote no host file.
@@ -989,7 +990,7 @@ A close that writes its op always prints those five keys. Three more appear only
 - `--json` (bool).
 - `--limit N` (int, default 50). `--limit 0` means "no limit" (every ready issue), the same meaning it has on `act list`.
 - `--all-machines` (bool). Include issues pinned to another machine.
-- `--mine` (bool). Only the ready issues whose assignee is this checkout's `node_id`, read from `.act/config.json`.
+- `--mine` (bool). Only the ready issues whose assignee is this checkout's `node_id`, read from `.act/.git/config` (`act.nodeId`).
 - `--as NODE` (string). With `--mine`: match the assignee `NODE` instead of this checkout's `node_id`. Without `--mine` it is exit 2.
 - `--fresh` (bool). Skip the read cache for this one read: fetch from `origin` and rebase even when the last fetch is inside the freshness window (see "Read-cache"). `--json` output then carries `refresh.reason: "fresh_flag"`. Mutually exclusive with `--no-fetch` (the pair is exit 2).
 - `--no-cache` (bool). Another spelling of `--fresh`; the two do the same thing.
@@ -1176,10 +1177,11 @@ The fix does NOT destroy the broken copy — operators (and the agent's later pa
 {"findings":[
   {"check":"nested-exclude","severity":"warn","message":"the nested .act repo does not ignore act's working files (/.slow-writes): ..."}
 ], "count":1,
+ "node_id":"7f3a91c2",
  "remote_status":{"remote_reachable":true,"local_unpushed_count":0,"upstream_drift_commits":0,"slow_writes_last_hour":0,"fetch_failure_reason":""}}
 ```
 
-The object has exactly three top-level keys: `findings`, `count` and `remote_status`. There is no `ok` key, no per-check `checks` list and no pass/fail summary — a check that found nothing leaves no trace in the output. `findings` is `null` on a clean run; each finding has `check`, `severity` (`warn` or `error`) and `message`. `count` is the number of findings. `remote_status` is described under "Remote-status JSON block".
+The object has exactly four top-level keys: `findings`, `count`, `node_id` and `remote_status`. `node_id` is this checkout's claim identity — the `node_id` its claims and op files carry. There is no `ok` key, no per-check `checks` list and no pass/fail summary — a check that found nothing leaves no trace in the output. `findings` is `null` on a clean run; each finding has `check`, `severity` (`warn` or `error`) and `message`. `count` is the number of findings. `remote_status` is described under "Remote-status JSON block".
 
 **Exit codes:** 0 when no finding has error severity (warnings alone exit 0 unless `--strict` promotes them); 1 if any error finding remains (and `--fix` did not remediate) — an `unknown-op-version` finding exits 1 like any other error finding, not 4; 2 on bad flags, including a `--check` name that is not a check; 3 when the working directory is not inside a git working tree (`not_in_git`), or when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`); 4 when `origin` is configured but unreachable (the `remote-reachable` error finding), which takes precedence over 1. In a git repo with no `.act/` and no tracker remote, `act doctor` is a read command like any other: it prints the no-state line and exits 0.
 
@@ -1334,7 +1336,7 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `branch_failed`            | 1    | the underlying error's text | none |
 | `claim_failed`             | 1    | the failing step and its error, without git's output (see "Atomic claim protocol"); not raised when the claim's fetch cannot reach origin | none (`stderr_tail` and `quarantined_op` when there is one) |
 | `commit_failed`            | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
-| `config_read_failed`       | 1, 3 | the underlying error's text, e.g. `config: parse: <error>` | none |
+| `config_read_failed`       | 1, 3 | the underlying error's text, e.g. `config: parse: <error>`; also raised when the checkout's `node_id` cannot be read or stored in `.act/.git/config` | none |
 | `cycle`                    | 1    | `act dep add: cycle detected: <a> -> <b> -> <a>` | `path` |
 | `doctor_failed`            | 1    | `act remote enable: doctor reported <N> error-severity finding(s)` | `doctor_findings`, `doctor_error_findings` |
 | `envelope_invalid`         | 1    | the underlying error's text | none |
@@ -1441,7 +1443,7 @@ Input: a single JSONL file (default `_generated/projects/act/issues.jsonl`). Eac
 
 Steps (in order, all-or-nothing):
 1. **Validate.** Read the file; for each line, parse JSON, check required keys, check `op_type` is in the known set, check `payload` shape against the op-type schema. Any failure → `import_invalid_jsonl` with the offending line number. No side effects yet.
-2. **Replay.** For each validated line, write a fresh local op via the normal write path: importer issues a new HLC (monotonic from local clock), uses the local `node_id` from `.act/config.json`, and produces a new act-style id (`act-<8hex>`). The bootstrap `issue_id` is recorded in a mapping table; subsequent ops in the same input that reference the bootstrap id are rewritten to the new local id before being written.
+2. **Replay.** For each validated line, write a fresh local op via the normal write path: importer issues a new HLC (monotonic from local clock), uses this checkout's `node_id` (`act.nodeId` in `.act/.git/config`), and produces a new act-style id (`act-<8hex>`). The bootstrap `issue_id` is recorded in a mapping table; subsequent ops in the same input that reference the bootstrap id are rewritten to the new local id before being written.
 3. **Mapping.** Write `.act/imports/<iso-utc>.json`:
    ```
    {"source": "issues.jsonl@<sha256-of-input>",
@@ -1533,7 +1535,7 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 
 ### 6. Edge cases
 
-- **Empty repo on `act init`.** Creates `.act/` with `config.json` (node_id, version), empty `ops/`, empty `snapshots/`, empty `hooks/`, empty `imports/`. Stages and commits in one commit: `act-init: <node_id>`. No-op if `.act/` already exists; exit 0 with `{"initialized": false}`.
+- **Empty repo on `act init`.** Creates `.act/` with `config.json` (created_at, version, last_hlc), empty `ops/`, empty `snapshots/`, empty `hooks/`, empty `imports/`. Stages and commits in one commit: `act-init: <node_id>`. No-op if `.act/` already exists; exit 0 with `{"initialized": false}`.
 - **`.act/ops/` missing on first run after init.** Treated as zero ops; fold returns empty state. No error.
 - **Importer encounters unknown `op_type`.** Step-1 validation fails → `import_invalid_jsonl`. The whole import is aborted before any op file is written.
 - **Two terminals on the same machine claim the same issue.** Both write distinct claim-op files (filenames include op-payload hash and node_id, so the two ops have different filenames even with identical wall-clock seconds because of payload nonce). Fold orders by HLC then op-hash; one wins, the other observes `claim_lost`.
@@ -1581,7 +1583,7 @@ Plain `go test ./...` — which is what CI runs — executes the fuzz target aga
 
 #### 7.4 Concurrency tests
 
-- **`concurrent_claim_two_writers`** — Two child processes each run `act update --claim <id>` against the same issue with a shared remote bare repo. Exactly one exits 0 with `{"claimed": true}`; the other exits 5 with `claim_lost` and a winner field. Asserted across 100 iterations to catch flakes.
+- **`concurrent_claim_two_writers`** — Two child processes each run `act update --claim <id>` against the same issue with a shared remote bare repo. Exactly one exits 0 with `{"claimed": true}`; the other exits 5 with `claim_lost` and a winner field. Asserted across 100 iterations to catch flakes. Two checkouts of one tracker never share a `node_id`: each mints its own, so the loser's `winner` field always names the other checkout.
 - **`concurrent_distinct_ops`** — Two writers update different fields (priority and description). Both ops survive after `git pull --rebase`; final state contains both updates. No error from either writer.
 - **`rebase_contention`** — Three writers update the same field (priority) concurrently. After all rebases settle, fold output is deterministic across runs (HLC + op-hash tiebreaker). Asserted by running the scenario 50 times and comparing final-state hashes.
 

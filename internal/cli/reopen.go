@@ -225,7 +225,7 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
 		return ReopenErrorOutput{
-			Error:   "node_id_failed",
+			Error:   "config_read_failed",
 			Message: nerr.Error(),
 		}, 1
 	}

@@ -519,7 +519,7 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
 		return UpdateErrorOutput{
-			Error:   "node_id_failed",
+			Error:   "config_read_failed",
 			Message: nerr.Error(),
 		}, 1
 	}
@@ -1163,7 +1163,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	nodeID, nerr := config.ResolveNodeID(paths)
 	if nerr != nil {
 		return UpdateErrorOutput{
-			Error:   "node_id_failed",
+			Error:   "config_read_failed",
 			Message: nerr.Error(),
 		}, 1
 	}

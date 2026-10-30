@@ -21,7 +21,7 @@ func runReady(args []string) int {
 	limit := fs.Int("limit", cli.DefaultReadyLimit, "maximum number of issues to return; --limit 0 means no limit (return every ready issue). A capped ready set prints a WARNING to stderr naming how many issues were hidden.")
 	mine := fs.Bool("mine", false, "filter to issues already assigned to the calling node")
 	allMachines := fs.Bool("all-machines", false, "include issues pinned to OTHER machines. By default `act ready` returns only what this machine can run: an issue pinned with `--machine` to a different machine is excluded, the count goes to stderr, and --json reports it as `machine.pinned_elsewhere`. Pinned rows render as `@<label>` before the title wherever they appear. See `act machine` for this machine's label and whether it is filtering at all — an unlabelled machine excludes nothing.")
-	as := fs.String("as", "", "override identity for --mine; defaults to .act/config.json node_id")
+	as := fs.String("as", "", "override identity for --mine; defaults to this checkout's node_id (act.nodeId in .act/.git/config)")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
 	// Phase 2 ticket 5: --fresh forces a fetch+rebase of .act/.git
 	// before reading state. --no-cache is a flag-for-flag alias with
@@ -62,7 +62,7 @@ func runReady(args []string) int {
 		return 3
 	}
 
-	// Resolve identity for --mine. Default reads .act/config.json node_id;
+	// Resolve identity for --mine. Default is this checkout's node_id;
 	// --as <id> overrides without touching config (useful for ad-hoc
 	// "what's <agent-x> working on?" queries).
 	assigneeFilter := ""
@@ -80,7 +80,7 @@ func runReady(args []string) int {
 			nodeID, nerr := config.ResolveNodeID(paths)
 			if nerr != nil {
 				emitReadyError(*asJSON, map[string]any{
-					"error":   "node_id_failed",
+					"error":   "config_read_failed",
 					"message": fmt.Sprintf("act ready: --mine cannot resolve this checkout's node_id: %v; pass --as <id>", nerr),
 				})
 				return 3

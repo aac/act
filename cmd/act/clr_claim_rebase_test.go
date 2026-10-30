@@ -74,24 +74,9 @@ func clrRival(t *testing.T, bare string) string {
 	if code != 0 {
 		t.Fatalf("act state import --from-remote: exit %d\nstdout=%s\nstderr=%s", code, stdout, stderr)
 	}
-	// config.json is tracked, so the import carried the first checkout's
-	// node_id along, and a claim's assignee is the node_id. Give the rival
-	// its own, as a checkout on another machine would be told apart, and
-	// tell git to overlook the edit so the rival's tree stays clean.
-	cfgPath := filepath.Join(clrActDir(rival), "config.json")
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(clrReadFile(t, cfgPath)), &cfg); err != nil {
-		t.Fatalf("parse the rival's config.json: %v", err)
-	}
-	cfg["node_id"] = "c1a0beef"
-	b, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal the rival's config.json: %v", err)
-	}
-	if err := os.WriteFile(cfgPath, b, 0o644); err != nil {
-		t.Fatalf("write the rival's config.json: %v", err)
-	}
-	sp6Git(t, "-C", clrActDir(rival), "update-index", "--skip-worktree", "config.json")
+	// The import is a fresh checkout, so it mints its own node_id
+	// (act.nodeId in its .act/.git/config) and claims as a distinct
+	// claimant from the first checkout.
 	return rival
 }
 

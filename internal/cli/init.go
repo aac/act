@@ -338,7 +338,7 @@ func RunInit(repoRoot string, opts InitOptions) (any, int) {
 	nodeID, nidErr := config.ResolveNodeID(paths)
 	if nidErr != nil {
 		return errorOutput{
-			Error:   "node_id_failed",
+			Error:   "config_read_failed",
 			Message: nidErr.Error(),
 		}, 1
 	}
