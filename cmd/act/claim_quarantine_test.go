@@ -161,3 +161,22 @@ func TestDocClaim_StaleLock_CloseHeadLockCommitFailure(t *testing.T) {
 		t.Errorf("close exited %d but act show reports status %q; want open", code, got)
 	}
 }
+
+// TestDocClaim_StaleLock_ClaimExit1IsStaleGitLock: a claim blocked by a stale
+// index.lock exits 1 with stale_git_lock, not claim_failed, as docs/spec.md's
+// `act update --claim` exit-1 text and error table say.
+func TestDocClaim_StaleLock_ClaimExit1IsStaleGitLock(t *testing.T) {
+	dir := blocksSite(t)
+	id := createBlocksIssue(t, dir, "sgl exit probe")
+	lockPath := filepath.Join(dir, ".act", ".git", "index.lock")
+	if err := os.WriteFile(lockPath, nil, 0o644); err != nil {
+		t.Fatalf("plant index.lock: %v", err)
+	}
+	out, _, code := runActIn(t, dir, "update", "--claim", id, "--json")
+	if code != 1 {
+		t.Fatalf("exit = %d; want 1; out=%s", code, out)
+	}
+	if e := claimqParse(t, out); e.Error != "stale_git_lock" {
+		t.Errorf("error = %q; want stale_git_lock (not claim_failed); out=%s", e.Error, out)
+	}
+}

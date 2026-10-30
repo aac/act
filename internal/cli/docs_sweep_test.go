@@ -2288,6 +2288,12 @@ var docClaimRegistry = []docClaim{
 	// ops/, so `act update --claim` exits 1 while `act show` says
 	// in_progress; or close's HEAD.lock falls back to commit_failed.
 	{
+		name:         "spec-claim-exit1-stale-git-lock",
+		docFile:      "docs/spec.md",
+		claimPattern: "or `stale_git_lock` when a leftover `.act/.git/index.lock`",
+		testName:     "TestDocClaim_StaleLock_ClaimExit1IsStaleGitLock",
+	},
+	{
 		name:         "stale-lock-failed-claim-unclaimed",
 		docFile:      "README.md",
 		claimPattern: "a failed `act update --claim` leaves the issue unclaimed",

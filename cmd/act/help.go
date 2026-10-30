@@ -777,6 +777,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     claim_failed            claim could not be written, committed or rebased
                             (a fetch or push that does not reach origin makes a
                             won claim claim_unconfirmed, exit 6; not this)
+                            (a stale index.lock/HEAD.lock blocking the claim
+                            answers stale_git_lock, also exit 1; not this)
     config_read_failed      .act/config.json unreadable, or node_id
                             unreadable/unwritable in .act/.git/config
     index_open_failed       SQLite open failed
