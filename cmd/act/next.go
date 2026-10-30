@@ -201,6 +201,9 @@ func runNext(args []string) int {
 				body["push_deferred"] = true
 				body["push_deferred_reason"] = won.PushDeferredReason
 			}
+			if won.AlreadyHeld {
+				body["already_held"] = true
+			}
 			data, jerr := json.Marshal(body)
 			if jerr != nil {
 				fmt.Fprintf(os.Stderr, "act next: json marshal: %v\n", jerr)

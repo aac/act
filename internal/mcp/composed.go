@@ -223,8 +223,19 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 					body["push_deferred"] = true
 					body["push_deferred_reason"] = won.PushDeferredReason
 				}
+				if won.AlreadyHeld {
+					body["already_held"] = true
+				}
 			}
 			return body, false
+		}
+		// act-c30acd: exit 6 claim_unconfirmed — the claim op is committed
+		// but origin has not seen it. Every other candidate would be
+		// unconfirmed the same way, and claiming several provisionally is
+		// worse than stopping, so the envelope is returned as an error
+		// result instead of moving on to the next candidate.
+		if claimCode == 6 {
+			return claimOut, true
 		}
 		// Claim lost (or other non-zero). Mark id as lost and back off.
 		lost[pick.ID] = true

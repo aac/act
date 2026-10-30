@@ -42,6 +42,11 @@ const (
 	ErrIDAmbiguous       = "id_ambiguous"
 	ErrVersionSkew       = "version_skew"
 	ErrClaimLost         = "claim_lost"
+	// ErrClaimUnconfirmed (exit 6, act-c30acd): the claim op is committed
+	// and queued but origin has not seen it — the fetch did not reach
+	// origin, or the push did not — so it is not a win. Re-running the
+	// claim confirms it and writes no second op.
+	ErrClaimUnconfirmed  = "claim_unconfirmed"
 	ErrCycleDetected     = "cycle_detected"
 	ErrDepNotFound       = "dep_not_found"
 	ErrHookFailed        = "hook_failed"

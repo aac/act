@@ -25,6 +25,19 @@ type FakeGitOps struct {
 	PushErr       error
 
 	LastCommitMessage string
+
+	// UnpublishedResult is what Unpublished answers (act-c30acd); the
+	// zero value is "everything is on origin", the fast-path case.
+	UnpublishedResult bool
+	UnpublishedCalls  int
+	// OnPullRebase, when set, runs inside PullRebase before it returns —
+	// the stand-in for origin's ops arriving with the rebase.
+	OnPullRebase func()
+}
+
+func (f *FakeGitOps) Unpublished() (bool, error) {
+	f.UnpublishedCalls++
+	return f.UnpublishedResult, nil
 }
 
 func (f *FakeGitOps) Commit(message string) error {
@@ -35,6 +48,9 @@ func (f *FakeGitOps) Commit(message string) error {
 
 func (f *FakeGitOps) PullRebase() error {
 	f.PullRebaseCalls++
+	if f.OnPullRebase != nil {
+		f.OnPullRebase()
+	}
 	return f.PullRebaseErr
 }
 
@@ -538,9 +554,11 @@ func TestRunClaim_IdempotentReClaimSameAssignee(t *testing.T) {
 	priorPath := writeRawClaim(t, paths.Ops, "act-1234", "alice", priorHLC)
 
 	// Our re-claim attempt with a LATER clock: without idempotence we'd
-	// write a second op and lose to the earlier one.
+	// write a second op and lose to the earlier one. The hold is
+	// published (act-c30acd): origin already has it, so the answer comes
+	// from local state.
 	clock := newClock(t, "abcdef01", 1_700_000_001_000)
-	git := &FakeGitOps{}
+	git := &FakeGitOps{UnpublishedResult: false}
 
 	res, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)
 	if err != nil {

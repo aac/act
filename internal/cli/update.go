@@ -188,15 +188,24 @@ type UpdateResult struct {
 // On a claim loss the result carries Error=claim_lost so the JSON envelope
 // surfaces the canonical error slug (spec §error-envelope: claim_lost, exit
 // 5) alongside the structured claim fields (claimed:false, winner, reason).
-// The Error field is omitted on the win path.
+// A claim origin has not seen carries Error=claim_unconfirmed (exit 6) with
+// reason origin_unreachable or push_failed (act-c30acd). The Error field is
+// omitted on the win path.
 type UpdateClaimResult struct {
-	OK         bool     `json:"ok"`
-	Claimed    bool     `json:"claimed"`
-	ID         string   `json:"id"`
-	Winner     string   `json:"winner"`
+	OK      bool   `json:"ok"`
+	Claimed bool   `json:"claimed"`
+	ID      string `json:"id"`
+	// Winner is the assignee of the winning claim op on a win or a loss.
+	// Absent on claim_unconfirmed (exit 6): no winner is known until
+	// origin has seen the claim.
+	Winner     string   `json:"winner,omitempty"`
 	Error      string   `json:"error,omitempty"`
 	Reason     string   `json:"reason,omitempty"`
 	OpsWritten []string `json:"ops_written,omitempty"`
+	// AlreadyHeld is true on a win that wrote no op: this checkout already
+	// held the issue (act-c30acd). Whether that was this session earlier
+	// or a sibling session in the same checkout is the caller's to know.
+	AlreadyHeld bool `json:"already_held,omitempty"`
 	// Warnings: see UpdateResult.Warnings. Set only on a win.
 	Warnings []string `json:"warnings,omitempty"`
 	// PushDeferred, PushDeferredReason: see UpdateResult. Set only on a
@@ -1114,7 +1123,9 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 // claim_lost), per spec §error-envelope's universal exit-code table.
 // On hard error (drift / write / commit / a rebase that failed once origin
 // was fetched): exit 1 with an UpdateErrorOutput. A fetch that never reached
-// origin is not one: the claim is decided locally and a win is a deferral.
+// origin is not one: the claim is decided locally, and a local win that
+// origin has not seen — the fetch or the push did not reach it — is exit 6
+// claim_unconfirmed (act-c30acd), except under --isolated / --offline.
 func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 	paths := config.Layout(repoRoot)
 
@@ -1304,7 +1315,12 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 		// not reach origin is a deferral. --push already pushed inside the
 		// claim protocol, and a re-claim of an issue this node already
 		// holds committed nothing, so neither publishes again.
-		if !opts.Push && !opts.Isolated && !res.AlreadyHeld && res.PullErr == nil {
+		//
+		// act-c30acd: a re-claim that found its hold unpublished and
+		// confirmed it against origin (Republish) publishes the stranded
+		// claim commit here too.
+		publishedDeferred := false
+		if !opts.Push && !opts.Isolated && (!res.AlreadyHeld || res.Republish) && res.PullErr == nil {
 			if opts.Offline {
 				// act-18bd72: a failed queue append is named on the
 				// result as well as on stderr.
@@ -1312,12 +1328,37 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 					won.Warnings = append(won.Warnings, WarnPushQueueFailed)
 				}
 			} else if pub := publishClaimCommit(gops, opts.Branch); pub.Deferred {
+				publishedDeferred = true
 				won.PushDeferred = true
 				if pub.Reason != nil {
 					won.PushDeferredReason = pub.Reason.Error()
 				}
 			}
 		}
+		// act-c30acd (docs/claim-identity-design.md §4): a claim whose op
+		// origin has not seen when the command ends is not won. The op
+		// stays committed and queued — nothing is retracted — but the
+		// answer is exit 6 claim_unconfirmed, claimed:false, so no caller
+		// dispatches on it. Re-running the claim is the way to confirm:
+		// it writes no second op (Step 0). --isolated and --offline asked
+		// for no confirmation and keep the exit-0 win.
+		if !opts.Isolated && !opts.Offline && (res.PullErr != nil || res.PushErr != nil || publishedDeferred) {
+			reason := "push_failed"
+			if res.PullErr != nil {
+				reason = "origin_unreachable"
+			}
+			return UpdateClaimResult{
+				OK:                 false,
+				Claimed:            false,
+				ID:                 res.IssueID,
+				Error:              ErrClaimUnconfirmed,
+				Reason:             reason,
+				Warnings:           won.Warnings,
+				PushDeferred:       true,
+				PushDeferredReason: won.PushDeferredReason,
+			}, 6
+		}
+		won.AlreadyHeld = res.AlreadyHeld
 		return won, 0
 	}
 	// Claim loss: exit 5 with envelope error `claim_lost` per spec
@@ -1512,6 +1553,12 @@ func (c *claimGitOps) PullRebase() error {
 	return c.inner.PullRebaseBranch(c.branch)
 }
 
+// Unpublished is read-only (one ancestry check against the remote-tracking
+// ref), so it takes no write lock (act-c30acd).
+func (c *claimGitOps) Unpublished() (bool, error) {
+	return c.inner.UnpublishedOnBranch(c.branch)
+}
+
 // Push takes the write lock too (act-94bbea): the post-win push runs after
 // Commit released it, and must not push while a sibling is mid-rebase.
 func (c *claimGitOps) Push() error {
@@ -1541,7 +1588,13 @@ func publishClaimCommit(gops *gitops.ActGitOps, branch string) PublishResult {
 // human-friendly line.
 func FormatUpdateClaimHuman(res UpdateClaimResult) string {
 	if res.Claimed {
+		if res.AlreadyHeld {
+			return fmt.Sprintf("Claimed %s (winner=%s, already held by this checkout)\n", res.ID, res.Winner)
+		}
 		return fmt.Sprintf("Claimed %s (winner=%s)\n", res.ID, res.Winner)
+	}
+	if res.Error == ErrClaimUnconfirmed {
+		return fmt.Sprintf("Claim of %s unconfirmed (%s): origin has not seen it, so it is not yours yet — re-run the claim to confirm it, or take other work\n", res.ID, res.Reason)
 	}
 	return fmt.Sprintf("Lost claim race for %s (winner=%s)\n", res.ID, res.Winner)
 }

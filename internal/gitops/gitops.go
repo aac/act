@@ -1136,6 +1136,51 @@ func (g *GitOps) PullRebaseBranch(branch string) error {
 	return err
 }
 
+// Unpublished is UnpublishedOnBranch for the current branch. It satisfies
+// claim.GitOps (act-c30acd).
+func (g *GitOps) Unpublished() (bool, error) {
+	return g.UnpublishedOnBranch("")
+}
+
+// UnpublishedOnBranch reports whether this checkout has commits origin has
+// not seen: true when an `origin` remote exists and `origin/<branch>` does
+// not contain HEAD, including when there is no `origin/<branch>` ref at all
+// (nothing was ever published, or the remote-tracking ref was never
+// fetched). With no `origin` remote, or a detached HEAD and no branch
+// named, it is false — there is nothing to publish to, exactly the cases
+// PullRebaseBranch treats as a no-op.
+//
+// It is the claim protocol's "may Step 0 answer `already held` from local
+// state" probe (docs/claim-identity-design.md §3): one read-only ancestry
+// check against the remote-tracking ref, no fetch and no lock. It reads the
+// ref as the last fetch or push left it, so it can only err towards
+// "unpublished", which costs one extra rebase and never a wrong answer.
+func (g *GitOps) UnpublishedOnBranch(branch string) (bool, error) {
+	if !g.hasOriginRemote() {
+		return false, nil
+	}
+	target := branch
+	if target == "" {
+		var err error
+		target, err = g.CurrentBranch()
+		if err != nil {
+			return false, err
+		}
+		if target == "HEAD" {
+			return false, nil
+		}
+	}
+	// Route through runCombined so the --git-dir/--work-tree pin set by
+	// NewActGitOps applies (act-784b), as ancestryToOrigin does.
+	if _, err := g.runCombined("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+target); err != nil {
+		return true, nil
+	}
+	if _, err := g.runCombined("merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/"+target); err != nil {
+		return true, nil
+	}
+	return false, nil
+}
+
 // isMissingRemoteRef reports whether a fetch failed only because origin has
 // no such branch (`fatal: couldn't find remote ref <branch>`): origin was
 // reached and holds nothing to rebase onto.

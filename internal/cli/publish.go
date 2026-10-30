@@ -150,7 +150,7 @@ func deferPublish(gops *gitops.ActGitOps, opType string, stderr io.Writer, reaso
 	if err := RecordPendingPush(gops, gops.RepoRoot, opType); err == nil {
 		res.Queued = true
 	}
-	emitPublishDeferredWarning(stderr, res)
+	emitPublishDeferredWarning(stderr, opType, res)
 	return res
 }
 
@@ -159,7 +159,11 @@ func deferPublish(gops *gitops.ActGitOps, opType string, stderr io.Writer, reaso
 // whole point of act-89a595 is that a zero exit here means "committed,
 // not published", and an agent that skims the tail of stderr has to be
 // able to tell that apart from an ordinary success.
-func emitPublishDeferredWarning(stderr io.Writer, res PublishResult) {
+//
+// A claim is the exception (act-c30acd): an unpublished claim is not a win
+// (exit 6 claim_unconfirmed), and re-running the claim is how it is
+// confirmed — a re-claim writes no second op — so its last line says so.
+func emitPublishDeferredWarning(stderr io.Writer, opType string, res PublishResult) {
 	dst := stderr
 	if dst == nil {
 		dst = os.Stderr
@@ -170,6 +174,10 @@ func emitPublishDeferredWarning(stderr io.Writer, res PublishResult) {
 		fmt.Fprintf(dst, "act: WARNING:   queued in .act/.pending-pushes; the next act write without --offline or --isolated retries the push.\n")
 	} else {
 		fmt.Fprintf(dst, "act: WARNING:   the queue append ALSO failed; nothing is lost — the next act write without --offline or --isolated pushes this commit along with its own.\n")
+	}
+	if opType == "claim" {
+		fmt.Fprintf(dst, "act: WARNING:   the claim op landed locally and is durable, but origin has not seen it — re-run the claim once origin is reachable to confirm it — a re-claim writes no second op.\n")
+		return
 	}
 	fmt.Fprintf(dst, "act: WARNING:   the write itself landed and is durable — exit status is 0 on purpose. Do NOT re-run this command; re-running duplicates the op.\n")
 }

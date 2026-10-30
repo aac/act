@@ -42,9 +42,16 @@ type Result struct {
 	// HLC is the HLC stamped on our most recent claim op.
 	HLC hlc.HLC
 	// AlreadyHeld is true when the issue was already claimed by Assignee:
-	// the run wrote no op and made no commit, so there is nothing new for
-	// the caller to publish (act-2cfc30).
+	// the run wrote no op and made no commit (act-2cfc30). Unless Republish
+	// is also set there is nothing new for the caller to publish.
 	AlreadyHeld bool
+	// Republish is true on an AlreadyHeld result whose hold was found
+	// unpublished — this checkout had commits origin had not seen — and was
+	// then confirmed by a rebase onto origin with Options.Push unset: the
+	// claim commit is still local, so the caller runs its publish leg for
+	// it, and a publish that does not reach origin leaves the hold
+	// unconfirmed (act-c30acd, docs/claim-identity-design.md §3).
+	Republish bool
 	// PushNoRemote is true when Options.Push was set, the claim was won,
 	// and there was no remote to push to: the claim stands and nothing
 	// was pushed (act-f4fd34).
@@ -94,6 +101,12 @@ type GitOps interface {
 	PullRebase() error
 	// Push runs `git push`. Only invoked on win when Options.Push is set.
 	Push() error
+	// Unpublished reports whether the checkout has commits origin has not
+	// seen: true when an `origin` remote exists and `origin/<branch>` does
+	// not contain HEAD (a missing `origin/<branch>` ref counts), false with
+	// no `origin` at all. Read-only; Step 0 consults it before answering
+	// "already held" from local state (act-c30acd).
+	Unpublished() (bool, error)
 }
 
 // ErrInvalidFlags is returned when conflicting universal flags are passed.
@@ -319,14 +332,29 @@ func singleAttempt(
 	if winnerHash, winnerAssignee, err := winnerOnDisk(paths.Ops, issueID); err != nil {
 		return Result{IssueID: issueID, HLC: stamp}, fmt.Errorf("claim: idempotence-check winner: %w", err)
 	} else if winnerHash != "" && winnerAssignee == opts.Assignee {
-		return Result{
+		// act-c30acd: the answer may come from local state only when that
+		// state is what origin has. A hold whose commit never reached
+		// origin — stranded by a rebase that conflicted or a push that
+		// failed — may be a claim origin already beat, so it is confirmed
+		// against origin first (confirmHold). --isolated asked for no
+		// confirmation.
+		held := Result{
 			IssueID:     issueID,
 			YourOpHash:  winnerHash,
 			Winner:      winnerAssignee,
 			HLC:         stamp,
 			Claimed:     true,
 			AlreadyHeld: true,
-		}, nil
+		}
+		if opts.Isolated {
+			return held, nil
+		}
+		// A probe that fails counts as unpublished: consulting origin is
+		// always safe, answering from a log that may be stale is not.
+		if unpublished, uerr := gitOps.Unpublished(); uerr == nil && !unpublished {
+			return held, nil
+		}
+		return confirmHold(paths, opts, held, gitOps)
 	}
 
 	// Step 2: build envelope.
@@ -464,6 +492,73 @@ func singleAttempt(
 			}
 		}
 	}
+	return res, nil
+}
+
+// confirmHold is Step 0's slow path (act-c30acd, docs/claim-identity-design.md
+// §3): the issue is held by Assignee in this checkout's log, but the
+// checkout has commits origin has not seen, so origin's history is brought
+// in before the hold is reported. It writes no op — the decision is made on
+// the ops already in the log once origin's are among them:
+//
+//   - the rebase reached origin (or there is nothing to rebase onto) and the
+//     hold is still ours: AlreadyHeld, and the stranded commit is published
+//     (Push when Options.Push, else Republish for the caller's publish leg).
+//   - origin was not reached and the hold is still ours: AlreadyHeld with
+//     PullErr — an unconfirmed hold.
+//   - another assignee now wins (origin held an earlier claim), or origin
+//     released the issue: a loss, Claimed false.
+//   - the rebase failed once origin was fetched: a hard error, as on the
+//     main path. The retry never answers "held" while origin's history
+//     cannot be brought in.
+//
+// A hold with PullErr is a Claimed result, so a --wait loop returns it at
+// once rather than retrying.
+func confirmHold(paths config.LayoutPaths, opts Options, held Result, gitOps GitOps) (Result, error) {
+	issueID := held.IssueID
+	fail := Result{IssueID: issueID, YourOpHash: held.YourOpHash, HLC: held.HLC}
+	var pullErr error
+	if err := gitOps.PullRebase(); err != nil {
+		switch {
+		case errors.Is(err, ErrNoUpstream), errors.Is(err, ErrPullRebaseSoftFail):
+		case errors.Is(err, ErrOriginUnreachable):
+			pullErr = fmt.Errorf("claim: pull --rebase: %w", err)
+		default:
+			return fail, fmt.Errorf("claim: pull --rebase: %w", err)
+		}
+	}
+	if _, err := fold.FoldIssue(paths.Ops, issueID, fold.ApplyDispatch); err != nil {
+		return fail, fmt.Errorf("claim: fold: %w", err)
+	}
+	winnerHash, winnerAssignee, err := winnerOnDisk(paths.Ops, issueID)
+	if err != nil {
+		return fail, fmt.Errorf("claim: winner: %w", err)
+	}
+	if winnerHash == "" || winnerAssignee != opts.Assignee {
+		// Lost: origin had an earlier claim, or released the issue
+		// (unclaim / close / reopen) after ours. This checkout does not
+		// hold it, and no op is written to change that.
+		lost := fail
+		lost.Winner = winnerAssignee
+		return lost, nil
+	}
+	res := held
+	res.YourOpHash = winnerHash
+	if pullErr != nil {
+		res.PullErr = pullErr
+		return res, nil
+	}
+	if opts.Push {
+		if err := gitOps.Push(); err != nil {
+			if errors.Is(err, ErrNoUpstream) {
+				res.PushNoRemote = true
+			} else {
+				res.PushErr = fmt.Errorf("claim: push: %w", err)
+			}
+		}
+		return res, nil
+	}
+	res.Republish = true
 	return res, nil
 }
 
