@@ -113,8 +113,8 @@ func sp9Exists(host, rel string) bool {
 
 // TestDocClaim_Spec_InitWritesAndCommits asserts the Behavior paragraphs and
 // the "Side effects" line of the `act init` section: what init creates under
-// .act/ (and that index.db is not part of it), the three keys of config.json
-// and that node_id is not among them, the one commit in the nested repo, and that the
+// .act/ (and that index.db is not part of it), the two keys of config.json
+// and that node_id and last_hlc are not among them, the one commit in the nested repo, and that the
 // host repo gets files but no commit unless --commit-host.
 func TestDocClaim_Spec_InitWritesAndCommits(t *testing.T) {
 	brokencoIsolateEnv(t)
@@ -134,13 +134,14 @@ func TestDocClaim_Spec_InitWritesAndCommits(t *testing.T) {
 		}
 	}
 
-	// config.json: exactly three keys; node_id lives in .act/.git/config.
+	// config.json: exactly two keys; node_id lives in .act/.git/config and
+	// there is no last_hlc (act-4c3353).
 	raw, cfg := sp9Config(t, host)
-	if keys := sp7Keys(sp8Object(t, ".act/config.json", raw)); keys != "created_at,last_hlc,version" {
-		t.Errorf("config.json keys %q, want created_at,last_hlc,version\n%s", keys, raw)
+	if keys := sp7Keys(sp8Object(t, ".act/config.json", raw)); keys != "created_at,version" {
+		t.Errorf("config.json keys %q, want created_at,version\n%s", keys, raw)
 	}
-	if cfg["version"] != "0.1.0" || cfg["last_hlc"] != `{"logical":0,"wall":0}` {
-		t.Errorf("config.json: version %q, last_hlc %s; want 0.1.0 and a zero last_hlc", cfg["version"], cfg["last_hlc"])
+	if cfg["version"] != "0.1.0" {
+		t.Errorf("config.json: version %q; want 0.1.0", cfg["version"])
 	}
 	if id := idStoredNodeID(t, host); len(id) != 8 {
 		t.Errorf("act.nodeId in .act/.git/config after act init: %q, want 8 hex characters", id)
@@ -245,7 +246,7 @@ func TestDocClaim_Spec_InitForceRewritesConfig(t *testing.T) {
 
 	// config.json is rewritten although it was there.
 	rawAfter, after := sp9Config(t, host)
-	if keys := sp7Keys(sp8Object(t, ".act/config.json", rawAfter)); keys != "created_at,last_hlc,version" {
+	if keys := sp7Keys(sp8Object(t, ".act/config.json", rawAfter)); keys != "created_at,version" {
 		t.Errorf("config.json keys after --force: %q", keys)
 	}
 	if nodeAfter := idStoredNodeID(t, host); nodeAfter == "" || nodeAfter != nodeBefore {

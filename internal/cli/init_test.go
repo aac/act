@@ -122,8 +122,12 @@ func TestRunInit_HappyPath(t *testing.T) {
 	if cfg.CreatedAt != "2026-04-29T12:00:00.000Z" {
 		t.Errorf("created_at = %q", cfg.CreatedAt)
 	}
-	if cfg.LastHLC != (config.HLCState{}) {
-		t.Errorf("last_hlc = %+v, want zero", cfg.LastHLC)
+	raw, rerr := os.ReadFile(paths.ConfigJSON)
+	if rerr != nil {
+		t.Fatalf("read config.json: %v", rerr)
+	}
+	if strings.Contains(string(raw), `"last_hlc"`) {
+		t.Errorf("config.json must not carry last_hlc (act-4c3353): %s", raw)
 	}
 }
 

@@ -180,28 +180,19 @@ func TestRunClaim_TwoWriterRace_WeWin(t *testing.T) {
 	}
 }
 
-// TestRunClaim_HLCDriftFailFast: a clock far in the future should fail the
-// plausibility check before any gitOps method is called.
+// TestRunClaim_HLCDriftFailFast: a clock whose state has run far ahead of
+// its wall clock (here: it received an op stamped far in the future) must
+// fail the plausibility check — which compares against now(), there being
+// no persisted repo reference (act-4c3353) — before any gitOps method is
+// called.
 func TestRunClaim_HLCDriftFailFast(t *testing.T) {
 	root := t.TempDir()
 	paths := initRepo(t, root)
 
-	// Plant a config whose repo reference HLC is FAR IN THE FUTURE relative
-	// to the local clock's now(). Per hlc.Plausible the reference is
-	// max(now, repoRef.Wall). Send() returns now (since prev is zero),
-	// then |wall - ref| = |now - repoRef| > 5min => drift error.
 	now := int64(1_700_000_000_000)
-	farFutureRef := now + hlc.PlausibilityBudgetMs + 60_000
-	cfg := config.Config{
-		CreatedAt: "2026-04-29T00:00:00Z",
-		Version:   "0.1.0",
-		LastHLC:   config.HLCState{Wall: farFutureRef, Logical: 0},
-	}
-	if err := config.WriteConfig(paths, cfg); err != nil {
-		t.Fatalf("WriteConfig: %v", err)
-	}
-
+	farFuture := now + hlc.PlausibilityBudgetMs + 60_000
 	clock := newClock(t, "abcdef01", now)
+	clock.Receive(hlc.HLC{Wall: farFuture, NodeID: "fedcba98"})
 	git := &FakeGitOps{}
 
 	_, err := RunClaim(root, "act-1234", Options{Assignee: "alice"}, clock, git)

@@ -87,7 +87,6 @@ func TestWriteReadConfigRoundTrip(t *testing.T) {
 	want := Config{
 		CreatedAt: "2026-04-29T14:23:01.000Z",
 		Version:   "0.1.0",
-		LastHLC:   HLCState{Wall: 1714400000000, Logical: 7},
 	}
 	if err := WriteConfig(paths, want); err != nil {
 		t.Fatalf("WriteConfig: %v", err)
@@ -110,7 +109,6 @@ func TestWriteConfigDeterministicAndSortedKeys(t *testing.T) {
 	c := Config{
 		CreatedAt: "2026-04-29T00:00:00.000Z",
 		Version:   "0.1.0",
-		LastHLC:   HLCState{Wall: 42, Logical: 0},
 	}
 	if err := WriteConfig(paths, c); err != nil {
 		t.Fatalf("WriteConfig 1: %v", err)
@@ -131,13 +129,15 @@ func TestWriteConfigDeterministicAndSortedKeys(t *testing.T) {
 	}
 
 	// Top-level keys must appear in lexicographic order:
-	// created_at < last_hlc < version. node_id is not a config.json key
-	// (it is per checkout, in .act/.git/config).
+	// created_at < version. node_id is not a config.json key (it is per
+	// checkout, in .act/.git/config), and neither is last_hlc (act-4c3353).
 	s := string(first)
 	idx := func(key string) int { return strings.Index(s, `"`+key+`"`) }
-	keys := []string{"created_at", "last_hlc", "version"}
-	if strings.Contains(s, `"node_id"`) {
-		t.Errorf("config.json must not carry node_id: %s", s)
+	keys := []string{"created_at", "version"}
+	for _, gone := range []string{"node_id", "last_hlc"} {
+		if strings.Contains(s, `"`+gone+`"`) {
+			t.Errorf("config.json must not carry %s: %s", gone, s)
+		}
 	}
 	prev := -1
 	for _, k := range keys {
@@ -149,13 +149,6 @@ func TestWriteConfigDeterministicAndSortedKeys(t *testing.T) {
 			t.Errorf("key %q at offset %d not after previous %d (output: %s)", k, i, prev, s)
 		}
 		prev = i
-	}
-
-	// Nested object keys (logical, wall) sorted as well.
-	li := strings.Index(s, `"logical"`)
-	wi := strings.Index(s, `"wall"`)
-	if li < 0 || wi < 0 || li > wi {
-		t.Errorf("nested HLC keys not sorted: %s", s)
 	}
 }
 
@@ -221,8 +214,9 @@ func TestWriteConfigOverwritesAtomically(t *testing.T) {
 }
 
 // TestReadConfig_LegacyNodeIDKeyIgnored: a config.json written before
-// node_id moved to .act/.git/config still carries a node_id key; it is
-// ignored on read rather than failing the parse.
+// node_id moved to .act/.git/config still carries a node_id key, and one
+// written before act-4c3353 still carries last_hlc; both are ignored on read
+// rather than failing the parse.
 func TestReadConfig_LegacyNodeIDKeyIgnored(t *testing.T) {
 	paths := Layout(t.TempDir())
 	if err := InitDirs(paths); err != nil {

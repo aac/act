@@ -271,7 +271,7 @@ The tree lists every path act writes at the top of `.act/`, in three groups. The
 }
 ```
 
-`config.json` is committed in the nested repo, so it travels with every clone; it carries no `node_id`. Each checkout of a tracker has its own `node_id` (8 lowercase hex characters), minted at random on first use and kept in the nested repo's own git config as `act.nodeId`, with the checkout's state-root path beside it as `act.nodeIdPath`. `.act/.git/config` is per clone, so the id never travels with one; a checkout whose stored `act.nodeIdPath` is not its own state root (a copied `.act/.git`) mints a fresh id. A `node_id` key left in an older `config.json` is ignored.
+`config.json` is committed in the nested repo, so it travels with every clone; it carries no `node_id`. Each checkout of a tracker has its own `node_id` (8 lowercase hex characters), minted at random on first use and kept in the nested repo's own git config as `act.nodeId`, with the checkout's state-root path beside it as `act.nodeIdPath`. `.act/.git/config` is per clone, so the id never travels with one; a checkout whose stored `act.nodeIdPath` is not its own state root (a copied `.act/.git`) mints a fresh id. A `node_id` or `last_hlc` key left in an older `config.json` is ignored.
 
 #### `.act/index.db` schema
 
@@ -371,11 +371,10 @@ Writers never mutate it.
 
 #### 1.2 Persistence
 
-`.act/config.json` carries `last_hlc: { wall, logical }`. Every successful op
-write performs an atomic update of `last_hlc` *before* the op file rename
-becomes visible (write-temp + fsync + rename of `config.json` is sequenced
-before staging the op file). On crash mid-write, fold reconstructs the true
-high-water mark from the on-disk ops; `last_hlc` is a hint, not authority.
+No HLC state is persisted outside the ops themselves: `.act/config.json` has
+no `last_hlc` key, and each writer starts a fresh clock from the local wall
+clock. The high-water mark of a tracker is `max(op.hlc)` over its on-disk ops,
+which fold derives.
 
 #### 1.3 Send (local op generation)
 
@@ -410,14 +409,13 @@ receive(now_ms, msg_hlc, prev):
 #### 1.5 Plausibility check (write-time)
 
 ```
-ref = max(local_wall_now, last_seen_hlc_in_repo.wall)
+ref = local_wall_now
 if abs(op.hlc.wall - ref) > 5 * 60 * 1000:
   refuse with E_HLC_IMPLAUSIBLE
 ```
 
-`last_seen_hlc_in_repo` is the maximum `hlc.wall` discovered during the most
-recent fold. Fresh containers must perform one fold (or one read of
-`.act/config.json:last_hlc`) before writing.
+The reference is the local wall clock; there is no persisted repo reference
+(see 1.2).
 
 ### 2. Op-fold algorithm
 
@@ -741,7 +739,7 @@ Resolution happens before any op is written, so a write command never partially 
 
 **Synopsis:** `act init [--force] [--force-new] [--contributing] [--commit-host] [--json]`
 
-**Behavior:** Creates `.act/` with the directories `ops/`, `snapshots/`, `hooks/` and `imports/`, the placeholder file `ops/.gitkeep`, the inert hook template `hooks/close.sample`, and `config.json`. `config.json` holds exactly three keys: `created_at`, `version` (the writer version, `0.1.0`) and `last_hlc` (`{"logical": 0, "wall": 0}`). It has no `node_id`, `schema_version` or `writer_version` key and no fold-checkpoint placeholder. The checkout's `node_id` is minted at random and kept in the nested repo's git config (`act.nodeId`), never in `config.json`. `act init` does not create `index.db`: the first command that reads the index does (`act list` on a new tracker, for one).
+**Behavior:** Creates `.act/` with the directories `ops/`, `snapshots/`, `hooks/` and `imports/`, the placeholder file `ops/.gitkeep`, the inert hook template `hooks/close.sample`, and `config.json`. `config.json` holds exactly two keys: `created_at` and `version` (the writer version, `0.1.0`). It has no `node_id`, `last_hlc`, `schema_version` or `writer_version` key and no fold-checkpoint placeholder. The checkout's `node_id` is minted at random and kept in the nested repo's git config (`act.nodeId`), never in `config.json`. `act init` does not create `index.db`: the first command that reads the index does (`act list` on a new tracker, for one).
 
 `act init` then makes `.act/` a git repository of its own, on branch `main`, and commits what it wrote there as that repo's first commit, with the subject `act init: nested act state bootstrap`. In the host repo it adds the line `.act/` to `.gitignore` and installs a `pre-commit` hook block that rejects staged `.act/` paths. It makes no commit in the host repo unless `--commit-host` is given.
 
@@ -1535,7 +1533,7 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 
 ### 6. Edge cases
 
-- **Empty repo on `act init`.** Creates `.act/` with `config.json` (created_at, version, last_hlc), empty `ops/`, empty `snapshots/`, empty `hooks/`, empty `imports/`. Stages and commits in one commit: `act-init: <node_id>`. No-op if `.act/` already exists; exit 0 with `{"initialized": false}`.
+- **Empty repo on `act init`.** Creates `.act/` with `config.json` (created_at, version), empty `ops/`, empty `snapshots/`, empty `hooks/`, empty `imports/`. Stages and commits in one commit: `act-init: <node_id>`. No-op if `.act/` already exists; exit 0 with `{"initialized": false}`.
 - **`.act/ops/` missing on first run after init.** Treated as zero ops; fold returns empty state. No error.
 - **Importer encounters unknown `op_type`.** Step-1 validation fails → `import_invalid_jsonl`. The whole import is aborted before any op file is written.
 - **Two terminals on the same machine claim the same issue.** Both write distinct claim-op files (filenames include op-payload hash and node_id, so the two ops have different filenames even with identical wall-clock seconds because of payload nonce). Fold orders by HLC then op-hash; one wins, the other observes `claim_lost`.
@@ -1637,8 +1635,8 @@ The op filename hash length MUST be chosen before write by probing the target sh
 ### 5.B.1 `op_hash` is sha256 of canonical JSON over a fixed-key object
 `op_hash` is defined as `sha256(canonical_json({payload, hlc, node_id}))` over a fixed-key canonical JSON object containing exactly those three keys. The `||` notation in earlier prose is superseded; implementers MUST use the fixed-key object form.
 
-### 5.B.2 Fold never calls HLC `receive`; `last_hlc` refreshes from `max(op.hlc)`
-Fold MUST NOT call `receive`. HLC advancement happens only at op-write time. After fold, `last_hlc` MUST be refreshed from `max(op.hlc)` over the folded ops, ensuring fold remains pure and deterministic across machines.
+### 5.B.2 Fold never calls HLC `receive`; high-water marks come from `max(op.hlc)`
+Fold MUST NOT call `receive`. HLC advancement happens only at op-write time. Any HLC high-water mark fold reports is `max(op.hlc)` over the folded ops, ensuring fold remains pure and deterministic across machines.
 
 ### 5.B.3 Claim winner uses earliest-tuple; result is materialized as synthetic LWW write
 The `claim` winner MUST be selected by the smallest `(wall, logical, op_hash)` tuple. The resulting `assignee` and `status=in_progress` writes MUST be materialized as a synthetic LWW write stamped with the winning claim's HLC. Any later LWW `assignee` op overrides the synthetic write per normal LWW rules.

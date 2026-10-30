@@ -3476,9 +3476,9 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
 	},
 	{
-		name:         "spec-pass9-init-config-three-keys",
+		name:         "spec-pass9-init-config-two-keys",
 		docFile:      "docs/spec.md",
-		claimPattern: "`config.json` holds exactly three keys:",
+		claimPattern: "`config.json` holds exactly two keys:",
 		testName:     "TestDocClaim_Spec_InitWritesAndCommits",
 	},
 	{
@@ -4120,7 +4120,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-init-config-json-has-no-node-id",
 		docFile:      "docs/spec.md",
-		claimPattern: "It has no `node_id`, `schema_version` or `writer_version` key and no fold-checkpoint placeholder.",
+		claimPattern: "It has no `node_id`, `last_hlc`, `schema_version` or `writer_version` key and no fold-checkpoint placeholder.",
 		testName:     "TestDocClaim_Identity_InitDoesNotWriteNodeIDToConfig",
 	},
 	{

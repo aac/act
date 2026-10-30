@@ -226,15 +226,13 @@ func runClaimInternal(
 	}
 
 	// Step 1 (§5.C.3): HLC drift check FIRST, before any network mutation.
-	// We probe a candidate HLC produced from the current clock against the
-	// repo reference (last_hlc from .act/config.json, if present). Per
-	// spec, an implausible drift fails fast with no commit / no pull.
-	repoRef, err := repoReference(repoRoot)
-	if err != nil {
-		return Result{IssueID: issueID}, fmt.Errorf("claim: read repo reference: %w", err)
-	}
+	// We probe a candidate HLC produced from the current clock against
+	// now(). Per spec, an implausible drift fails fast with no commit / no
+	// pull. There is no persisted repo reference: config.json no longer
+	// carries a last_hlc (it was written once by init and never updated,
+	// so it only ever held zero — act-4c3353).
 	probe := clock.Send()
-	if err := clock.Plausible(probe, repoRef); err != nil {
+	if err := clock.Plausible(probe, hlc.HLC{}); err != nil {
 		return Result{IssueID: issueID, HLC: probe}, err
 	}
 
@@ -589,25 +587,6 @@ func loadIssueEnvelopes(rootOps, issueID string) ([]op.Envelope, error) {
 		envs = append(envs, env)
 	}
 	return envs, nil
-}
-
-// repoReference returns the HLC reference recorded in .act/config.json's
-// last_hlc, used by the plausibility check. Missing config or missing
-// last_hlc returns a zero HLC, which makes the check default to
-// "compare against now()" per hlc.Clock.Plausible.
-func repoReference(repoRoot string) (hlc.HLC, error) {
-	paths := config.Layout(repoRoot)
-	cfg, err := config.ReadConfig(paths)
-	if err != nil {
-		// Missing config is non-fatal; tests construct minimal repos
-		// without the file, and the clock's plausibility check tolerates
-		// a zero reference.
-		return hlc.HLC{}, nil
-	}
-	return hlc.HLC{
-		Wall:    cfg.LastHLC.Wall,
-		Logical: cfg.LastHLC.Logical,
-	}, nil
 }
 
 // readFile is var-indirect for fault-injection tests.

@@ -285,7 +285,6 @@ func RunInit(repoRoot string, opts InitOptions) (any, int) {
 	cfg := config.Config{
 		CreatedAt: now().UTC().Format(rfc3339Millis),
 		Version:   writerVersion,
-		LastHLC:   config.HLCState{},
 	}
 	if err := config.WriteConfig(paths, cfg); err != nil {
 		return errorOutput{

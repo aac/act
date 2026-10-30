@@ -10,28 +10,20 @@ import (
 	"github.com/aac/act/internal/canonicaljson"
 )
 
-// HLCState is the persisted subset of an HLC in .act/config.json's last_hlc:
-// just the (wall, logical) pair. It deliberately does NOT alias hlc.HLC —
-// that type also carries a NodeID field, which config's last_hlc does not
-// persist, so `type HLCState = hlc.HLC` would change the on-disk shape. Keep
-// it a distinct local type.
-type HLCState struct {
-	Wall    int64  `json:"wall"`
-	Logical uint32 `json:"logical"`
-}
-
 // Config is the on-disk shape of .act/config.json.
 //
 // It carries no node_id: the claim identity is per checkout and lives in
 // .act/.git/config (see ResolveNodeID). A node_id key left in an older
-// config.json is ignored on read and never rewritten.
+// config.json is ignored on read and never rewritten. Nor does it carry a
+// last_hlc: that key was written once by init and never maintained, so it
+// only ever held zero; a last_hlc left in an older config.json is likewise
+// ignored on read (act-4c3353).
 //
 // Field order in this struct does not matter for serialization: writes use
 // canonicaljson which sorts keys lexicographically.
 type Config struct {
-	CreatedAt string   `json:"created_at"`
-	Version   string   `json:"version"`
-	LastHLC   HLCState `json:"last_hlc"`
+	CreatedAt string `json:"created_at"`
+	Version   string `json:"version"`
 }
 
 // LayoutPaths holds absolute paths for every .act/ artifact a writer touches.
