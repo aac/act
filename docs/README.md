@@ -23,3 +23,4 @@ history and (for live work) in the `act` tracker under `.act/`.
 | Doc | Label | What it is |
 |-----|-------|------------|
 | [coordination-plane-design.md](coordination-plane-design.md) | authoritative | The coordination-plane design (nested `.act/` git repo, marker placement, multi-writer model). Cited by code and by the doc-claim sweep. |
+| [claim-identity-design.md](claim-identity-design.md) | authoritative | Who a claimant is (one checkout, identity in `.act/.git/config`), when a re-claim must consult `origin`, and why an unconfirmed claim is not a win (exit 6 `claim_unconfirmed`). Ends with the implementation plan. |
