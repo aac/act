@@ -237,7 +237,16 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 		if claimCode == 6 {
 			return claimOut, true
 		}
-		// Claim lost (or other non-zero). Mark id as lost and back off.
+		// act-11b323: only exit 5 (claim_lost) means another claimer won
+		// this id and the next candidate is worth trying. Any other
+		// non-zero exit — 1 claim_failed (a write, commit or rebase that
+		// failed), 2 a usage/gate error — is not a race: retrying it on
+		// the next candidate hid the error behind a candidates result
+		// that claimed nothing. Return the envelope as an error result.
+		if claimCode != 5 {
+			return claimOut, true
+		}
+		// Claim lost. Mark id as lost and back off.
 		lost[pick.ID] = true
 		delay := time.Duration(float64(nextBaseDelays[attempt]) * jitter())
 		sleep(delay)
