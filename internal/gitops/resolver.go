@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -170,11 +169,13 @@ func SharedCheckoutForBranch(actDir string) (hostDir string, shared bool) {
 		real = abs
 	}
 	hostDir = filepath.Dir(real)
-	out, err := exec.Command("git", "-C", hostDir, "rev-parse", "--absolute-git-dir", "--git-common-dir").Output()
+	// A host handle (no --git-dir pinning): the question is about the
+	// repo that holds the nested .act/, found by git's own discovery.
+	out, err := NewGitOps(hostDir).RunGit("rev-parse", "--absolute-git-dir", "--git-common-dir")
 	if err != nil {
 		return hostDir, true
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 2 {
 		return hostDir, true
 	}
