@@ -456,6 +456,17 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			}, 1
 		}
 		defer release()
+		// act-5d6a: --branch <ref> switches the nested repo to the named
+		// branch (creating it if missing) so the close lands on that ref.
+		// Empty branch is a no-op. It runs before the op file is written
+		// (act-642a86): a failed switch must leave no untracked op in ops/
+		// for the next write's `git add -- ops` to sweep up.
+		if err := gitops.NewActGitOps(paths.Root).EnsureBranch(opts.Branch); err != nil {
+			return CloseErrorOutput{
+				Error:   "branch_failed",
+				Message: err.Error(),
+			}, 1
+		}
 	}
 	opPath, _, werr := op.ProbeAndWrite(paths.Ops, env, body, func() (func(), error) { return func() {}, nil })
 	if werr != nil {
@@ -478,16 +489,6 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 		// Phase 1: writes target the nested .act/ git repo. Close
 		// always commits standalone in the nested repo.
 		gops := gitops.NewActGitOps(paths.Root)
-
-		// act-5d6a: --branch <ref> switches the nested repo to the
-		// named branch (creating it if missing) before staging so the
-		// close lands on that ref. Empty branch is a no-op.
-		if err := gops.EnsureBranch(opts.Branch); err != nil {
-			return CloseErrorOutput{
-				Error:   "branch_failed",
-				Message: err.Error(),
-			}, 1
-		}
 
 		// Stage the close op file. act-a3160b: a stage failure withdraws
 		// the op just like the commit-failure path below (see the note on

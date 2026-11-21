@@ -154,9 +154,10 @@ type WriteOpts struct {
 	// Branch, when non-empty, names the branch in the nested .act/ repo
 	// that the auto-commit lands on AND the branch the subsequent push
 	// targets on origin (act-5d6a). The nested repo is switched (and the
-	// branch created if missing) via `git checkout -B <branch>` before
-	// the commit fires. The same value is passed to
-	// gitops.AutoPushAfterCommitToBranch so the push uses
+	// branch created from HEAD if missing; an existing one is checked out
+	// as it stands) via gitops.EnsureBranch before the op file is written.
+	// The same value is passed to gitops.AutoPushAfterCommitToBranch so the
+	// push uses
 	// `git push origin <branch>` instead of the tracking-config default.
 	// When empty, both legs preserve the historical HEAD-resolution
 	// behavior. A worker whose own .act/ copy lives in its linked
@@ -188,7 +189,8 @@ var ErrInvalidFlags = errors.New("cli: invalid flag combination")
 //
 // Steps:
 //  1. Validate flag combinations (§4).
-//  2. Write the op file via op.ProbeAndWrite into paths.Ops.
+//  2. Write the op file via op.ProbeAndWrite into paths.Ops — after the
+//     --branch switch, when one is set and !opts.NoCommit.
 //  3. If !opts.NoCommit: stage the new file and commit with the canonical
 //     `act-op: (act-XXXX) <op_type>` message produced by
 //     BuildOpCommitMessage. The parenthesized marker is required by
@@ -265,6 +267,16 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 			return fmt.Errorf("cli: %w", lerr)
 		}
 		defer release()
+		// If --branch was supplied, switch the nested .act/ repo to that
+		// branch (creating it if needed) so the op file, its stage and its
+		// commit all land on the intended ref (act-5d6a). This runs before
+		// the op file is written, not after (act-642a86): a failed switch
+		// used to leave the op untracked in ops/, where the next write's
+		// `git add -- ops` swept it into that write's commit. With the
+		// switch first there is no file to withdraw.
+		if err := gops.EnsureBranch(opts.Branch); err != nil {
+			return fmt.Errorf("cli: ensure branch: %w", err)
+		}
 	}
 	fsLock := func() (func(), error) { return func() {}, nil }
 	opPath, _, err := op.ProbeAndWrite(paths.Ops, env, body, fsLock)
@@ -276,12 +288,7 @@ func WriteOpAndAutoCommit(env op.Envelope, body []byte, paths config.LayoutPaths
 		return nil
 	}
 
-	// Step 3: stage + commit. If --branch was supplied, switch the
-	// nested .act/ repo to that branch first (creating it if needed)
-	// so both stage and commit land on the intended ref. See act-5d6a.
-	if err := gops.EnsureBranch(opts.Branch); err != nil {
-		return fmt.Errorf("cli: ensure branch: %w", err)
-	}
+	// Step 3: stage + commit (the --branch switch already ran above).
 	// act-a3160b: a STAGE failure withdraws the op exactly like a commit
 	// failure does — one rule for every pre-commit failure. Nothing was
 	// recorded, so no reader may fold this op. The envelope is preserved
@@ -427,6 +434,11 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 			return fmt.Errorf("cli: %w", lerr)
 		}
 		defer release()
+		// --branch switch before any op file is written (act-5d6a,
+		// act-642a86; see WriteOpAndAutoCommit).
+		if err := gops.EnsureBranch(opts.Branch); err != nil {
+			return fmt.Errorf("cli: ensure branch: %w", err)
+		}
 	}
 	fsLock := func() (func(), error) { return func() {}, nil }
 	written := make([]string, 0, len(envs))
@@ -457,12 +469,6 @@ func WriteOpsAndAutoCommit(envs []op.Envelope, bodies [][]byte, paths config.Lay
 	// Step 3: stage every op file. Append to `staged` only after a
 	// successful StageOpFile so a partial-stage failure rolls back exactly
 	// the entries that were actually staged (no spurious unstage calls).
-	// If --branch was supplied, switch the nested .act/ repo first so the
-	// stages happen against the intended ref (act-5d6a).
-	if err := gops.EnsureBranch(opts.Branch); err != nil {
-		rollback()
-		return fmt.Errorf("cli: ensure branch: %w", err)
-	}
 	for _, p := range written {
 		if err := gops.StageOpFile(p); err != nil {
 			rollback()
@@ -639,8 +645,8 @@ func unstage(g *gitops.ActGitOps, opPath string) error {
 // Why refuse rather than switch back after the commit: an op committed on a
 // side branch of the shared checkout and then switched away from is invisible
 // to every session reading that checkout (a claim nobody sees, a close that
-// never reaches main), and `checkout -B` on the next --branch write resets
-// that side branch to HEAD, dropping the earlier op locally. A worker's own
+// never reaches main), and the next --branch write commits on top of
+// whatever that side branch holds. A worker's own
 // copy wants the documented behavior — the branch stays checked out so its
 // later reads and writes see its own ops — so that case is left as it was.
 func sharedCheckoutBranchRefusal(cmd, repoRoot, branch string) string {
