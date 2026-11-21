@@ -209,8 +209,8 @@ func TestCurrentBranch(t *testing.T) {
 
 // TestEnsureBranchCreatesIfMissing verifies the act-5d6a contract:
 // EnsureBranch with a non-existent name creates the branch from HEAD
-// and switches to it. Repeated calls are idempotent (re-pin to HEAD).
-// An empty branch argument is a no-op.
+// and switches to it. Repeated calls are idempotent. An empty branch
+// argument is a no-op.
 func TestEnsureBranch(t *testing.T) {
 	dir := initRepo(t)
 	g := NewGitOps(dir)
@@ -241,6 +241,82 @@ func TestEnsureBranch(t *testing.T) {
 	// Idempotent: calling again with the same branch is a no-op effectively.
 	if err := g.EnsureBranch("agent-x"); err != nil {
 		t.Fatalf("EnsureBranch(agent-x) repeat: %v", err)
+	}
+}
+
+// TestEnsureBranch_ExistingBranchKeepsItsCommits is act-c3739f: a worker
+// copy that committed on branch X, switched back to main and then calls
+// EnsureBranch("X") must find X's earlier commit still at X's tip and
+// checked out. The old `git checkout -B` reset X to main's HEAD and
+// dropped that commit. A fresh branch is still created from HEAD.
+func TestEnsureBranch_ExistingBranchKeepsItsCommits(t *testing.T) {
+	dir := initRepo(t)
+	g := NewGitOps(dir)
+
+	if err := g.EnsureBranch("agent-x"); err != nil {
+		t.Fatalf("EnsureBranch(agent-x): %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "ops", "x1.json"), "{}")
+	runGit(t, dir, "add", "ops")
+	runGit(t, dir, "commit", "-q", "--no-verify", "-m", "op on agent-x")
+	xTip := strings.TrimSpace(runGit(t, dir, "rev-parse", "agent-x"))
+
+	runGit(t, dir, "checkout", "-q", "main")
+	mainTip := strings.TrimSpace(runGit(t, dir, "rev-parse", "main"))
+	if mainTip == xTip {
+		t.Fatalf("fixture: main and agent-x share tip %s", xTip)
+	}
+
+	if err := g.EnsureBranch("agent-x"); err != nil {
+		t.Fatalf("EnsureBranch(agent-x) after switching away: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "agent-x")); got != xTip {
+		t.Fatalf("agent-x = %s after EnsureBranch, want its earlier commit %s (branch was reset)", got, xTip)
+	}
+	if br, _ := g.CurrentBranch(); br != "agent-x" {
+		t.Fatalf("current branch = %q, want agent-x", br)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ops", "x1.json")); err != nil {
+		t.Fatalf("agent-x's op file missing from the checked-out tree: %v", err)
+	}
+
+	// A fresh branch is still created from the current HEAD (agent-x here).
+	if err := g.EnsureBranch("agent-y"); err != nil {
+		t.Fatalf("EnsureBranch(agent-y): %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "agent-y")); got != xTip {
+		t.Fatalf("agent-y = %s, want HEAD %s at creation", got, xTip)
+	}
+}
+
+// TestEnsureBranch_RefusedCheckoutLeavesTreeAlone: checking out an existing
+// branch can be refused over local changes git would overwrite — here an
+// untracked file at a path the branch tracks. EnsureBranch returns the
+// error, stays on the current branch and leaves the untracked file as it
+// was; it never forces the checkout.
+func TestEnsureBranch_RefusedCheckoutLeavesTreeAlone(t *testing.T) {
+	dir := initRepo(t)
+	g := NewGitOps(dir)
+	runGit(t, dir, "checkout", "-q", "-b", "agent-x")
+	writeFile(t, filepath.Join(dir, "ops", "x1.json"), "{\"branch\":true}")
+	runGit(t, dir, "add", "ops")
+	runGit(t, dir, "commit", "-q", "--no-verify", "-m", "op on agent-x")
+	xTip := strings.TrimSpace(runGit(t, dir, "rev-parse", "agent-x"))
+	runGit(t, dir, "checkout", "-q", "main")
+	writeFile(t, filepath.Join(dir, "ops", "x1.json"), "{\"local\":true}")
+
+	if err := g.EnsureBranch("agent-x"); err == nil {
+		t.Fatal("EnsureBranch over a conflicting untracked file: want error, got nil")
+	}
+	if br, _ := g.CurrentBranch(); br != "main" {
+		t.Fatalf("current branch = %q after a refused checkout, want main", br)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "ops", "x1.json"))
+	if err != nil || string(b) != "{\"local\":true}" {
+		t.Fatalf("untracked file = %q, %v; want it untouched", b, err)
+	}
+	if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "agent-x")); got != xTip {
+		t.Fatalf("agent-x = %s, want %s", got, xTip)
 	}
 }
 

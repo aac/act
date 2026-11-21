@@ -270,7 +270,7 @@ func TestWriteOpAndAutoCommitNoBranchPreservesHEADBehavior(t *testing.T) {
 }
 
 // TestWriteOpAndAutoCommitBranchCreatesIfMissing verifies the
-// `checkout -B` semantic: the named branch is created from current HEAD
+// create-if-missing semantic: the named branch is created from current HEAD
 // when it does not yet exist. Worktree subagents rely on this to commit
 // onto a worktree-specific branch without pre-creating it.
 func TestWriteOpAndAutoCommitBranchCreatesIfMissing(t *testing.T) {

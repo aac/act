@@ -141,7 +141,7 @@ func FindActStatePath(hostRepoRoot string) (string, error) {
 // SharedCheckoutForBranch reports whether the nested act repo at actDir is a
 // shared checkout — one that `--branch` must not switch (act-94181c).
 //
-// `--branch <ref>` runs `git checkout -B <ref>` in the nested repo and leaves
+// `--branch <ref>` checks out <ref> in the nested repo (EnsureBranch) and leaves
 // the branch checked out, which is right for a worker's own throwaway copy and
 // wrong for the checkout every session on a machine writes through: once that
 // one is switched, every later op from every session lands on the side branch

@@ -917,7 +917,7 @@ func readSlowWriteLines(path string) ([]string, error) {
 // EnsureBranch switches the nested act-state repo to the named branch,
 // creating it from the current HEAD if it does not yet exist. Returns an
 // error if the working tree is not a git repository or if the checkout
-// itself fails for any reason other than "branch already current".
+// itself fails.
 //
 // Used by the --branch <ref> flag on write subcommands (act-5d6a). The
 // caller passes the worktree's branch name so the op auto-commit lands
@@ -926,10 +926,17 @@ func readSlowWriteLines(path string) ([]string, error) {
 // so callers can unconditionally invoke this before committing without
 // branching on the option being set.
 //
-// Implementation: `git checkout -B <branch>` is idempotent — it creates
-// the branch if missing and forces the checkout to point at HEAD if the
-// branch already exists. This matches the agent's mental model: "commit
-// goes on branch X regardless of where HEAD was."
+// Implementation: an existing branch is checked out as it stands (`git
+// checkout <branch>`); only an absent one is created, from HEAD (`git
+// checkout -b <branch>`). This used to be `git checkout -B`, which resets
+// an existing branch to HEAD: a worker copy that had switched away from
+// its branch and back silently dropped the ops it had already committed
+// there (act-c3739f). Checking out an existing branch can change the
+// working tree, so git may refuse it over local changes it would
+// overwrite (an untracked op file at a path the branch tracks, say). That
+// refusal is returned as-is with the tree untouched — never forced — and
+// the write callers ensure the branch before writing their op file, so a
+// refusal leaves no op behind (act-642a86).
 //
 // The branch is left checked out, so callers must never point this at a
 // shared checkout: the cli write commands refuse --branch there first (see
@@ -938,7 +945,11 @@ func (g *GitOps) EnsureBranch(branch string) error {
 	if branch == "" {
 		return nil
 	}
-	if _, err := g.run("checkout", "-B", branch); err != nil {
+	args := []string{"checkout", "-b", branch}
+	if _, err := g.run("rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		args = []string{"checkout", branch}
+	}
+	if _, err := g.run(args...); err != nil {
 		return fmt.Errorf("gitops: ensure branch %q: %w", branch, err)
 	}
 	return nil
