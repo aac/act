@@ -21,7 +21,7 @@ func runClose(args []string) int {
 	push := fs.Bool("push", false, "push after the commit (errors if the close stays staged for the agent's next commit)")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
 	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
-	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Worktree subagents pass --branch <worktree-branch> so op commits don't fan onto origin/main.")
+	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Only for a worker's own .act/ copy inside a linked git worktree: on a shared checkout it is refused (exit 2, bad_flag), so that checkout never leaves its branch.")
 	noCode := fs.Bool("no-code", false, "mark this close as producing no code change (tracking, wrong-claim, doc-only); doctor suppresses orphan-close warnings for these closes")
 	noDoctor := fs.Bool("no-doctor", false, "skip the post-close single-issue commit-marker correlation check (default: warn on stderr if no host commit in the last 50 carries an 'Act-Id:' trailer for this issue)")
 	force := fs.Bool("force", false, "override open external dep gate (blocked_by_external_dep); emits a WARNING to stderr listing each bypassed dep — use only when the dep is resolved but --ext-rm hasn't fired yet")

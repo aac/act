@@ -38,7 +38,7 @@ func runDepAdd(args []string) int {
 	push := fs.Bool("push", false, "push after the commit")
 	isolated := fs.Bool("isolated", false, "offline mode: commit but no network ops")
 	offline := fs.Bool("offline", false, "commit locally, skip push; record in .act/.pending-pushes for retry on next non-offline write")
-	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Worktree subagents pass --branch <worktree-branch> so op commits don't fan onto origin/main.")
+	branch := fs.String("branch", "", "branch in the nested .act/ repo to commit on and push to (default: current branch / tracking config). Only for a worker's own .act/ copy inside a linked git worktree: on a shared checkout it is refused (exit 2, bad_flag), so that checkout never leaves its branch.")
 	var external stringSliceFlag
 	fs.Var(&external, "external", "attach an opaque external-tracker ref as a blocking external dep (repeatable): `act dep add <id> --external \"linear:ENG-123\"`. Symmetric with --blocked-by for internal blockers; clear the ref with `act update --ext-rm`.")
 	rearranged, err := rearrangeArgs(args, fs)

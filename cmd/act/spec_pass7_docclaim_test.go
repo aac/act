@@ -223,8 +223,35 @@ func TestDocClaim_Spec_WriteFlagsAreNotUniversal(t *testing.T) {
 	pass5Run(t, dir, 2, "", "update", "--json", "--claim", "--wait", "--wait-timeout", "60", id)
 	pass5Run(t, dir, 0, "", "update", "--json", "--claim", "--wait", "--wait-timeout", "90s", id)
 
-	// --branch NAME: the op is committed on that branch of the nested repo,
-	// created if missing and left checked out.
+	// --branch NAME on the shared checkout (dir's nested .act/ sits in the
+	// host repo's main working tree) is refused before anything is written,
+	// and the checkout stays on its branch (act-94181c).
+	sharedHead := func() string {
+		out, err := sp7GitOut("-C", filepath.Join(dir, ".act"), "symbolic-ref", "--short", "HEAD")
+		if err != nil {
+			t.Fatalf("git symbolic-ref: %v", err)
+		}
+		return out
+	}
+	sharedStart := sharedHead()
+	if out, stderr, code := runActIn(t, dir, "update", "--json", "--claim", "--branch", "wt-x", id); code != 2 || !strings.Contains(out+stderr, "shared checkout") {
+		t.Errorf("act update --claim --branch wt-x on the shared checkout: exit %d, want 2 naming the shared checkout\nstdout=%s\nstderr=%s", code, out, stderr)
+	}
+	if got := sharedHead(); got != sharedStart {
+		t.Errorf("after the refused --branch claim the shared checkout is on %q, want %q", got, sharedStart)
+	}
+
+	// --branch NAME in a worker's own copy (a linked worktree holding a copy
+	// of the tracker): the op is committed on that branch of the nested
+	// repo, created if missing and left checked out.
+	wt := filepath.Join(t.TempDir(), "wt")
+	if out, err := exec.Command("git", "-C", dir, "worktree", "add", "-q", "-b", "sp7-wt", wt).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("cp", "-R", filepath.Join(dir, ".act"), filepath.Join(wt, ".act")).CombinedOutput(); err != nil {
+		t.Fatalf("cp .act: %v\n%s", err, out)
+	}
+	dir = wt
 	nested := filepath.Join(dir, ".act")
 	head := func() string {
 		out, err := sp7GitOut("-C", nested, "rev-parse", "--abbrev-ref", "HEAD")

@@ -644,7 +644,7 @@ These flags are accepted by the commands that write an op — `create`, `update`
 - `--isolated` — local-only mode. Skips remote fetch (relevant for `--claim`'s pull-rebase step) and refuses `--push`. Mutually exclusive with `--push`. With `origin` configured, an isolated `create`, `update`, `close`, `dep add`, `reopen` or `delete` commits locally, pushes nothing and queues nothing in `.act/.pending-pushes`; the next write without `--isolated` pushes the held commits along with its own.
 - `--verify` — run host git hooks during the op-commit. Default is `--no-verify` (op commits touch only `.act/ops/**`). `create`, `close` and `dep add` do not define this flag: passing it to them is exit 2.
 - `--offline` — commit locally and skip the push; see "Offline mode" below.
-- `--branch NAME` — commit the op on branch `NAME` of the nested `.act/` repo instead of the branch it is on. The branch is created if it does not exist and is left checked out.
+- `--branch NAME` — commit the op on branch `NAME` of the nested `.act/` repo instead of the branch it is on. The branch is created if it does not exist and is left checked out. `--branch` is for a worker's own `.act/` copy inside a linked git worktree. When the nested repo is a shared checkout — it does not sit inside a linked git worktree, judged after following a `.act` symlink to its real location — every write command refuses `--branch` with exit 2 (`bad_flag`), naming that checkout, before anything is written, and the checkout stays on the branch it was on (act-94181c). Switching the checkout every session writes through would leave every later write from every session on the side branch.
 
 Precedence rules:
 1. `--no-commit` + `--push` is a usage error (exit 2): cannot push what wasn't committed.

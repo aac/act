@@ -159,9 +159,11 @@ type WriteOpts struct {
 	// gitops.AutoPushAfterCommitToBranch so the push uses
 	// `git push origin <branch>` instead of the tracking-config default.
 	// When empty, both legs preserve the historical HEAD-resolution
-	// behavior. Worktree subagents pass the worktree's branch name so
-	// multiple concurrent agents don't fan their op commits onto a
-	// shared `main`.
+	// behavior. A worker whose own .act/ copy lives in its linked
+	// worktree passes the worktree's branch name so multiple concurrent
+	// agents don't fan their op commits onto a shared `main`. The Run*
+	// entry points refuse a Branch on a shared checkout before calling
+	// here (sharedCheckoutBranchRefusal, act-94181c).
 	Branch string
 	// Stderr is where the write path emits operator warnings — today
 	// the act-89a595 "committed but not pushed" notice. Nil means

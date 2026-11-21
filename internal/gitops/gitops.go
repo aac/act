@@ -930,6 +930,10 @@ func readSlowWriteLines(path string) ([]string, error) {
 // the branch if missing and forces the checkout to point at HEAD if the
 // branch already exists. This matches the agent's mental model: "commit
 // goes on branch X regardless of where HEAD was."
+//
+// The branch is left checked out, so callers must never point this at a
+// shared checkout: the cli write commands refuse --branch there first (see
+// SharedCheckoutForBranch, act-94181c).
 func (g *GitOps) EnsureBranch(branch string) error {
 	if branch == "" {
 		return nil

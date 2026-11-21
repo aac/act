@@ -1807,6 +1807,47 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "branch in the nested .act/ repo",
 		testName:     "TestDocClaim_BranchFlag_AutoCommitTargetsNamedBranch",
 	},
+	// branch-flag-shared-* (act-94181c): --branch is refused, before any
+	// write, on a shared checkout (a nested .act/ not inside a linked git
+	// worktree, symlinks followed); a worker's own copy in a linked
+	// worktree keeps the branch checked out. A --branch write once left a
+	// machine's shared .act on a worktree branch for five days.
+	{
+		name:         "branch-flag-shared-checkout-spec",
+		docFile:      "docs/spec.md",
+		claimPattern: "every write command refuses `--branch` with exit 2 (`bad_flag`), naming that checkout, before anything is written, and the checkout stays on the branch it was on",
+		testName:     "TestDocClaim_BranchFlag_RefusedOnSharedCheckout",
+	},
+	{
+		name:         "branch-flag-shared-checkout-symlink-spec",
+		docFile:      "docs/spec.md",
+		claimPattern: "judged after following a `.act` symlink to its real location",
+		testName:     "TestDocClaim_BranchFlag_SymlinkedActIsShared",
+	},
+	{
+		name:         "branch-flag-worker-copy-spec",
+		docFile:      "docs/spec.md",
+		claimPattern: "`--branch` is for a worker's own `.act/` copy inside a linked git worktree.",
+		testName:     "TestDocClaim_BranchFlag_WorkerCopyKeepsBranch",
+	},
+	{
+		name:         "branch-flag-shared-checkout-help",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "refuses --branch with exit 2 (bad_flag), naming the checkout and",
+		testName:     "TestDocClaim_BranchFlag_RefusedOnSharedCheckout",
+	},
+	{
+		name:         "branch-flag-worker-copy-help",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "branch stays checked out in that copy",
+		testName:     "TestDocClaim_BranchFlag_WorkerCopyKeepsBranch",
+	},
+	{
+		name:         "branch-flag-shared-checkout-flag-help",
+		docFile:      "cmd/act/update.go",
+		claimPattern: "Only for a worker's own .act/ copy inside a linked git worktree: on a shared checkout it is refused (exit 2, bad_flag)",
+		testName:     "TestDocClaim_BranchFlag_RefusedOnSharedCheckout",
+	},
 	// ux-polish-* (act-f2c7): bundled UX polish pass — bare-`act` help
 	// hint, comma-separated subcommand listing (so `dep add` isn't read
 	// as three items), `act init` Next-step hint, and the
