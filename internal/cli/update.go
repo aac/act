@@ -286,6 +286,10 @@ func RunUpdate(repoRoot string, opts UpdateOptions) (output any, exitCode int) {
 			Message: "act update: --offline and --push are mutually exclusive",
 		}, 2
 	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act update", repoRoot, opts.Branch); msg != "" {
+		return UpdateErrorOutput{Error: "bad_flag", Message: msg}, 2
+	}
 
 	// A machine label is rejected here, at the flag boundary, so a typo
 	// surfaces as bad_flag with the offending value rather than as a

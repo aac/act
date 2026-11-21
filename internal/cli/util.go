@@ -626,3 +626,28 @@ func ListPendingOpFilesForIssue(repoRoot, opsDir, issueID string) ([]string, err
 func unstage(g *gitops.ActGitOps, opPath string) error {
 	return runUnstage(g.RepoRoot, opPath)
 }
+
+// sharedCheckoutBranchRefusal returns the bad_flag message that refuses
+// `--branch` when the tracker's nested .act/ is a shared checkout, or "" when
+// branch is empty or the nested repo is a worker's own copy inside a linked
+// git worktree (act-94181c). Every write command calls it before it writes
+// anything, so a refused write leaves no op file and no commit, and the
+// nested repo stays on the branch it was on.
+//
+// Why refuse rather than switch back after the commit: an op committed on a
+// side branch of the shared checkout and then switched away from is invisible
+// to every session reading that checkout (a claim nobody sees, a close that
+// never reaches main), and `checkout -B` on the next --branch write resets
+// that side branch to HEAD, dropping the earlier op locally. A worker's own
+// copy wants the documented behavior — the branch stays checked out so its
+// later reads and writes see its own ops — so that case is left as it was.
+func sharedCheckoutBranchRefusal(cmd, repoRoot, branch string) string {
+	if branch == "" {
+		return ""
+	}
+	hostDir, shared := gitops.SharedCheckoutForBranch(config.Layout(repoRoot).Root)
+	if !shared {
+		return ""
+	}
+	return fmt.Sprintf("%s: --branch %q refused: %s is a shared checkout, not a worker's own copy inside a linked git worktree; switching it would leave every later write from every session on that branch. Drop --branch to write on the branch it is on", cmd, branch, filepath.Join(hostDir, ".act"))
+}

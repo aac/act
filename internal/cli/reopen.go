@@ -144,6 +144,10 @@ func RunReopen(repoRoot string, opts ReopenOptions) (output any, exitCode int) {
 			Message: "act reopen: --offline and --push are mutually exclusive",
 		}, 2
 	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act reopen", repoRoot, opts.Branch); msg != "" {
+		return ReopenErrorOutput{Error: "bad_flag", Message: msg}, 2
+	}
 
 	// Step 2d: enumerate known ids and resolve the target.
 	knownIDs, err := listIssueIDs(paths.Ops)

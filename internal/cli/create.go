@@ -257,6 +257,10 @@ func RunCreate(repoRoot string, opts CreateOptions) (output any, exitCode int) {
 			Message: "act create: --offline and --push are mutually exclusive",
 		}, 2
 	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act create", repoRoot, opts.Branch); msg != "" {
+		return CreateErrorOutput{Error: "bad_flag", Message: msg}, 2
+	}
 
 	// Step 3: enumerate known full ids via .act/ops/.
 	knownIDs, err := listIssueIDs(paths.Ops)

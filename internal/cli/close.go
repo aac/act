@@ -226,6 +226,10 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 			Message: "act close: --offline and --push are mutually exclusive",
 		}, 2
 	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act close", repoRoot, opts.Branch); msg != "" {
+		return CloseErrorOutput{Error: "bad_flag", Message: msg}, 2
+	}
 
 	// Step 2d: enumerate known ids and resolve the target.
 	knownIDs, err := listIssueIDs(paths.Ops)

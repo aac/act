@@ -173,6 +173,10 @@ func RunDelete(repoRoot string, opts DeleteOptions) (output any, exitCode int) {
 			Message: "act delete: --offline and --push are mutually exclusive",
 		}, 2
 	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act delete", repoRoot, opts.Branch); msg != "" {
+		return DeleteErrorOutput{Error: "bad_flag", Message: msg}, 2
+	}
 
 	// Step 2d: enumerate known ids and resolve the target.
 	knownIDs, err := listIssueIDs(paths.Ops)

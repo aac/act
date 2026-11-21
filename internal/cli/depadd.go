@@ -202,6 +202,10 @@ func RunDepAdd(repoRoot string, opts DepAddOptions) (output any, exitCode int) {
 			Message: "act dep add: --offline and --push are mutually exclusive",
 		}, 2
 	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act dep add", repoRoot, opts.Branch); msg != "" {
+		return DepAddErrorOutput{Error: "bad_flag", Message: msg}, 2
+	}
 
 	// Step 2d: enumerate known full ids, then resolve child + parent.
 	knownIDs, err := listIssueIDs(paths.Ops)
@@ -583,6 +587,10 @@ func RunDepAddExternal(repoRoot, subject string, refs []string, opts DepAddOptio
 	}
 	if len(refs) == 0 {
 		return DepAddErrorOutput{Error: "bad_flag", Message: "act dep add: --external requires a ref"}, 2
+	}
+	// act-94181c: --branch never switches a shared checkout.
+	if msg := sharedCheckoutBranchRefusal("act dep add", repoRoot, opts.Branch); msg != "" {
+		return DepAddErrorOutput{Error: "bad_flag", Message: msg}, 2
 	}
 	// Validate every ref before writing: a bad ref fails the whole command
 	// before any op hits disk (matches `act update --ext-add`).

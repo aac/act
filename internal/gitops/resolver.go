@@ -19,7 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // ErrNoHostRepo signals that walking up from the starting directory found no
@@ -135,4 +137,62 @@ func FindActStatePath(hostRepoRoot string) (string, error) {
 		return "", fmt.Errorf("gitops: FindActStatePath: %q exists but is not a directory", actPath)
 	}
 	return actPath, nil
+}
+
+// SharedCheckoutForBranch reports whether the nested act repo at actDir is a
+// shared checkout — one that `--branch` must not switch (act-94181c).
+//
+// `--branch <ref>` runs `git checkout -B <ref>` in the nested repo and leaves
+// the branch checked out, which is right for a worker's own throwaway copy and
+// wrong for the checkout every session on a machine writes through: once that
+// one is switched, every later op from every session lands on the side branch
+// and is pushed there, and the tracker's main stops moving (171 commits over
+// five days in the incident behind act-94181c). A worker's own copy lives in
+// the linked git worktree it was dispatched into (`act bootstrap-worker`
+// targets one); the shared checkout lives in the host repo's main working
+// tree. So the test is structural: actDir (symlinks resolved, so a `.act`
+// symlinked from a worktree into the main checkout counts as the main
+// checkout) is a worker's own copy only when the directory holding it is a
+// linked worktree — its git dir differs from its common dir. `act.role` cannot
+// answer this: a shared checkout cloned with `act bootstrap-worker
+// --from-remote` carries act.role=worker too.
+//
+// hostDir is the resolved directory holding the nested repo, for naming the
+// checkout in a refusal. Anything that prevents the check (the host dir is not
+// in a git repo, git fails) reports shared=true: refusing a --branch write is
+// recoverable, switching a shared checkout is not.
+func SharedCheckoutForBranch(actDir string) (hostDir string, shared bool) {
+	real, err := filepath.EvalSymlinks(actDir)
+	if err != nil {
+		real = actDir
+	}
+	if abs, aerr := filepath.Abs(real); aerr == nil {
+		real = abs
+	}
+	hostDir = filepath.Dir(real)
+	out, err := exec.Command("git", "-C", hostDir, "rev-parse", "--absolute-git-dir", "--git-common-dir").Output()
+	if err != nil {
+		return hostDir, true
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 {
+		return hostDir, true
+	}
+	gitDir, commonDir := lines[0], lines[1]
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(hostDir, commonDir)
+	}
+	if gitDir == "" || canonPath(gitDir) == canonPath(commonDir) {
+		return hostDir, true
+	}
+	return hostDir, false
+}
+
+// canonPath cleans p and resolves its symlinks where it can, so two spellings
+// of one directory (macOS /var vs /private/var) compare equal.
+func canonPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
 }
