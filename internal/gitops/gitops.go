@@ -865,55 +865,6 @@ func readSlowWriteLines(path string) ([]string, error) {
 	return out, nil
 }
 
-// AutoPushAfterCommit is the Phase 2 ticket-3a synchronous publish step.
-// Callers invoke it AFTER a successful Commit; it inspects `git remote`
-// for `origin`, and if origin is configured, resolves the current branch
-// and runs (*GitOps).PushWithRetry with default PushOpts (5 retries,
-// 100ms base / 1s cap exponential backoff). The result categories:
-//
-//   - origin NOT configured → return nil silently (local-only / single-
-//     machine path; the op log stays consistent without a remote).
-//   - origin configured, push succeeds → return nil.
-//   - origin configured, push exhausts retries → return *PushExhaustedError
-//     unchanged so callers use errors.As to recover RetryCount /
-//     ShallowUnshallowAttempted. A fetch failure encountered mid-loop is
-//     retried to exhaustion and ends up carried in
-//     PushExhaustedError.LastError — PushWithRetry never bubbles a bare
-//     ErrFetchFailed out of the loop, so the write path surfaces
-//     push_exhausted, not remote_unreachable (act-6d9546).
-//   - Other push failures (e.g. auth) → return wrapped error.
-//
-// On entry into the PushWithRetry call (origin IS configured), the
-// helper increments TestPushInvocationCount by exactly 1 — tests use
-// the counter to assert "this write helper actually wired the publish"
-// without parsing git output.
-//
-// Used by the write-helpers in internal/cli (WriteOpAndAutoCommit /
-// WriteOpsAndAutoCommit) and by the close.go non-helper commit path so
-// all six write subcommands (`create`, `close`, `update`, `dep-add`,
-// `reopen`, `delete`) publish their ops to the remote on the same call
-// that produced them.
-//
-// Role gate (Phase 2 ticket 1a follow-up): under the future role config,
-// workers will skip the synchronous push because the orchestrator
-// harvests their ops at dispatch teardown. Today (pre-1a) we always
-// push when origin is set; once 1a lands, this method gates the push
-// behind `act.role != "worker"`. The TODO is intentional — the
-// conservative "always push" default keeps ticket 3a small and lets
-// ticket 1a thread the gate cleanly later. See the Phase 2 design in
-// docs/coordination-plane-design.md.
-//
-// The test-only fault injector ACT_TEST_FAIL_PUSH_AFTER (declared in
-// internal/gitops/push_retry.go) lets integration tests exercise the
-// exhaustion branch deterministically without setting up a contending
-// writer. Setting `ACT_TEST_FAIL_PUSH_AFTER=N` causes every push attempt
-// at or after the Nth call to behave as if the remote silently rejected
-// the receive; the reachability check inside PushWithRetry catches the
-// simulated rejection and treats it as a non-fast-forward, retrying
-// until MaxRetries is exhausted. With N=1 and the default cap of 5
-// retries, every attempt fails and the helper returns
-// *PushExhaustedError{RetryCount=5}. See push_retry.go for the precise
-// counter semantics and ResetPushAttemptCounter for test setup.
 // EnsureBranch switches the nested act-state repo to the named branch,
 // creating it from the current HEAD if it does not yet exist. Returns an
 // error if the working tree is not a git repository or if the checkout
@@ -988,6 +939,55 @@ func (g *GitOps) AutoPushAfterCommitToBranch(branch string) error {
 	return g.PushWithRetry(target, PushOpts{})
 }
 
+// AutoPushAfterCommit is the Phase 2 ticket-3a synchronous publish step.
+// Callers invoke it AFTER a successful Commit; it inspects `git remote`
+// for `origin`, and if origin is configured, resolves the current branch
+// and runs (*GitOps).PushWithRetry with default PushOpts (5 retries,
+// 100ms base / 1s cap exponential backoff). The result categories:
+//
+//   - origin NOT configured → return nil silently (local-only / single-
+//     machine path; the op log stays consistent without a remote).
+//   - origin configured, push succeeds → return nil.
+//   - origin configured, push exhausts retries → return *PushExhaustedError
+//     unchanged so callers use errors.As to recover RetryCount /
+//     ShallowUnshallowAttempted. A fetch failure encountered mid-loop is
+//     retried to exhaustion and ends up carried in
+//     PushExhaustedError.LastError — PushWithRetry never bubbles a bare
+//     ErrFetchFailed out of the loop, so the write path surfaces
+//     push_exhausted, not remote_unreachable (act-6d9546).
+//   - Other push failures (e.g. auth) → return wrapped error.
+//
+// On entry into the PushWithRetry call (origin IS configured), the
+// helper increments TestPushInvocationCount by exactly 1 — tests use
+// the counter to assert "this write helper actually wired the publish"
+// without parsing git output.
+//
+// Used by the write-helpers in internal/cli (WriteOpAndAutoCommit /
+// WriteOpsAndAutoCommit) and by the close.go non-helper commit path so
+// all six write subcommands (`create`, `close`, `update`, `dep-add`,
+// `reopen`, `delete`) publish their ops to the remote on the same call
+// that produced them.
+//
+// Role gate (Phase 2 ticket 1a follow-up): under the future role config,
+// workers will skip the synchronous push because the orchestrator
+// harvests their ops at dispatch teardown. Today (pre-1a) we always
+// push when origin is set; once 1a lands, this method gates the push
+// behind `act.role != "worker"`. The TODO is intentional — the
+// conservative "always push" default keeps ticket 3a small and lets
+// ticket 1a thread the gate cleanly later. See the Phase 2 design in
+// docs/coordination-plane-design.md.
+//
+// The test-only fault injector ACT_TEST_FAIL_PUSH_AFTER (declared in
+// internal/gitops/push_retry.go) lets integration tests exercise the
+// exhaustion branch deterministically without setting up a contending
+// writer. Setting `ACT_TEST_FAIL_PUSH_AFTER=N` causes every push attempt
+// at or after the Nth call to behave as if the remote silently rejected
+// the receive; the reachability check inside PushWithRetry catches the
+// simulated rejection and treats it as a non-fast-forward, retrying
+// until MaxRetries is exhausted. With N=1 and the default cap of 5
+// retries, every attempt fails and the helper returns
+// *PushExhaustedError{RetryCount=5}. See push_retry.go for the precise
+// counter semantics and ResetPushAttemptCounter for test setup.
 func (g *GitOps) AutoPushAfterCommit() error {
 	// Phase 2 ticket 6b: orchestrator-write upstream-sync trigger. The
 	// trigger is gated on `act.role=orchestrator` only — NOT on the
