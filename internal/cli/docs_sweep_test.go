@@ -2009,6 +2009,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_Redact_PatternsFromStdin",
 	},
 	{
+		name:         "redact-spec-patterns-path-never-printed",
+		docFile:      "docs/spec.md",
+		claimPattern: "The path given to `--patterns-file` is never printed",
+		testName:     "TestDocClaim_Redact_PatternsPathNeverPrinted",
+	},
+	{
+		name:         "redact-spec-patterns-oversize-message",
+		docFile:      "docs/spec.md",
+		claimPattern: "one over 1048576 bytes as larger than the patterns file's limit",
+		testName:     "TestDocClaim_Redact_OversizePatternsFileMessage",
+	},
+	{
 		name:         "redact-help-min-8-bytes",
 		docFile:      "cmd/act/help.go",
 		claimPattern: "must be at least 8 bytes;",

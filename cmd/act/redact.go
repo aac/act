@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/aac/act/internal/cli"
+	"github.com/aac/act/internal/op"
 	"github.com/aac/act/internal/redaction"
 )
 
@@ -44,9 +46,8 @@ func runRedact(args []string) int {
 		emitBadFlag(*asJSON, "act redact: --patterns-file is required; usage: act redact --patterns-file PATH [--dry-run] [--json]")
 		return 2
 	}
-	text, code, envelope := loadDescriptionPayload("--patterns-file", *patternsFile)
+	text, code, envelope := loadPatternsPayload(*patternsFile)
 	if code != 0 {
-		envelope["message"] = "act redact: " + envelope["message"].(string)
 		emitEnvelope(*asJSON, envelope)
 		return code
 	}
@@ -91,4 +92,45 @@ func runRedact(args []string) int {
 	}
 	fmt.Print(cli.FormatRedactHuman(res))
 	return code
+}
+
+// loadPatternsPayload reads the patterns file (or stdin for "-") for
+// `act redact`. Unlike the shared description reader it never puts the path
+// or an OS error in a message: the path may be the secret someone pasted by
+// mistake, and an OS error quotes it (docs/redaction-design.md §5.1). The
+// size limit is the same one the description reader applies. Exit codes
+// match the shared reader: 3 for a missing file, 2 otherwise.
+func loadPatternsPayload(path string) (string, int, map[string]any) {
+	var r io.Reader = os.Stdin
+	if path != "-" {
+		f, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", 3, map[string]any{
+					"error":   "file_not_found",
+					"message": "act redact: the patterns file was not found",
+				}
+			}
+			return "", 2, map[string]any{
+				"error":   "bad_flag",
+				"message": "act redact: the patterns file could not be read",
+			}
+		}
+		defer func() { _ = f.Close() }()
+		r = f
+	}
+	buf, err := io.ReadAll(io.LimitReader(r, op.MaxDescriptionLen+1))
+	if err != nil {
+		return "", 2, map[string]any{
+			"error":   "bad_flag",
+			"message": "act redact: the patterns file could not be read",
+		}
+	}
+	if len(buf) > op.MaxDescriptionLen {
+		return "", 2, map[string]any{
+			"error":   "bad_flag",
+			"message": fmt.Sprintf("act redact: the patterns file is larger than its %d-byte limit", op.MaxDescriptionLen),
+		}
+	}
+	return string(buf), 0, nil
 }

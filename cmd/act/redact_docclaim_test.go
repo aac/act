@@ -585,3 +585,45 @@ func TestDocClaim_Redact_HelpSaysHistoryIsNotRewritten(t *testing.T) {
 		t.Errorf("bare usage lacks redact: %s", bare)
 	}
 }
+
+// act-f3c274: a missing patterns file never has its path echoed, in text or
+// JSON, and the exit code and error code are unchanged.
+func TestDocClaim_Redact_PatternsPathNeverPrinted(t *testing.T) {
+	dir := pass5Site(t)
+	const planted = "patMsgSECRET-5521-0042"
+	missing := filepath.Join(t.TempDir(), planted)
+	for _, asJSON := range []bool{false, true} {
+		args := []string{"redact", "--patterns-file", missing}
+		if asJSON {
+			args = append(args, "--json")
+		}
+		stdout, stderr, code := redCmdRun(t, dir, "", args...)
+		if code != 3 {
+			t.Errorf("json=%v: exit %d, want 3\n%s\n%s", asJSON, code, stdout, stderr)
+		}
+		if strings.Contains(stdout+stderr, planted) {
+			t.Errorf("json=%v: output echoes the path\nstdout=%s\nstderr=%s", asJSON, stdout, stderr)
+		}
+		if !strings.Contains(stdout+stderr, "file_not_found") {
+			t.Errorf("json=%v: error code file_not_found missing\n%s\n%s", asJSON, stdout, stderr)
+		}
+	}
+}
+
+// act-88f2aa: an oversized patterns file is refused in terms of the
+// patterns file, not the description cap.
+func TestDocClaim_Redact_OversizePatternsFileMessage(t *testing.T) {
+	dir := pass5Site(t)
+	p := filepath.Join(t.TempDir(), "patMsgBig")
+	if err := os.WriteFile(p, bytes.Repeat([]byte("a"), 1048576+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := redCmdRun(t, dir, "", "redact", "--patterns-file", p, "--json")
+	if code != 2 {
+		t.Fatalf("exit %d, want 2\n%s\n%s", code, stdout, stderr)
+	}
+	out := stdout + stderr
+	if !strings.Contains(out, "patterns file") || strings.Contains(out, "description") || strings.Contains(out, "patMsgBig") {
+		t.Errorf("message should name the patterns file only: %s", out)
+	}
+}
