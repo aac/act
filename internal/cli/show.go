@@ -547,6 +547,12 @@ func opSummary(env op.Envelope) string {
 		if c, ok := m["criterion"].(string); ok && c != "" {
 			return firstLine(c)
 		}
+	case "redact":
+		// The record `act redact` writes; a pre-act-8d1d tombstone payload
+		// has no ops_rewritten and gets no summary.
+		if n, ok := m["ops_rewritten"].(float64); ok && n >= 1 {
+			return fmt.Sprintf("re-issued %d op file(s)", int(n))
+		}
 	}
 	return ""
 }

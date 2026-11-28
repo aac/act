@@ -46,9 +46,11 @@ func runHelpTo(stdout, stderr io.Writer, args []string) int {
 		fmt.Fprint(stdout, helpErrors)
 	case "machines", "machine", "hosts":
 		fmt.Fprint(stdout, helpMachines)
+	case "redact", "redaction":
+		fmt.Fprint(stdout, helpRedact)
 	default:
 		fmt.Fprintf(stderr, "act help: unknown topic %q\n", rest[0])
-		fmt.Fprintln(stderr, "topics: workflow, ops-model, errors, machines")
+		fmt.Fprintln(stderr, "topics: workflow, ops-model, errors, machines, redact")
 		return 2
 	}
 	return 0
@@ -163,12 +165,13 @@ DEEPER DIVES
   act help workflow         # the loop in detail with copy-pastable examples
   act help ops-model        # how the op log folds into state
   act help errors           # error-envelope contract (--json error shape & codes)
+  act help redact           # remove a string from stored op files
   act <subcommand> --help   # flag reference for any subcommand
 
   Subcommands (comma-separated; "dep add" is one multi-word
   subcommand, not three items):
     init, version, log, list, search, ready, mine, show,
-    blocks, blocked-by, create, close, reopen, delete,
+    blocks, blocked-by, create, close, reopen, delete, redact,
     update, next, finish, dep add, doctor, import, mcp,
     state import, state export, remote
 
@@ -641,8 +644,10 @@ EVERY WRITE IS AN OP FILE
   Issues are not stored as monolithic JSON. Each state change writes
   a new file under:
     .act/ops/<issue-id>/<yyyy-mm>/<hlc>-<hash>-<type>.json
-  Files are never modified after creation. Folding the op stream in
-  HLC order produces the current state.
+  A file is never modified after creation. 'act redact' is the one
+  command that replaces files: it writes each affected op again under a
+  new name and deletes the old one (act help redact). Folding the op
+  stream in HLC order produces the current state.
 
 WHY THIS SHAPE
   Two sessions writing different ops to the same issue produce two
@@ -825,7 +830,9 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     tracker_not_checked_out tracker remote exists; this checkout lacks it
     act_already_initialized 'act init' on a repo that already has .act/config.json
     act_state_not_initialized 'act state import' source has no nested .act/.git
-    bad_input               'act migrate' got a --from/--to pair it cannot use
+    bad_input               'act migrate' got a --from/--to pair it cannot use;
+                            'act redact' patterns file breaks a rule (no
+                            patterns, one under 8 bytes, one inside [redacted])
     blocked_by_external_dep close or claim of an issue with an open external dep
     blocked_requires_dep    'act update --status blocked' with no blocked-by edge
     bootstrap_timeout       'act state import --from-remote' clone ran past its budget
@@ -833,7 +840,8 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     branch_failed           'act close --branch' could not switch to the branch
     commit_failed           'act close' could not commit its op
     doctor_failed           'act remote enable' stopped on a doctor error finding
-    file_not_found          --description-file (or its append twin) names no file
+    file_not_found          --description-file (or its append twin), or
+                            'act redact --patterns-file', names no file
     fts_parse               'act search' query the index rejected
     has_descendants         'act delete' of an issue with live children, no --cascade
     hash_failed             'act close' could not hash its op for the hook
@@ -849,7 +857,14 @@ ERROR CODES (STABLE; RENAMING IS A BREAKING CHANGE)
     nonce_failed            'act create' could not generate a nonce
     op_filename_collision   'act state export' found an op file with other content
     query_failed            'act search' query failed in SQLite
-    remote_unreachable      'act state import --from-remote' clone failed
+    redact_failed           'act redact' step failed (the message names it);
+                            re-run it: a partial pass is finished by the next
+    redact_residual         'act redact' found a listed string where it does not
+                            rewrite; details.paths names the files
+    redact_unconfirmed      'act redact' redacted and committed here, but origin
+                            has not seen it (exit 6); re-run once it is reachable
+    remote_unreachable      'act state import --from-remote' clone failed, or
+                            'act redact' could not fetch origin (nothing changed)
     stage_failed            'act close' could not git-add its op file
     stale_git_lock          a leftover index.lock / HEAD.lock blocks the write
     target_not_empty        'act state import' target .act/ is not empty, no --force
@@ -942,6 +957,10 @@ EXIT CODES
            so it is not yours yet. Do not dispatch on it: re-run the same
            claim later (it writes no second op and answers 0, 5 or 6) or
            take other work. Not under --isolated or --offline.
+  exit 6   redact_unconfirmed — 'act redact' redacted and committed this
+           checkout, but the push did not reach origin, so origin and every
+           other checkout still hold the text. Re-run the same command once
+           origin is reachable.
   The envelope is emitted before exit; success paths emit no envelope at all.
 
   A FAILED PUSH IS NOT A FAILED WRITE. Once a write's op is committed in
@@ -997,6 +1016,83 @@ AN OP WHOSE COMMIT FAILED IS INVISIBLE
   back under .act/ops/ and commit it to replay the write verbatim, or
   ignore it and simply re-run the command — re-running is safe here,
   precisely because nothing was recorded.
+`
+
+// helpRedact is `act help redact` (docs/redaction-design.md §9). Two
+// sentences of the design's OTHER MACHINES paragraph wait for the code that
+// makes them true: that another checkout rebuilds its index on its next
+// read, and that 'act doctor' reports a returning old file.
+const helpRedact = `act — redact
+
+WHAT IT DOES
+  'act redact' removes a string from every stored op file that holds it.
+  An edit with 'act update' only adds a newer op; the older files, the
+  create op included, keep the old text, and 'act log' still prints it.
+  Redaction replaces the string with [redacted] inside those files:
+  each is written again as a new op file, the old file is deleted, and
+  a 'redact' op on each issue records that it happened. 'act show' and
+  'act log' then render [redacted] in its place.
+
+USAGE
+    act redact --patterns-file PATH [--dry-run] [--json]
+
+  PATH lists the strings to remove, one per line; '-' reads stdin. They
+  are never taken from the command line: a positional argument is
+  refused (exit 2) without being echoed. act prints counts only — never
+  a pattern, the text it matched, or the text around it.
+
+  Patterns are literal and case-sensitive, not regular expressions.
+  Surrounding spaces and tabs are trimmed and blank lines skipped. Each
+  must be at least 8 bytes; give a shorter secret together with the
+  words written next to it. List every written form (with and without
+  dashes or spaces) on its own line. To build the file without
+  displaying the secret, extract it straight into the file, e.g.
+    grep -rhoE '<its shape>' .act/ops | sort -u > /tmp/patterns
+  and delete the file afterwards.
+
+  --dry-run prints the counts a run would produce and changes nothing.
+
+WHAT IT REWRITES
+  Titles, descriptions, acceptance criteria, close/reopen/unclaim
+  reasons and external dep refs, in every issue, plus the op files act
+  set aside under .act/.failed-ops/ and .act/.collisions/. It then
+  deletes and rebuilds .act/index.db. If a string also occurs somewhere
+  act does not rewrite (an assignee, a machine label, a hook script, a
+  compaction snapshot under .act/snapshots/), nothing is changed and
+  the command exits 1 (redact_residual), naming the files. Exit 0 means
+  a final scan found none of the strings in any file under .act/
+  outside .act/.git. Running it again is a no-op and is how to check.
+
+OTHER MACHINES
+  The rewrite is one commit, pushed like any write; origin must be
+  reachable or nothing is changed (exit 3). Another checkout drops the
+  old files and receives the rewritten ones on its next sync; until
+  then it still holds and shows the old text. Run the same command on
+  any checkout that had unpublished work.
+
+  Exit 6 (redact_unconfirmed): this checkout is redacted but the push
+  did not reach origin, so origin and every other checkout still hold
+  the text. Re-run the same command once origin is reachable.
+
+WHAT IT DOES NOT REMOVE
+  act redact does not rewrite git history. Every commit of the nested
+  .act/ repo made before the redaction still holds the original text —
+  in this checkout, on origin, on any upstream, in every clone and in
+  every backup of them — and 'git -C .act log -p' prints it. Treat a
+  redacted secret as still readable by anyone who can read those
+  repositories, and rotate it if it can be rotated.
+  An issue's id is derived from its original create op, so for a string
+  that was in an issue's first title or description the id remains a
+  24-bit fingerprint of it.
+  Text copied out of the tracker (host-repo commits, handoff docs,
+  transcripts) is outside act.
+
+EXIT CODES
+  0  done and verified (or nothing matched)
+  1  redact_residual, redact_failed
+  2  usage: bad flag, positional argument, bad patterns file
+  3  origin unreachable (nothing changed), no tracker, file not found
+  6  redact_unconfirmed
 `
 
 // helpMachines is `act help machines`: the whole machine-affinity contract

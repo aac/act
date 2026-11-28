@@ -1565,6 +1565,9 @@ var sp8NotProvoked = map[string]string{
 	"branch_failed":               "needs git to refuse the --branch checkout",
 	"stage_failed":                "needs git add to fail for a reason other than a stale lock",
 	"commit_failed":               "needs git commit to fail for a reason other than a stale lock",
+	"redact_failed":               "needs a step of act redact (parse, write, stage, commit, rebase) to fail",
+	"redact_residual":             "TestDocClaim_Redact_ResidualRefusesBeforeChanging runs it and checks its details",
+	"redact_unconfirmed":          "prints the redact result, not an envelope; TestDocClaim_Redact_RejectedPushIsUnconfirmedThenConfirms runs it",
 }
 
 // sp8Source is every non-test Go file under cmd/ and internal/, joined.

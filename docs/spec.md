@@ -718,7 +718,7 @@ Auto-publish on write (Phase 2, act-65a7d5). When the nested `.act/` repo has `o
 - A local file byte-identical to origin's copy is **deleted** — the checkout is about to write the same bytes.
 - A local file that **differs** is **moved**, never deleted, to `.act/.collisions/<timestamp>/<original-path>`.
 
-The fail-soft boundary is exactly the commit: every failure *before* the auto-commit (op write, staging, hook, commit itself) still exits non-zero with its own envelope, because nothing landed in those cases. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path. The `remote_unreachable` envelope is a `bootstrap-worker` clone-failure outcome, not a write-path one.
+The fail-soft boundary is exactly the commit: every failure *before* the auto-commit (op write, staging, hook, commit itself) still exits non-zero with its own envelope, because nothing landed in those cases. The local commit is never rolled back on push failure: the op file is on disk and is recoverable via the harvest path. The `remote_unreachable` envelope is a `bootstrap-worker` clone-failure outcome, not a write-path one, with one exception: an ordinary write degrades to a deferral, but `act redact` refuses to start (exit 3, nothing changed) when its first fetch does not reach `origin`.
 
 `act harvest` is **not** in the auto-publish list. Harvest is the orchestrator-side fan-in primitive; the orchestrator's nested `.act/.git` typically has no `origin` remote (it IS the canonical history workers push to), so auto-pushing after a harvest commit would be a silent no-op in the common production shape. In Phase 2 remote-attached mode the worker already pushed its ops to the orchestrator before harvest ran (harvest short-circuits with a skip for that shape). In Phase 1.5 sandboxed mode, publishing a harvest fold upward to an upstream remote is an orchestrator-level concern handled by `act remote sync`, not by harvest itself.
 
@@ -741,7 +741,7 @@ An `--offline` write whose append to `.act/.pending-pushes` fails still stands. 
 Fields:
 - `timestamp` — RFC3339 with millisecond precision, UTC (`Z` suffix).
 - `"sha":` — full sha of the local commit that was NOT pushed.
-- `op_type` — one of `create|close|update|dep_add|reopen|delete`.
+- `op_type` — one of `create|close|update|dep_add|reopen|delete|redact`.
 
 The file is capped at 100 entries (rolling); appends beyond the cap drop the oldest entries. The cap is a safety bound — a healthy workflow has at most one or two entries between flushes.
 
@@ -781,7 +781,7 @@ The file is capped at 100 entries (rolling); the cap is the same as `.act/.pendi
 - `3` — environment error: not in a git repo, `.act/` missing, missing `node_id`, unwritable index.
 - `4` — not one meaning. Three commands exit 4, each for its own condition: `act version --check-repo` when some op file carries a `writer_version` newer than this binary's (`version_skew`); `act doctor` when `origin` is configured but unreachable (the `remote-reachable` finding); and `act state import --from-remote` when the clone runs past its time budget (`bootstrap_timeout`). No other command exits 4 — reads and writes apply an op from a newer writer like any other op.
 - `5` — `claim_lost` (a claim another checkout won) and `act migrate`'s `migration_not_found`.
-- `6` — `claim_unconfirmed`: a claim whose op is committed and queued but that `origin` has not seen (act-c30acd). Not a win; see "Atomic claim protocol".
+- `6` — committed here, `origin` has not seen it, re-run to confirm. Two commands exit 6: `claim_unconfirmed`, a claim whose op is committed and queued but that `origin` has not seen (act-c30acd), which is not a win (see "Atomic claim protocol"); and `redact_unconfirmed`, an `act redact` that redacted and committed this checkout but whose push did not reach `origin`, so `origin` and every other checkout still hold the text (see "`act redact`").
 
 A failing command reports one error envelope: `{"error": "<code>", "message": "...", "details": {...}}` on stdout when `--json` is set, and the `message` alone on stderr in human mode. `error` is a string code, not an object, and the envelope has those three keys and no others; the codes, and the failures of `act migrate` and `act version --check-repo` that leave `details` out, are listed under "1. Error handling". `act doctor` is the exception: a run that exits non-zero because of its findings prints the findings document, not an envelope.
 
@@ -1211,6 +1211,51 @@ The object has three top-level keys: `matches`, `count` and `refresh`. There is 
 
 ---
 
+### `act redact`
+
+**Synopsis:** `act redact --patterns-file PATH [--dry-run] [--json]`
+
+Removes listed strings from every stored op file that holds them. Design and rationale: `docs/redaction-design.md`. An edit with `act update` only adds a newer op, so the older files — the create op included — keep the old text and `act log` still prints it; `act redact` re-issues each file that holds a listed string (see "Op file naming" and the slot rule under "Op-fold algorithm") and records that it did. It cannot be used to edit: there is no field target and no replacement value, and the only thing it writes into a text field is `[redacted]` over a string the caller already holds.
+
+**Flags:**
+- `--patterns-file PATH` (string, required). The strings to remove, one per line (UTF-8); `-` reads stdin. No flag takes a string on the command line, and a positional argument is refused with exit 2 `bad_flag` and the fixed message `act redact: takes no positional arguments; strings to remove are read from --patterns-file` — the argument is not echoed, since it may be the secret typed by mistake.
+- `--dry-run` (bool). Plans against the tree as it stands — no lock, no fetch, no write — and prints the counts a run would produce. HEAD and the working tree are unchanged afterwards.
+- `--json` (bool). One JSON object on stdout.
+
+It takes none of the universal write flags (`--no-commit`, `--push`, `--isolated`, `--offline`, `--branch`, `--verify`): each is an unknown flag, exit 2 `bad_flag`. It always covers the whole tracker. No MCP tool wraps it.
+
+**What is rewritten.** Only the payload's text fields, matched and replaced on the decoded string (so a pattern holding a quote, a newline or non-ASCII text matches whatever its JSON escaping in the file); everything else in the op is copied through:
+
+| `op_type` | Text fields (JSON pointers into the payload) |
+|---|---|
+| `create` | `/title`, `/description`, each `/accept/N` |
+| `update_field` | `/value`, only when `/field` is `title` or `description` and the value is a string |
+| `add_accept` | `/criterion` |
+| `set_accept` | each `/criteria/N` |
+| `close`, `reopen`, `unclaim` | `/reason` |
+| `add_external_dep`, `remove_external_dep` | `/ref` |
+| `redact` (pre-act-8d1d payloads only) | `/new_value` |
+| every other type, known or not | none |
+
+Op files under `.act/.failed-ops/` and `.act/.collisions/` are rewritten the same way, one file at a time. Length caps are not re-applied to a re-issued op.
+
+**Patterns.** The file is read whole as UTF-8 and split on `\n`; one trailing `\r` is stripped, leading and trailing spaces and tabs are trimmed, empty lines are dropped and duplicates removed. Each remaining line is one literal, case-sensitive pattern: there is no comment syntax and no regular expression. Each of these is exit 2 `bad_input`, naming the 1-based line number and never the line's text: no patterns at all; a pattern shorter than 8 bytes; a pattern that occurs inside `[redacted]`. Patterns apply longest first, ties by byte order, so two checkouts given the same file write byte-identical re-issued ops.
+
+**Behavior.** The patterns are read and checked before the tracker is touched, so a bad file changes nothing. A run then takes the write lock and holds it to the end. When the nested repo has `origin`, it fetches and rebases first; a fetch that does not reach `origin` is exit 3 `remote_unreachable` with nothing changed — an ordinary write degrades to a deferral, a redaction refuses to start. It then plans the pass: if a listed string is anywhere it does not rewrite — a structural field, an object key, the envelope, an op type with no text fields, or any other regular file under `.act/` outside `.git/` (a machine label, a hook script, a compaction snapshot under `.act/snapshots/`) — it exits 1 `redact_residual` with nothing changed, and `details.paths` names the files relative to `.act/`. Otherwise it re-issues the op files that hold a string (every live member of the slot, at the next generation), deletes the files they replace and any superseded leftovers, writes one `redact` record op per issue in which it re-issued something, and makes one commit of those issues' `ops/<issue>` directories, `--no-verify`, subject `act-redact: re-issued <N> op file(s) in <M> issue(s)` (or `act-redact: removed <N> superseded op file(s)` when nothing was re-issued). The commit is published like any write; after a publish that may have rebased onto ops the first plan never saw, the run plans again with the patterns still in memory, at most five rounds (a fifth round that still changes something is exit 1 `redact_failed`). It then deletes `.act/index.db` and rebuilds it, and scans every regular file under `.act/` outside `.git/` for every pattern.
+
+**Exit 0 means the scan found none of the strings in any file under `.act/` outside `.git/`, and `origin` (if there is one) has the commit.** Running it again is how to check and is a no-op: zero counts, no commit, exit 0. `act log --summary` shows each record as `re-issued <N> op file(s)`. What it does not remove — the nested repo's git history, backups, checkouts that have not synced, the id fingerprint of a string that was in a create op — is listed in `act help redact` and `docs/redaction-design.md` §8.
+
+**JSON output:**
+```json
+{"ok":true,"dry_run":false,"patterns":1,"issues":1,"ops_rewritten":2,"replacements":3,"leftovers_removed":0,"quarantined_rewritten":0,"published":true}
+```
+
+Every key is always present; `published` is false when there is no `origin`. `ops_rewritten` counts op files under `ops/` written by re-issue, `replacements` the occurrences replaced in them, `leftovers_removed` the superseded files deleted, and `quarantined_rewritten` the set-aside files re-issued. When the push does not reach `origin`, the run prints the usual `act: WARNING:` block on stderr, whose last line reads `re-run act redact with the same patterns file once origin is reachable; it re-issues nothing twice and publishes this commit`, and the result object with `"ok":false,"error":"redact_unconfirmed","published":false,"push_deferred":true` and `push_deferred_reason`, exit 6. Nothing act prints — result, error, warning — contains a pattern, matched text, or the text around a match; paths appear only in `redact_residual`.
+
+**Exit codes:** 0 when done and verified, including when nothing matched; 1 when a listed string is somewhere act does not rewrite (`redact_residual`, with `details.changed` true when a round had already committed), when a step fails (`redact_failed`; re-run it — a partial pass is finished by the next run), or when another act process holds the write lock (`write_lock_timeout`); 2 on an unknown flag, a missing `--patterns-file`, a positional argument (`bad_flag`) or a patterns file that breaks a rule (`bad_input`); 3 when the patterns file does not exist (`file_not_found`), outside a git working tree (`not_in_git`), in a repo with no `.act/` (`act_not_initialized`, or `tracker_not_checked_out` when a configured tracker remote holds this repo's tracker), or when `origin` is configured and the first fetch did not reach it (`remote_unreachable`, nothing changed); 6 when this checkout is redacted and committed but `origin` has not seen it (`redact_unconfirmed`).
+
+---
+
 ### `act doctor`
 
 **Synopsis:** `act doctor [--check NAME] [--fix] [--fix-index] [--strict] [--no-fetch] [--json]`
@@ -1392,7 +1437,7 @@ Every `act` command exits with a small, stable error code string. Under `--json`
 
 The table lists every code the CLI emits — every code that some non-test source line under `cmd/` or `internal/` puts in an envelope's `error` field — and no other. A constant that is declared but never emitted has no row. Codes only the MCP server emits are in the second table. `TestDocClaim_ErrorCodes_HelpAndSpecListExactlyTheEmittedSet` holds both tables, and `act help errors`, to that rule.
 
-The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4), `claim_lost`/`migration_not_found` (5) and `claim_unconfirmed` (6) the only rows outside 1–3. Where a row lists two exit codes the command decides which: an index that cannot be opened is exit 1 from `act list` and exit 3 from `act search`. In the message column `<cmd>` is the command as invoked (`act state import`, `act close`, ...), and "the underlying error's text" means the message is whatever the failing library call reported, with no fixed format.
+The `exit` column is the process exit code the binary returns with that error; several errors share one exit code, following the universal exit codes above (1 logical failure, 2 usage, 3 environment or not found), with `version_skew`/`bootstrap_timeout` (4), `claim_lost`/`migration_not_found` (5) and `claim_unconfirmed`/`redact_unconfirmed` (6) the only rows outside 1–3. Where a row lists two exit codes the command decides which: an index that cannot be opened is exit 1 from `act list` and exit 3 from `act search`. In the message column `<cmd>` is the command as invoked (`act state import`, `act close`, ...), and "the underlying error's text" means the message is whatever the failing library call reported, with no fixed format.
 
 | code                       | exit | human message format                                                       | details keys                                  |
 |----------------------------|------|----------------------------------------------------------------------------|-----------------------------------------------|
@@ -1407,7 +1452,7 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `dep_not_found`            | 1    | `act update: --dep-rm: no <type>-edge to remove: <child> is blocked by <parent> does not exist` | none |
 | `hook_failed`              | 1    | `hook exited <rc>:<a newline, then the hook's stderr>` | `hook_cause`, `hook_exit_code`, `hook_stderr`, `hook_truncated` |
 | `import_invalid_jsonl`     | 1    | `import_invalid_jsonl: line <N>: <reason>` | none |
-| `remote_unreachable`       | 3    | `act state import: clone <url>: <reason>` | `url`, `stderr_tail` |
+| `remote_unreachable`       | 3    | `act state import: clone <url>: <reason>`; from `act redact`, `act redact: fetch <url>: <reason>; nothing was changed` | `url`, `stderr_tail` |
 | `bootstrap_timeout`        | 4    | `<cmd>: clone <url> exceeded <N>s budget` | `timeout_seconds`, `url` |
 | `target_not_empty`         | 2    | `act state import: <path> exists and is non-empty; pass --force to overwrite` | none |
 | `blocked_by_external_dep`  | 2    | `<cmd>: <id> has <N> open external dep(s); clear with --ext-rm or override with --force` | `external_deps` |
@@ -1453,6 +1498,9 @@ The `exit` column is the process exit code the binary returns with that error; s
 | `payload_invalid`          | 1    | the underlying error's text | none |
 | `push_failed`              | 3    | `act remote add-upstream: initial push failed: <error>` | `url`, `branch` |
 | `query_failed`             | 2    | `act search: <error>` | none |
+| `redact_failed`            | 1    | `act redact: <the failing step>: <error>`; re-run: a partial pass is finished by the next run | none |
+| `redact_residual`          | 1    | `act redact: <N> file(s) under .act/ <where the string remains and whether anything changed>: <the paths>` | `paths`, `changed` |
+| `redact_unconfirmed`       | 6    | no message: prints the `act redact` result, with `"ok":false,"error":"redact_unconfirmed"`, not an envelope | none |
 | `stage_failed`             | 1    | the underlying error's text | none (`quarantined_op` when the op file was set aside) |
 | `stale_git_lock`           | 1    | `stale git lock blocks the tracker: <lock file> exists; <how to confirm it is stale, remove it and recover>` | `lock_file`, `remedy`, `quarantined_op` |
 | `stat_failed`              | 1, 3 | by command, e.g. `act state import: target <path>: <error>` | none |
@@ -1515,7 +1563,7 @@ Why the hook runs before the write (act-8ee085): it used to run with the op file
 
 Where a rollback is still possible — the op file is written and a later step (the commit) fails — `act` guarantees the working tree and HEAD do not disagree about it: the op file is withdrawn to `.act/.failed-ops/`, and if HEAD already tracks it (something committed it in the interval) `act` commits the removal itself (subject `act: withdraw <type> op for act-XXXX (commit failed)` — deliberately not the `act-op:` form, since it retracts an op rather than recording one) rather than leaving a dirty deletion for a blind sweep to publish.
 
-Hooks NEVER run on: `act fold` (read-only), replay/recovery, `act import`, fresh `git clone` (the ops already exist in history; the writer that produced them already ran their hook). The invariant is "hooks fire exactly once per logical op, on the writer that originated it".
+Hooks NEVER run on: `act fold` (read-only), replay/recovery, `act import`, `act redact` (a re-issued create is not a create), fresh `git clone` (the ops already exist in history; the writer that produced them already ran their hook). The invariant is "hooks fire exactly once per logical op, on the writer that originated it".
 
 ### 3. Bootstrap importer
 

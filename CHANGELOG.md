@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`act redact` removes a string from every stored op file (act-404754).**
+  An edit with `act update` only adds a newer op; the older files, the create
+  op included, kept the old text and `act log` still printed it.
+  `act redact --patterns-file PATH [--dry-run] [--json]` re-issues each op file
+  that holds a listed string with the string replaced by `[redacted]`, deletes
+  the old file, records a `redact` op on each issue, commits and publishes,
+  then rebuilds `.act/index.db` and scans every file under `.act/` outside
+  `.git/`. Strings come only from the patterns file (or stdin); a positional
+  argument is refused without being echoed, and nothing act prints holds a
+  pattern. A string somewhere act does not rewrite is refused whole
+  (`redact_residual`, exit 1); an unreachable `origin` changes nothing
+  (exit 3); a push that does not land is exit 6 `redact_unconfirmed`. The
+  nested repo's git history is not rewritten. See `act help redact` and
+  `docs/redaction-design.md`.
 - **`act update` reaches all six spec-updatable fields (act-3e21b8, act-3e2986).**
   The spec's fold table lists `title`, `description`, `priority`, `type`,
   `assignee`, `parent` as LWW-per-field updatable and the fold implements all

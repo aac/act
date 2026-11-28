@@ -163,6 +163,8 @@ func deferPublish(gops *gitops.ActGitOps, opType string, stderr io.Writer, reaso
 // A claim is the exception (act-c30acd): an unpublished claim is not a win
 // (exit 6 claim_unconfirmed), and re-running the claim is how it is
 // confirmed — a re-claim writes no second op — so its last line says so.
+// A redaction is the other exception (exit 6 redact_unconfirmed): origin
+// still holds the text, and re-running `act redact` is what publishes it.
 func emitPublishDeferredWarning(stderr io.Writer, opType string, res PublishResult) {
 	dst := stderr
 	if dst == nil {
@@ -177,6 +179,11 @@ func emitPublishDeferredWarning(stderr io.Writer, opType string, res PublishResu
 	}
 	if opType == "claim" {
 		fmt.Fprintf(dst, "act: WARNING:   the claim op landed locally and is durable, but origin has not seen it — re-run the claim once origin is reachable to confirm it — a re-claim writes no second op.\n")
+		return
+	}
+	if opType == "redact" {
+		fmt.Fprintf(dst, "act: WARNING:   this checkout is redacted, but origin and every other checkout still hold the text (exit 6 redact_unconfirmed).\n")
+		fmt.Fprintf(dst, "act: WARNING:   re-run act redact with the same patterns file once origin is reachable; it re-issues nothing twice and publishes this commit\n")
 		return
 	}
 	fmt.Fprintf(dst, "act: WARNING:   the write itself landed and is durable — exit status is 0 on purpose. Do NOT re-run this command; re-running duplicates the op.\n")

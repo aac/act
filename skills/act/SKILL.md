@@ -208,6 +208,10 @@ stale title and re-derives the same conclusion. Retitling is id-safe: commit mar
 `act doctor` key on the `Act-Id:` trailer, never the title. `--type` and `--parent` are on the
 same command (`--parent ""` detaches from an epic).
 
+**A secret in a ticket: fix it with `act update`, then remove it with `act redact`.** The edit
+only adds a newer op; `act redact --patterns-file <file>` rewrites every stored op file that
+still holds the string. It does not rewrite the nested repo's git history: rotate the secret.
+
 **Counting ready work: `act ready` caps at 50 rows.** A capped ready set prints a WARNING to
 stderr and, under `--json`, carries `total` (the pre-limit ready count) and `truncated`. Test
 `truncated` rather than comparing `count` to the limit, and pass `act ready --limit 0` when

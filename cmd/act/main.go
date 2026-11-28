@@ -156,6 +156,8 @@ func main() {
 		os.Exit(runBlockedBy(args))
 	case "delete":
 		os.Exit(runDelete(args))
+	case "redact":
+		os.Exit(runRedact(args))
 	case "update":
 		os.Exit(runUpdate(args))
 	case "doctor":
@@ -200,7 +202,7 @@ func usage() {
 // the full tutorial.
 func bareUsageMsg() string {
 	return "usage: act <subcommand> [flags]\n" +
-		"subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, update, next, finish, dep add, doctor, import, mcp, mine, state import, state export, remote\n" +
+		"subcommands: init, version, log, list, search, ready, show, create, close, reopen, delete, redact, update, next, finish, dep add, doctor, import, mcp, mine, state import, state export, remote\n" +
 		"(run 'act help' for the full subcommand tutorial)"
 }
 
@@ -389,6 +391,7 @@ var writeNoStateCommands = map[string]bool{
 	"close":  true,
 	"reopen": true,
 	"delete": true,
+	"redact": true,
 	"import": true,
 	// next claims an issue; finish closes one — both are writes that must
 	// hard-exit 3 (not silently no-op) on a repo with no .act/ state.

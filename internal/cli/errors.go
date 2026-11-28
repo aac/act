@@ -69,7 +69,9 @@ const (
 	// `remote_unreachable` is emitted when `act state import`'s clone
 	// of the remote act-state fails for non-recoverable reasons (auth,
 	// DNS, missing remote). It is a bootstrap-path code, not a
-	// write-path one.
+	// write-path one — except for `act redact`, which refuses to start
+	// (exit 3, nothing changed) when its first fetch does not reach
+	// origin. The three redact_* codes live in redact.go.
 	ErrRemoteUnreachable = "remote_unreachable"
 	// ErrUpstreamNotConfigured is emitted by `act remote sync` (Phase 2
 	// ticket 6a) when `origin-upstream` is not configured in the
