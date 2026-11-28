@@ -3981,6 +3981,12 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_ClpMCPNextPublishesItsClaim",
 	},
 	{
+		name:         "list-truncation-hint-mentions-under",
+		docFile:      "internal/cli/list.go",
+		claimPattern: "or list one subtree with --under <id>.",
+		testName:     "TestDocClaim_List_TruncationHintMentionsUnder",
+	},
+	{
 		name:         "spec-update-claim-flag-publishes-on-win",
 		docFile:      "docs/spec.md",
 		claimPattern: "On win the claim commit is published like any other write (see \"Auto-publish on write\"); `--push` is redundant when `origin` is set.",

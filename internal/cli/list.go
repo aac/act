@@ -361,7 +361,7 @@ func FormatListTruncationNotice(res ListResult) string {
 	return fmt.Sprintf(
 		"act list: WARNING: showing %d of %d matching issues — %d hidden by --limit. "+
 			"Counts taken from this output will be WRONG. "+
-			"Use `act list --limit 0` for everything, or narrow with --status/--assignee/--type.\n",
+			"Use `act list --limit 0` for everything, or narrow with --status/--assignee/--type, or list one subtree with --under <id>.\n",
 		res.Count, res.Total, res.Total-res.Count,
 	)
 }

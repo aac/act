@@ -75,6 +75,16 @@ func TestAppendDescription(t *testing.T) {
 	}
 }
 
+// TestDocClaim_List_TruncationHintMentionsUnder pins the truncation warning's
+// narrowing hint: it names --under alongside --status/--assignee/--type
+// (act-746a5c).
+func TestDocClaim_List_TruncationHintMentionsUnder(t *testing.T) {
+	got := FormatListTruncationNotice(ListResult{Count: 200, Total: 268, Truncated: true})
+	if !strings.Contains(got, "--under <id>") {
+		t.Errorf("truncation warning does not mention --under: %s", got)
+	}
+}
+
 // TestFormatListTruncationNotice covers the notice's two states (act-b50d81).
 // The empty-string-when-not-truncated case is what keeps a normal listing's
 // stderr clean; without it every call site would need its own guard.
