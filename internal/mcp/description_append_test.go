@@ -16,20 +16,12 @@ import (
 // hintDocToolDescription returns a tool's description from tools/list.
 func hintDocToolDescription(t *testing.T, name string) string {
 	t.Helper()
-	root := makeRepo(t)
-	resp := runOne(t, root, false, map[string]any{
-		"jsonrpc": "2.0", "id": "d", "method": "tools/list", "params": map[string]any{},
-	})
-	m, _ := resp.Result.(map[string]any)
-	tools, _ := m["tools"].([]any)
-	for _, raw := range tools {
-		td, _ := raw.(map[string]any)
-		if n, _ := td["name"].(string); n == name {
-			d, _ := td["description"].(string)
-			return d
+	for _, td := range allTools() {
+		if td.Name == name {
+			return td.Description
 		}
 	}
-	t.Fatalf("%s not found in tools/list", name)
+	t.Fatalf("%s not found in allTools()", name)
 	return ""
 }
 
