@@ -136,10 +136,14 @@ claim        | unclaim      | close         | reopen     | redact           |
 import       | migrate      | tombstone
 ```
 
-These seventeen are the types a writer may emit. `redact` is legacy and
-parse-only: it is accepted on read but has no writer and no apply path, so the
-fold skips it. An op whose `op_type` is not in this list is skipped by the
-fold, not a hard failure (see §Op-fold algorithm).
+These seventeen are the types a writer may emit. `redact` is a record: a
+redaction writes one on each issue whose op files it re-issued
+(docs/redaction-design.md), and it still has no apply path, so the fold skips
+it. The effect of a redaction is in the re-issued op files, never in a fold
+rule for this type. Historical `redact` ops written before act-8d1d carry an
+older payload; they are accepted on read and skipped the same way. An op whose
+`op_type` is not in this list is skipped by the fold, not a hard failure (see
+§Op-fold algorithm).
 
 #### Byte-exact JSON serialization rules
 
@@ -191,9 +195,10 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 // close
 { "reason": "string?, <=500 bytes" }       // sets status=closed, closed_at=hlc.wall, closed_reason
 
-// redact — replaces the named field's rendered value with "<redacted>" from this HLC forward
-{ "field_path": "description | acceptance_criteria[2].text | ...",
-  "new_value": "string?" }                  // optional replacement; default "<redacted>"
+// redact — a record written by a redaction; never applied by the fold
+{ "ops_rewritten": 2, "replacements": 3 }  // both integers >= 1; one op per issue, per pass that re-issued something in it
+// (ops written before act-8d1d carry { "field_path", "new_value" } instead:
+// accepted on read, skipped by the fold, refused by the write-time validator)
 
 // import — records that this issue was materialized from an external op-log line
 { "source_ref": "issues.jsonl@<sha>", "source_id": "bootstrap-id-1",
@@ -206,6 +211,14 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 // tombstone — issue-level deletion marker
 { "deleted_at": "RFC3339 UTC" }
 ```
+
+**Re-issued ops.** A redaction rewrites an op of any type by re-issuing it: the
+envelope is unchanged, the removed string is replaced by `[redacted]` in the
+payload's text fields, and the payload gains one integer key, `"redacted": N`
+(N >= 1, the generation). The key is inside the payload, so it is covered by the
+op hash and ignored by every payload decoder that does not look for it; an op
+without the key is generation 0. Nothing else in the payload changes, and the
+re-issued op is written under a new file name (see "Op file naming").
 
 ### On-disk layout
 
@@ -344,6 +357,8 @@ That block is the whole schema: seven tables, three indices (`idx_status`, `idx_
 - Collision behavior: if a file with the same `<iso8601>-<hash8>` prefix already exists in the target shard, extend the hash to 12 hex chars and retry; if 12 still collides, extend to 16; document an error past 16 (statistically impossible barring a sha256 break).
 
 The shard directory is `ops/<issue_id>/<YYYY-MM>/` derived from the HLC wall's year-month. A writer never moves a file across shards even if the HLC wall later turns out to disagree with another machine's clock; the path is final at write time.
+
+A file's bytes are never changed in place. A re-issued op (see "Op type payloads") has a new payload and so a new hash: it is written in the same directory under the name its own hash gives, with the same `<iso8601>` and `<op_type>`, and the file it replaces is deleted. The old name is never reused for the new bytes, so a given path still holds one op body, and the old name, which carries a hash of the old content, does not survive beside the new one.
 
 ## Op-fold and concurrency
 

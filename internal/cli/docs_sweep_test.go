@@ -1855,6 +1855,36 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`YYYY-MM-DDTHH-MM-SS.sssZ`",
 		testName:     "TestDocClaim_OpFilename_NoColon",
 	},
+	// redaction-* (act-41390d, docs/redaction-design.md U2): the redact op
+	// type is a record again, with a write-time validator and still no
+	// apply path; a re-issued op carries its generation in the payload and
+	// takes the name its own hash gives in the same directory. The tests
+	// live beside the code: internal/op (the validator) and
+	// internal/redaction (files a plan actually writes).
+	{
+		name:         "redaction-record-no-apply-path",
+		docFile:      "docs/spec.md",
+		claimPattern: "and it still has no apply path, so the fold skips",
+		testName:     "TestDocClaim_Fold_DispatchIsByOpTypeOnly",
+	},
+	{
+		name:         "redaction-record-payload",
+		docFile:      "docs/spec.md",
+		claimPattern: `{ "ops_rewritten": 2, "replacements": 3 }  // both integers >= 1`,
+		testName:     "TestDocClaim_RedactRecord_PayloadIsTwoCountsAtLeastOne",
+	},
+	{
+		name:         "redaction-reissued-op-generation-key",
+		docFile:      "docs/spec.md",
+		claimPattern: "the payload gains one integer key, `\"redacted\": N`",
+		testName:     "TestDocClaim_Redaction_ReissuedOpCarriesGenerationUnderNewName",
+	},
+	{
+		name:         "redaction-reissued-op-new-name",
+		docFile:      "docs/spec.md",
+		claimPattern: "it is written in the same directory under the name its own hash gives",
+		testName:     "TestDocClaim_Redaction_ReissuedOpCarriesGenerationUnderNewName",
+	},
 	// branch-flag-* (act-5d6a): the --branch <ref> universal write flag
 	// pins both the auto-commit and the publish to a named branch in the
 	// nested .act/ repo, decoupling them from HEAD / tracking config.
