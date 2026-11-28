@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -143,72 +142,76 @@ func containsAny(b []byte, forms [][]byte) bool {
 	return false
 }
 
-// holds reports whether file bytes b hold a pattern in any form. It is a
-// fail-closed union of three checks, and a hit in any one is a hit:
+// holds reports whether the file name, with bytes b, must be treated as
+// holding a pattern. It fails closed; any one of these makes it true:
 //
 //  1. a raw form of a pattern in the bytes;
-//  2. a pattern inside any string token — keys and values alike — of b
-//     read as a stream of JSON values, walked token by token with no maps
-//     built, so a duplicate key's earlier value is still read;
-//  3. when that walk fails at any point (b is partly JSON, or not JSON at
-//     all), a pattern inside any quoted string literal found anywhere in b
-//     that unescapes as a JSON string.
+//  2. a pattern inside any string token, keys and values alike, of b read
+//     as a stream of JSON values. The walk goes token by token and builds
+//     no maps, so the earlier value of a duplicate key is still read;
+//  3. the file claims to be JSON (claimsJSON) and the walk cannot finish
+//     it cleanly: a decode error, trailing bytes after the last value, or
+//     input that ends inside an object or array. Such a file is residual
+//     whatever it holds. act writes these files as canonical JSON, so one
+//     that does not decode has been touched by something else, and no
+//     partial reading of it is trusted. It is reported by path, never by
+//     content.
 //
 // Checks 2 and 3 make the answer independent of how a file escapes the
-// text (\u escapes, an escaped '/', escapes canonicaljson would not emit),
-// and check 3 means a file is never reported clean because decoding
-// stopped part-way.
-func holds(b []byte, patterns []string, forms [][]byte) bool {
+// text (\u escapes, an escaped '/', escapes canonicaljson would not emit).
+// A file that does not claim to be JSON (a hook script, the SQLite index)
+// gets checks 1 and 2 only: JSON escaping means nothing there.
+func holds(name string, b []byte, patterns []string, forms [][]byte) bool {
 	if containsAny(b, forms) {
 		return true
 	}
-	found, complete := tokensHold(b, patterns)
+	found, clean := tokensHold(b, patterns)
 	if found {
 		return true
 	}
-	if !complete {
-		return literalsHold(b, patterns)
+	return !clean && claimsJSON(name, b)
+}
+
+// claimsJSON reports whether a file presents itself as JSON: its name ends
+// in .json, or its first non-whitespace byte opens a JSON object, array or
+// string. An empty or all-whitespace file does not.
+func claimsJSON(name string, b []byte) bool {
+	if strings.HasSuffix(strings.ToLower(name), ".json") {
+		return true
 	}
-	return false
+	t := bytes.TrimLeft(b, " \t\r\n")
+	return len(t) > 0 && (t[0] == '{' || t[0] == '[' || t[0] == '"')
 }
 
 // tokensHold walks b as a stream of JSON values with json.Decoder.Token and
-// reports whether any string token holds a pattern. complete is false when
-// the walk stopped on an error before the end of b.
-func tokensHold(b []byte, patterns []string) (found, complete bool) {
+// reports whether any string token holds a pattern. clean is true only
+// when the walk reached the end of b with every object and array closed;
+// a decode error, or input that ends inside a value, is not clean.
+func tokensHold(b []byte, patterns []string) (found, clean bool) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
+	depth := 0
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
-			return false, true
+			return false, depth == 0
 		}
 		if err != nil {
 			return false, false
 		}
-		if s, ok := tok.(string); ok && stringHolds(s, patterns) {
-			return true, true
+		switch v := tok.(type) {
+		case json.Delim:
+			if v == '{' || v == '[' {
+				depth++
+			} else {
+				depth--
+			}
+		case string:
+			if stringHolds(v, patterns) {
+				return true, true
+			}
 		}
 	}
-}
-
-// jsonStringLiteral matches a double-quoted JSON-style string literal: a
-// quote, then any run of non-quote non-backslash bytes or backslash escapes,
-// then a quote.
-var jsonStringLiteral = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
-
-// literalsHold is the fallback for bytes the token walk could not finish:
-// every quoted literal in b that decodes as a JSON string is checked. A
-// literal that does not decode is skipped; the raw check already covered
-// its bytes.
-func literalsHold(b []byte, patterns []string) bool {
-	for _, lit := range jsonStringLiteral.FindAll(b, -1) {
-		var s string
-		if json.Unmarshal(lit, &s) == nil && stringHolds(s, patterns) {
-			return true
-		}
-	}
-	return false
 }
 
 func stringHolds(s string, patterns []string) bool {

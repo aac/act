@@ -303,18 +303,18 @@ func TestPlan_ResidualWrittenWithJSONEscapes(t *testing.T) {
 	}
 }
 
-// redEscSecret is redSecret with every '-' written as the JSON escape
-// -, so its bytes match neither raw form.
+// redEscSecret is redSecret with every '-' written as a JSON \u escape, so
+// its bytes match neither raw form.
 func redEscSecret() string {
 	return strings.ReplaceAll(redSecret, "-", "\\"+"u002d")
 }
 
 // TestPlan_ResidualInDuplicateKeyAndAfterGarbage covers the two shapes a
-// decode-into-a-value check reads as clean: a duplicate key whose earlier
-// value holds the pattern (a map keeps only the last), and a file that is
-// valid JSON followed by garbage holding the pattern (decoding stops at
-// the garbage). Both are planted \u-escaped, so the raw check alone cannot
-// see them, and both must be found by the plan and by Scan.
+// decode-into-a-value check reads as clean. A duplicate key whose earlier
+// value holds the \u-escaped pattern (a map keeps only the last) must be
+// found. A file that claims to be JSON and is valid JSON followed by
+// garbage is residual whether or not the garbage holds the pattern: no
+// partial reading of it is trusted. Both the plan and Scan must agree.
 func TestPlan_ResidualInDuplicateKeyAndAfterGarbage(t *testing.T) {
 	root := t.TempDir()
 	E := redEscSecret()
@@ -332,13 +332,21 @@ func TestPlan_ResidualInDuplicateKeyAndAfterGarbage(t *testing.T) {
 		filepath.Join(op.ShardDir(filepath.Join(root, "ops"), redIssue, redWall), op.Filename(claim)), []byte(body))
 	// The same in a plain JSON file.
 	dupCfgRel := redWriteAt(t, root, filepath.Join(root, "config.json"), []byte(`{"label":"`+E+`","label":"x"}`))
-	// Valid JSON, then garbage that holds the pattern in a quoted literal:
-	// in an other file, and in a quarantined .json that act cannot parse.
-	garbage := []byte(`{"ok":true} @@not json@@ "note: ` + E + `" }`)
-	garbageRel := redWriteAt(t, root, filepath.Join(root, ".sync-log"), garbage)
-	qRel := redWriteAt(t, root, filepath.Join(root, ".collisions", "s", "bad.json"), garbage)
+	// Valid JSON, then garbage: with the escaped pattern in the garbage and
+	// without anything in it, in a JSON-lines file and in a quarantined
+	// .json that act cannot parse.
+	withHit := []byte(`{"ok":true} @@not json@@ "note: ` + E + `" }`)
+	clean := []byte(`{"ok":true} @@not json@@ "nothing here" }`)
+	garbageRel := redWriteAt(t, root, filepath.Join(root, ".sync-log"), withHit)
+	cleanGarbageRel := redWriteAt(t, root, filepath.Join(root, ".pending-pushes"), clean)
+	qRel := redWriteAt(t, root, filepath.Join(root, ".collisions", "s", "bad.json"), clean)
+	// Files that do not claim to be JSON and hold nothing stay clean: a
+	// hook script, an empty lock file, a well-formed JSON-lines log.
+	redWriteAt(t, root, filepath.Join(root, "hooks", "close.sample"), []byte("#!/bin/sh\necho \"closed $1\"\n"))
+	redWriteAt(t, root, filepath.Join(root, ".write.lock"), nil)
+	redWriteAt(t, root, filepath.Join(root, ".slow-writes"), []byte(`{"a":1}`+"\n"+`{"b":"x"}`+"\n"))
 
-	want := []string{dupRel, dupCfgRel, garbageRel, qRel}
+	want := []string{dupRel, dupCfgRel, garbageRel, cleanGarbageRel, qRel}
 	sort.Strings(want)
 	if p := redPlan(t, root, []string{redSecret}, nil); !reflect.DeepEqual(p.Residuals, want) {
 		t.Errorf("Plan residuals = %v, want %v", p.Residuals, want)
@@ -354,22 +362,33 @@ func TestHolds_FailClosedUnion(t *testing.T) {
 	forms := rawForms(pats)
 	for _, tc := range []struct {
 		name string
+		file string
 		in   string
 		want bool
 	}{
-		{"raw bytes", "x " + redSecret + " y", true},
-		{"escaped value", `{"a":"` + E + `"}`, true},
-		{"escaped key", `{"` + E + `":1}`, true},
-		{"earlier duplicate key", `{"a":"` + E + `","a":"b"}`, true},
-		{"value stream", `{"a":1}` + "\n" + `["` + E + `"]`, true},
-		{"after garbage", `{"a":1} }}} "` + E + `"`, true},
-		{"truncated json", `{"a":["x","` + E + `"`, true},
-		{"binary around a literal", "\x00\x01\"" + E + "\"\xff", true},
-		{"clean json", `{"a":"b","c":["d"]}`, false},
-		{"clean garbage", `{"a":1} }}} "nothing here"`, false},
+		{"raw bytes", "notes.txt", "x " + redSecret + " y", true},
+		{"escaped value", "a.json", `{"a":"` + E + `"}`, true},
+		{"escaped key", "a.json", `{"` + E + `":1}`, true},
+		{"earlier duplicate key", "a.json", `{"a":"` + E + `","a":"b"}`, true},
+		{"value stream", ".sync-log", `{"a":1}` + "\n" + `["` + E + `"]`, true},
+		{"clean json", "a.json", `{"a":"b","c":["d"]}`, false},
+		{"clean json-lines", ".sync-log", `{"a":1}` + "\n" + `{"b":2}` + "\n", false},
+
+		// Claims to be JSON and does not decode cleanly: residual whatever
+		// it holds.
+		{"garbage after json, with hit", ".sync-log", `{"a":1} }}} "` + E + `"`, true},
+		{"garbage after json, clean", ".sync-log", `{"a":1} }}} "nothing here"`, true},
+		{"truncated object", "x", `{"a":["x"`, true},
+		{"truncated, .json name", "a.json", `{"a":`, true},
+		{"not json at all, .json name", "a.json", "hello", true},
+
+		// Does not claim to be JSON: raw and token checks only.
+		{"shell script", "hooks/close", "#!/bin/sh\necho \"done\"\n", false},
+		{"binary", "index.db", "SQLite format 3\x00\x01\"" + E + "\"\xff", false},
+		{"empty", ".write.lock", "", false},
 	} {
-		if got := holds([]byte(tc.in), pats, forms); got != tc.want {
-			t.Errorf("%s: holds(%q) = %v, want %v", tc.name, tc.in, got, tc.want)
+		if got := holds(tc.file, []byte(tc.in), pats, forms); got != tc.want {
+			t.Errorf("%s: holds(%q, %q) = %v, want %v", tc.name, tc.file, tc.in, got, tc.want)
 		}
 	}
 }
