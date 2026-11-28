@@ -4371,6 +4371,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_AskFreed_ReadyAdmitsResolvedAsk",
 	},
 	{
+		name:         "spec-ask-refs-batched",
+		docFile:      "docs/spec.md",
+		claimPattern: "act runs `ask list --all --json` once per store per invocation and answers every ask-form ref in that store from it",
+		testName:     "TestDocClaim_AskFreed_BatchedLookup",
+	},
+	{
+		name:         "spec-ask-refs-batched-list-failure",
+		docFile:      "docs/spec.md",
+		claimPattern: "A list that fails or times out keeps every ref in that store blocking, with no per-id retry",
+		testName:     "TestDocClaim_AskFreed_ListFailureKeepsBlocking",
+	},
+	{
 		name:         "spec-show-freed-by",
 		docFile:      "docs/spec.md",
 		claimPattern: "**An external dep naming an answered ask is reported (act-b9adc9).**",

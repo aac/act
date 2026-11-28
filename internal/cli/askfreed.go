@@ -61,10 +61,27 @@ var (
 	askFreedQualifiedRE = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*):(` + askFreedIDPattern + `)$`)
 )
 
-// askFreedShowTimeout bounds one `ask show`. It is short on purpose: it sits
-// on `act ready`, the most frequent read in the loop, and a slow answer is
-// treated exactly like no answer — the dep keeps blocking.
-const askFreedShowTimeout = 3 * time.Second
+// askFreedShowTimeout bounds one `ask show`, and askFreedListTimeout one
+// `ask list`. They are short on purpose: they sit on `act ready`, the most
+// frequent read in the loop, and a slow answer is treated exactly like no
+// answer — the dep keeps blocking.
+const (
+	askFreedShowTimeout = 3 * time.Second
+	askFreedListTimeout = 3 * time.Second
+)
+
+// BATCHING (act-a1a83a). Where `ask` forwards every call to another host
+// over ssh, each exec costs a round trip, so one `ask show` per ref made a
+// ready sweep over N ask-form refs N round trips. The resolver instead
+// runs `ask list --all --json` once per store per invocation (`--all`
+// includes resolved and closed asks, which are the ones that matter) and
+// answers every ref in that store from it. `ask show <id>` runs only for
+// an id the list did not return. A list that fails — error, timeout,
+// output that does not parse — keeps every ref in that store blocking,
+// with no per-id fallback: the likeliest cause is an unreachable or slow
+// host, and N more timeouts behind the first would turn one slow read
+// into N. The exec count is therefore bounded by one list per store plus
+// one show per id the store does not hold.
 
 // askFreedShow runs `ask show <id> --json` with dir as the working
 // directory and returns stdout. It is a package variable so tests can
@@ -72,9 +89,23 @@ const askFreedShowTimeout = 3 * time.Second
 var askFreedShow = askFreedShowExec
 
 func askFreedShowExec(dir, id string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), askFreedShowTimeout)
+	return askFreedRun(dir, askFreedShowTimeout, "show", id, "--json")
+}
+
+// askFreedList runs `ask list --all --json` with dir as the working
+// directory and returns stdout. A package variable for the same reason as
+// askFreedShow.
+var askFreedList = askFreedListExec
+
+func askFreedListExec(dir string) ([]byte, error) {
+	return askFreedRun(dir, askFreedListTimeout, "list", "--all", "--json")
+}
+
+// askFreedRun execs `ask args...` in dir under timeout.
+func askFreedRun(dir string, timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ask", "show", id, "--json")
+	cmd := exec.CommandContext(ctx, "ask", args...)
 	cmd.Dir = dir
 	// The forwarder `ask` is a shell script that may ssh; if the context
 	// kills the script while a child still holds stdout, WaitDelay stops
@@ -168,17 +199,26 @@ func askFreedMainRoot(root string) string {
 }
 
 // askFreedResolver answers "does this external dep still block?" for one
-// invocation, caching each ask's answer so a ready sweep execs `ask` at
-// most once per (store, id).
+// invocation, caching each ask's answer and each store's listing so a
+// ready sweep execs `ask list` at most once per store and `ask show` at
+// most once per (store, id) the listing lacked.
 type askFreedResolver struct {
 	repoRoot string
 	mainRoot string // lazily computed
 	cache    map[string]*AskFreed
 	cached   map[string]bool
+	// lists holds each store's `ask list` result by id; a store present
+	// with a nil map is one whose list failed.
+	lists map[string]map[string]askFreedRecord
 }
 
 func newAskFreedResolver(repoRoot string) *askFreedResolver {
-	return &askFreedResolver{repoRoot: repoRoot, cache: map[string]*AskFreed{}, cached: map[string]bool{}}
+	return &askFreedResolver{
+		repoRoot: repoRoot,
+		cache:    map[string]*AskFreed{},
+		cached:   map[string]bool{},
+		lists:    map[string]map[string]askFreedRecord{},
+	}
 }
 
 // storeDir is the directory `ask` runs in for r.
@@ -216,7 +256,7 @@ func (a *askFreedResolver) freed(ref string) *AskFreed {
 	dir := a.storeDir(r)
 	key := dir + "\x00" + r.id
 	if !a.cached[key] {
-		a.cache[key] = askFreedLookup(dir, r.id)
+		a.cache[key] = a.lookup(dir, r.id)
 		a.cached[key] = true
 	}
 	hit := a.cache[key]
@@ -228,25 +268,71 @@ func (a *askFreedResolver) freed(ref string) *AskFreed {
 	return &out
 }
 
-// askFreedLookup reads one ask. nil means "still blocking", for every
-// reason an answer could not be established.
-func askFreedLookup(dir, id string) *AskFreed {
+// askFreedRecord is the part of ask's --json item shape act reads.
+type askFreedRecord struct {
+	ID             string  `json:"id"`
+	Status         string  `json:"status"`
+	ResolutionNote *string `json:"resolution_note"`
+	ResolvedAt     *string `json:"resolved_at"`
+}
+
+// lookup reads one ask: from the store's listing when it holds the id,
+// else by `ask show`. nil means "still blocking", for every reason an
+// answer could not be established — a failed listing included.
+func (a *askFreedResolver) lookup(dir, id string) *AskFreed {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return nil
 	}
+	items, ok := a.lists[dir]
+	if !ok {
+		items = askFreedListStore(dir)
+		a.lists[dir] = items
+	}
+	if items == nil {
+		return nil // the list failed: fail closed, no per-id fallback
+	}
+	if item, found := items[id]; found {
+		return askFreedEvaluate(id, item)
+	}
+	return askFreedLookup(dir, id)
+}
+
+// askFreedListStore runs `ask list --all --json` in dir and indexes the
+// items by id. nil means the listing could not be had.
+func askFreedListStore(dir string) map[string]askFreedRecord {
+	raw, err := askFreedList(dir)
+	if err != nil {
+		return nil
+	}
+	var list []askFreedRecord
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &list); err != nil {
+		return nil
+	}
+	items := make(map[string]askFreedRecord, len(list))
+	for _, it := range list {
+		if it.ID != "" {
+			items[it.ID] = it
+		}
+	}
+	return items
+}
+
+// askFreedLookup reads one ask with `ask show`. nil means "still
+// blocking", for every reason an answer could not be established.
+func askFreedLookup(dir, id string) *AskFreed {
 	raw, err := askFreedShow(dir, id)
 	if err != nil {
 		return nil
 	}
-	var item struct {
-		ID             string  `json:"id"`
-		Status         string  `json:"status"`
-		ResolutionNote *string `json:"resolution_note"`
-		ResolvedAt     *string `json:"resolved_at"`
-	}
+	var item askFreedRecord
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &item); err != nil {
 		return nil
 	}
+	return askFreedEvaluate(id, item)
+}
+
+// askFreedEvaluate decides whether item answers the ask id names.
+func askFreedEvaluate(id string, item askFreedRecord) *AskFreed {
 	// `ask show` accepts a prefix; insist the store answered about the
 	// ask the ref names and nothing else.
 	if item.ID != id {

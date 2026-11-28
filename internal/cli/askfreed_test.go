@@ -23,15 +23,48 @@ import (
 type askFreedFakeStore struct {
 	mu    sync.Mutex
 	items map[string]string // dir + "\x00" + id → stdout ("" = exit non-zero)
-	calls []string          // dir + "\x00" + id, in call order
+	calls []string          // dir + "\x00" + id for a show, "list\x00" + dir for a list, in call order
+	// listErr, when set, makes every `ask list` fail (act-a1a83a).
+	listErr bool
 }
 
-// askFreedInstallFake swaps askFreedShow for a fake for the duration of
-// the test. Tests using it must not run in parallel.
+// askFreedInstallFake swaps askFreedShow and askFreedList for fakes for
+// the duration of the test. The fake list answers a store that has any
+// item registered with every registered item whose stdout is a JSON
+// object, under the id inside it — so a registered stdout that does not
+// parse, or no registration at all, is an id the list did not return,
+// and the resolver falls back to the fake show for it. A dir with
+// nothing registered fails like ask with no store. Tests using it must
+// not run in parallel.
 func askFreedInstallFake(t *testing.T) *askFreedFakeStore {
 	t.Helper()
 	f := &askFreedFakeStore{items: map[string]string{}}
-	prev := askFreedShow
+	prev, prevList := askFreedShow, askFreedList
+	askFreedList = func(dir string) ([]byte, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.calls = append(f.calls, "list\x00"+dir)
+		if f.listErr {
+			return nil, errors.New("ask list: signal: killed")
+		}
+		list := []json.RawMessage{}
+		known := false
+		for key, out := range f.items {
+			d, _, _ := strings.Cut(key, "\x00")
+			if d != dir {
+				continue
+			}
+			known = true
+			var probe map[string]any
+			if json.Unmarshal([]byte(out), &probe) == nil {
+				list = append(list, json.RawMessage(out))
+			}
+		}
+		if !known {
+			return nil, errors.New("ask list: exit status 5")
+		}
+		return json.Marshal(list)
+	}
 	askFreedShow = func(dir, id string) ([]byte, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -43,7 +76,7 @@ func askFreedInstallFake(t *testing.T) *askFreedFakeStore {
 		}
 		return []byte(out), nil
 	}
-	t.Cleanup(func() { askFreedShow = prev })
+	t.Cleanup(func() { askFreedShow, askFreedList = prev, prevList })
 	return f
 }
 
@@ -364,30 +397,9 @@ func TestDocClaim_AskFreed_CLINamesFreeingAsk(t *testing.T) {
 	mustRunAct(t, site, 0, "init", "--json")
 	t.Setenv("ACT_MACHINE", "")
 
-	// Stand-in ask: `ask show <id> --json` cats <fixtures>/<id>.json when
-	// run in the site folder, else fails like ask does with no store.
-	fixtures := t.TempDir()
-	binDir := t.TempDir()
-	script := "#!/bin/sh\n" +
-		"[ \"$1\" = show ] && [ \"$3\" = --json ] || exit 2\n" +
-		"[ \"$(pwd -P)\" = \"$ASKFREED_SITE\" ] || { echo 'ask not initialized' >&2; exit 5; }\n" +
-		"[ -f \"$ASKFREED_FIXTURES/$2.json\" ] || { echo \"id $2 not found\" >&2; exit 3; }\n" +
-		"cat \"$ASKFREED_FIXTURES/$2.json\"\n"
-	if err := os.WriteFile(filepath.Join(binDir, "ask"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	realSite, err := filepath.EvalSymlinks(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("ASKFREED_SITE", realSite)
-	t.Setenv("ASKFREED_FIXTURES", fixtures)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	writeItem := func(id, status, note, resolvedAt string) {
-		if err := os.WriteFile(filepath.Join(fixtures, id+".json"), []byte(askFreedItem(id, status, note, resolvedAt)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Stand-in ask (askBatchStandIn): answers `ask list --all --json` and
+	// `ask show <id> --json` from fixtures when run in the site folder.
+	writeItem, _ := askBatchStandIn(t, site)
 
 	createOut, _ := mustRunAct(t, site, 0, "create", "needs the key", "--json")
 	id := pickIDFromJSON(t, createOut)
