@@ -617,7 +617,7 @@ EXTERNAL DEPS
   One kind of ref act does look up: an ask id. A dep whose whole ref
   is 'ask-XXXX' or 'ask:ask-XXXX' (this repo's ask store) or
   '<repo>:ask-XXXX' (the store of a sibling repo) stops blocking once
-  'ask show' reports that ask resolved — act checks at read time and
+  ask reports that ask resolved — act checks at read time and
   never removes the dep. An unknown is not a yes: no ask binary, a
   timeout, an open ask, or an ask closed without being resolved all
   keep it blocking. The freed ticket is marked in 'act ready' and

@@ -292,7 +292,7 @@ cleared.
 
 **Ask refs clear themselves.** When the blocker is a human answer filed with `ask`, attach the
 ask id itself: `ask-XXXX` (or `ask:ask-XXXX`) for this repo's store, `<repo>:ask-XXXX` for a
-sibling repo's. Once `ask show` reports that ask resolved, act stops counting the dep as a
+sibling repo's. Once ask reports that ask resolved, act stops counting the dep as a
 blocker — it checks at read time and never removes the dep. Free text that only mentions an
 ask, an open ask, an ask closed without being resolved, or an `ask` that can't be read all
 keep blocking. **A ticket freed this way carries `freed_by`** (in `act ready --json` rows and
