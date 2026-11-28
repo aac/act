@@ -21,11 +21,18 @@ type ExternalDepGateResult struct {
 // already-open (and already-rebuilt) index and returns whether the issue
 // has open external deps.
 //
+// A dep that is a whole-ref ask form whose ask is answered is not open
+// (act-3731ab, askfreed.go). The gate agrees with `act ready` on purpose:
+// `act next` claims through it, so a gate stricter than ready would offer a
+// ticket and then refuse to claim it, and the claimer who finds the answer
+// made the ticket moot must be able to close it without --force.
+// ExternalDeps lists only the deps still blocking.
+//
 // The design keeps the gate check in one place so both `act update --claim`
 // and `act close` share the same logic. Callers already have an index open
 // (close rebuilt it to check current status; claim opens one here). Passing
 // the already-open index avoids a redundant rebuild.
-func CheckExternalDepGate(idx *index.Index, full string) (ExternalDepGateResult, error) {
+func CheckExternalDepGate(repoRoot string, idx *index.Index, full string) (ExternalDepGateResult, error) {
 	row, err := idx.Get(full)
 	if err != nil {
 		return ExternalDepGateResult{}, fmt.Errorf("extdepgate: get %s: %w", full, err)
@@ -33,9 +40,13 @@ func CheckExternalDepGate(idx *index.Index, full string) (ExternalDepGateResult,
 	if len(row.ExternalDeps) == 0 {
 		return ExternalDepGateResult{Blocked: false}, nil
 	}
+	blocking, _ := newAskFreedResolver(repoRoot).split(row.ExternalDeps)
+	if len(blocking) == 0 {
+		return ExternalDepGateResult{Blocked: false}, nil
+	}
 	return ExternalDepGateResult{
 		Blocked:      true,
-		ExternalDeps: row.ExternalDeps,
+		ExternalDeps: blocking,
 	}, nil
 }
 

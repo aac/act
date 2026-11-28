@@ -1152,7 +1152,7 @@ func runUpdateClaim(repoRoot, full string, opts UpdateOptions) (any, int) {
 				Message: rerr.Error(),
 			}, 1
 		}
-		gateRes, gerr := CheckExternalDepGate(idx, full)
+		gateRes, gerr := CheckExternalDepGate(repoRoot, idx, full)
 		_ = idx.Close()
 		if gerr != nil {
 			return UpdateErrorOutput{

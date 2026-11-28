@@ -93,6 +93,12 @@ type ReadyIssue struct {
 	// --all-machines output can tell the rows apart without an
 	// `act show` per id.
 	Machine string `json:"machine,omitempty"`
+	// FreedBy is present only on a row that is ready because every
+	// external dep it carries names an answered ask (act-3731ab). The deps
+	// are still attached — act never removes them — so each entry carries
+	// the ask's answer for the claimer to read before working: it may make
+	// the ticket moot (close it) or not (`act update --ext-rm`, then work).
+	FreedBy []AskFreed `json:"freed_by,omitempty"`
 }
 
 // ReadyResult is the JSON-serialisable success envelope. The shape is
@@ -282,17 +288,31 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 
 	// Compute the ready set.
 	ready := make([]index.Row, 0, len(rows))
+	// freedBy records, per ready id, the answered asks that cleared its
+	// external deps (act-3731ab). The resolver is built only when some
+	// candidate carries an external dep, and it execs `ask` only for refs
+	// that are ask forms, so a store without them pays nothing.
+	freedBy := map[string][]AskFreed{}
+	var asks *askFreedResolver
 	for _, r := range rows {
 		if !isReadyCandidate(r) {
 			continue
 		}
 		// Any unresolved external dep excludes the issue. External refs are
-		// opaque to act; the orchestrator removes them via `act update
-		// --ext-rm` when the upstream work is done. Until then the issue is
-		// considered blocked. No override flag mirrors the internal-blocks
-		// surface because none exists today for internal blocks either.
+		// opaque to act — except the whole-ref ask forms (askfreed.go),
+		// which count as cleared once the ask is answered. Every other ref
+		// stays until the orchestrator removes it via `act update --ext-rm`.
+		// No override flag mirrors the internal-blocks surface because none
+		// exists today for internal blocks either.
 		if len(r.ExternalDeps) > 0 {
-			continue
+			if asks == nil {
+				asks = newAskFreedResolver(repoRoot)
+			}
+			blocking, freed := asks.split(r.ExternalDeps)
+			if len(blocking) > 0 {
+				continue
+			}
+			freedBy[r.ID] = freed
 		}
 		blocked := false
 		for _, dep := range r.Deps {
@@ -444,6 +464,7 @@ func RunReady(repoRoot string, opts ReadyOptions) (output any, exitCode int) {
 			CreatedAt: r.CreatedAt,
 			ClaimedAt: r.ClaimedAt,
 			Machine:   r.Machine,
+			FreedBy:   freedBy[r.ID],
 		})
 	}
 	out.Count = len(out.Ready)
@@ -573,6 +594,12 @@ func formatReadyHumanAt(res ReadyResult, now time.Time) string {
 		// always been — which matters, because things parse it
 		// positionally.
 		title := r.Title
+		// A row freed by an answered ask names the ask in the same slot.
+		// The answer itself goes to stderr (FormatAskFreedNotice): a
+		// continuation line here would break positional parsers.
+		if len(r.FreedBy) > 0 {
+			title = askFreedTitleTag(r.FreedBy) + " " + title
+		}
 		if r.Machine != "" {
 			title = "@" + r.Machine + " " + title
 		}

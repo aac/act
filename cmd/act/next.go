@@ -213,6 +213,12 @@ func runNext(args []string) int {
 				"issue":         issueJSON,
 				"commit_marker": commitMarker,
 			}
+			// act-3731ab: the ticket is ready only because an ask was
+			// answered; the answer rides the claim so the claimer reads
+			// it before working (it may make the ticket moot).
+			if len(pick.FreedBy) > 0 {
+				body["freed_by"] = pick.FreedBy
+			}
 			if len(won.Warnings) > 0 {
 				body["warnings"] = won.Warnings
 			}
@@ -239,6 +245,9 @@ func runNext(args []string) int {
 		ixwWarnIndexUpdateFailed("next", won.Warnings)
 		fmt.Printf("CLAIMED %s — this session now owns it.\n", short)
 		fmt.Printf("Not what you wanted? Release it: act update %s --unclaim   (or use `act next --peek` to survey without claiming)\n\n", short)
+		if notice := cli.FormatAskFreedNotice("act next", []cli.ReadyIssue{*pick}); notice != "" {
+			fmt.Print(notice + "\n")
+		}
 		fmt.Print(cli.FormatShowHuman(showOut))
 		fmt.Printf("\ncommit marker: %s\n", commitMarker)
 		return 0
@@ -275,11 +284,15 @@ func emitNextPeek(asJSON bool, root string, pick cli.ReadyIssue) int {
 	}
 
 	if asJSON {
-		data, jerr := json.Marshal(map[string]any{
+		body := map[string]any{
 			"claimed":     false,
 			"peek":        true,
 			"would_claim": issueJSON,
-		})
+		}
+		if len(pick.FreedBy) > 0 {
+			body["freed_by"] = pick.FreedBy
+		}
+		data, jerr := json.Marshal(body)
 		if jerr != nil {
 			fmt.Fprintf(os.Stderr, "act next: json marshal: %v\n", jerr)
 			return 1
@@ -290,6 +303,9 @@ func emitNextPeek(asJSON bool, root string, pick cli.ReadyIssue) int {
 
 	fmt.Printf("PEEK: %s is what `act next` would claim — nothing claimed, nothing written.\n", short)
 	fmt.Printf("Take it with: act update %s --claim   (or `act next`)\n\n", short)
+	if notice := cli.FormatAskFreedNotice("act next", []cli.ReadyIssue{pick}); notice != "" {
+		fmt.Print(notice + "\n")
+	}
 	fmt.Print(cli.FormatShowHuman(showOut))
 	return 0
 }

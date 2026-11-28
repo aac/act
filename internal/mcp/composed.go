@@ -227,6 +227,11 @@ func (s *Server) callNextWithDeps(raw json.RawMessage, deps composedDeps) (any, 
 					body["already_held"] = true
 				}
 			}
+			// act-3731ab: ready only because an ask was answered; the
+			// answer rides the claim so the claimer reads it first.
+			if len(pick.FreedBy) > 0 {
+				body["freed_by"] = pick.FreedBy
+			}
 			return body, false
 		}
 		// act-c30acd: exit 6 claim_unconfirmed — the claim op is committed

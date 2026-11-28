@@ -134,6 +134,10 @@ func runReady(args []string) int {
 	// machine cannot do is the bug this whole feature exists to fix
 	// (act-2c7be3).
 	fmt.Fprint(os.Stderr, cli.FormatReadyMachineNotice("act ready", res))
+	// Rows freed by an answered ask: the answer the claimer must read,
+	// stderr in both modes like the notices above (act-3731ab). --json
+	// also carries it per row as `freed_by`.
+	fmt.Fprint(os.Stderr, cli.FormatAskFreedNotice("act ready", res.Ready))
 	// A failed refresh is non-fatal (we served on-disk state) but must not
 	// be silent — same stderr-in-both-modes rule as the truncation notice
 	// above. act-3803ac.

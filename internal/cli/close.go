@@ -303,7 +303,7 @@ func RunClose(repoRoot string, opts CloseOptions) (output any, exitCode int) {
 	// external dep is blocked from being closed until the dep is cleared
 	// via `act update --ext-rm`. Pass --force to override; a WARNING is
 	// emitted to stderr when the override fires.
-	gateRes, gerr := CheckExternalDepGate(idx, full)
+	gateRes, gerr := CheckExternalDepGate(repoRoot, idx, full)
 	if gerr != nil {
 		return CloseErrorOutput{
 			Error:   "index_query_failed",
