@@ -270,6 +270,7 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 		byID := make(map[string]index.Row, len(all))
 		allIDs := make([]string, 0, len(all))
 		for _, r := range all {
+			byID[r.ID] = r
 			allIDs = append(allIDs, r.ID)
 		}
 		full, ambiguous, found := ids.ResolvePrefix(allIDs, opts.Under)
