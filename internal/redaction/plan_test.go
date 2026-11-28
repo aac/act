@@ -263,6 +263,46 @@ func TestPlan_ResidualInStructuralField(t *testing.T) {
 	}
 }
 
+// TestPlan_ResidualWrittenWithJSONEscapes plants the pattern in files whose
+// bytes never hold either raw form — every '-' written as -, in an op's
+// structural field, in an object key, in a JSON config file and in a JSONL
+// log — and asserts both the plan's residual check and Scan still find it,
+// because both match decoded strings and keys, not only bytes.
+func TestPlan_ResidualWrittenWithJSONEscapes(t *testing.T) {
+	root := t.TempDir()
+	esc := func(b []byte) []byte {
+		escDash := "\\" + "u002d" // JSON's escape for '-'
+		out := []byte(strings.ReplaceAll(string(b), redSecret, strings.ReplaceAll(redSecret, "-", escDash)))
+		if strings.Contains(string(out), redSecret) {
+			t.Fatalf("fixture: escaped bytes still hold the raw pattern")
+		}
+		return out
+	}
+	claim := redEnv(t, redIssue, "claim", redWall, 0, redNode, `{"assignee":"`+redSecret+`"}`)
+	claimRel := redWriteAt(t, root,
+		filepath.Join(op.ShardDir(filepath.Join(root, "ops"), redIssue, redWall), op.Filename(claim)),
+		esc(redMarshal(t, claim)))
+	keyed := redEnv(t, "act-bbbb", "import", redWall, 0, redNode, `{"source_ref":"x","mapping":{"`+redSecret+`":"y"}}`)
+	keyedRel := redWriteAt(t, root,
+		filepath.Join(op.ShardDir(filepath.Join(root, "ops"), "act-bbbb", redWall), op.Filename(keyed)),
+		esc(redMarshal(t, keyed)))
+	configRel := redWriteAt(t, root, filepath.Join(root, "config.json"), esc([]byte(`{"label":"`+redSecret+`"}`)))
+	logRel := redWriteAt(t, root, filepath.Join(root, ".pending-pushes"),
+		esc([]byte(`{"op_type":"create"}`+"\n"+`{"note":"`+redSecret+`"}`+"\n")))
+	if _, err := op.UnmarshalTolerant(esc(redMarshal(t, claim))); err != nil {
+		t.Fatalf("fixture: escaped op does not parse: %v", err)
+	}
+
+	want := []string{claimRel, keyedRel, configRel, logRel}
+	sort.Strings(want)
+	if p := redPlan(t, root, []string{redSecret}, nil); !reflect.DeepEqual(p.Residuals, want) {
+		t.Errorf("Plan residuals = %v, want %v", p.Residuals, want)
+	}
+	if paths, err := Scan(root, []string{redSecret}); err != nil || !reflect.DeepEqual(paths, want) {
+		t.Errorf("Scan = %v, %v; want %v", paths, err, want)
+	}
+}
+
 func TestPlan_QuarantinedFiles(t *testing.T) {
 	root := t.TempDir()
 	// A stranded op with a hit and no copy under ops/: re-issued in place.

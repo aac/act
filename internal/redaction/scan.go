@@ -86,7 +86,9 @@ func walkFiles(stateRoot string, fn func(rel, abs string) error) error {
 
 // Scan is the raw verification scan (docs/redaction-design.md §5.6 step 8):
 // every regular file under stateRoot outside the top-level .git, read as raw
-// bytes and searched for every raw form of every pattern. It returns the
+// bytes and searched for every raw form of every pattern and, when the file
+// is JSON, for every pattern inside every decoded string and key — so the
+// answer does not depend on how a file escapes the text. It returns the
 // paths that hold one, slash-separated, relative to stateRoot, sorted. An
 // empty result is the guarantee a clean run makes.
 //
@@ -102,7 +104,7 @@ func Scan(stateRoot string, patterns []string) (paths []string, err error) {
 		if rerr != nil {
 			return fmt.Errorf("redaction: scan: read %s: %w", rel, rerr)
 		}
-		if containsAny(b, forms) {
+		if holds(b, patterns, forms) {
 			paths = append(paths, rel)
 		}
 		return nil

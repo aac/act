@@ -2,6 +2,7 @@ package redaction
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -135,6 +136,63 @@ func rawForms(patterns []string) [][]byte {
 func containsAny(b []byte, forms [][]byte) bool {
 	for _, f := range forms {
 		if bytes.Contains(b, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// holds reports whether file bytes b hold a pattern in any form: one of the
+// raw forms in the bytes, or — when b is JSON (one value or a stream of
+// values) — a pattern inside any decoded string or object key. The decoded
+// check is what makes the answer independent of how the file escapes the
+// text (\u escapes, an escaped '/', escapes canonicaljson would not emit),
+// so a file written by hand or by another tool cannot slip past a raw-byte
+// comparison. A file that is not JSON gets the raw check alone.
+func holds(b []byte, patterns []string, forms [][]byte) bool {
+	return containsAny(b, forms) || decodedHolds(b, patterns)
+}
+
+// decodedHolds decodes b as a stream of JSON values and reports whether a
+// pattern occurs in any string or key. Decoding stops at the first error;
+// what decoded before it is still checked.
+func decodedHolds(b []byte, patterns []string) bool {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	for {
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			return false
+		}
+		if valueHolds(v, patterns) {
+			return true
+		}
+	}
+}
+
+func valueHolds(v any, patterns []string) bool {
+	switch x := v.(type) {
+	case string:
+		return stringHolds(x, patterns)
+	case []any:
+		for _, e := range x {
+			if valueHolds(e, patterns) {
+				return true
+			}
+		}
+	case map[string]any:
+		for k, e := range x {
+			if stringHolds(k, patterns) || valueHolds(e, patterns) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stringHolds(s string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.Contains(s, p) {
 			return true
 		}
 	}

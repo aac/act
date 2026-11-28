@@ -238,7 +238,7 @@ func NewPlan(stateRoot string, patterns []string, own map[string]bool) (*Plan, e
 			}
 			// Not an op file act can read: fall through to the raw scan.
 		}
-		if containsAny(body, forms) {
+		if holds(body, patterns, forms) {
 			residual[rel] = true
 		}
 		return nil
@@ -342,7 +342,7 @@ func (p *Plan) planSlot(k slotKey, ms []member, patterns []string, forms [][]byt
 			p.bump(k.issue, Counts{LeftoversRemoved: 1})
 		}
 		for _, r := range results {
-			if containsAny(r.m.body, forms) {
+			if holds(r.m.body, patterns, forms) {
 				residual[r.m.rel] = true
 			}
 		}
@@ -360,7 +360,7 @@ func (p *Plan) planSlot(k slotKey, ms []member, patterns []string, forms [][]byt
 		if err != nil {
 			return fmt.Errorf("redaction: %s: %w", r.m.rel, err)
 		}
-		if containsAny(body, forms) {
+		if holds(body, patterns, forms) {
 			residual[r.m.rel] = true
 		}
 		rel := path.Join(path.Dir(r.m.rel), op.Filename(re))
@@ -401,7 +401,7 @@ func (p *Plan) planQuarantined(q member, opsGen map[slotKey]int, patterns []stri
 		return fmt.Errorf("redaction: %s: %w", q.rel, err)
 	}
 	if n == 0 {
-		if containsAny(q.body, forms) {
+		if holds(q.body, patterns, forms) {
 			residual[q.rel] = true
 		}
 		return nil
@@ -414,7 +414,7 @@ func (p *Plan) planQuarantined(q member, opsGen map[slotKey]int, patterns []stri
 	if err != nil {
 		return fmt.Errorf("redaction: %s: %w", q.rel, err)
 	}
-	if containsAny(body, forms) {
+	if holds(body, patterns, forms) {
 		residual[q.rel] = true
 	}
 	rel := path.Join(path.Dir(q.rel), op.Filename(re))
