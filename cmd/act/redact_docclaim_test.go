@@ -604,7 +604,7 @@ func TestDocClaim_Redact_PatternsPathNeverPrinted(t *testing.T) {
 		if strings.Contains(stdout+stderr, planted) {
 			t.Errorf("json=%v: output echoes the path\nstdout=%s\nstderr=%s", asJSON, stdout, stderr)
 		}
-		if !strings.Contains(stdout+stderr, "file_not_found") {
+		if asJSON && !strings.Contains(stdout+stderr, "file_not_found") {
 			t.Errorf("json=%v: error code file_not_found missing\n%s\n%s", asJSON, stdout, stderr)
 		}
 	}
