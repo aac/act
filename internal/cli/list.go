@@ -32,6 +32,15 @@ type ListOptions struct {
 	Assignee string
 	// Type is exact-match against the issue type enum. Empty means "any".
 	Type string
+	// Under is an optional id or prefix; when set, the listing is
+	// restricted to the transitive descendants of the resolved issue
+	// along parent edges — the same set `act ready --under` scopes to,
+	// but with list's status filters instead of the ready predicate
+	// (act-59175a). The issue itself is not included. Composes with
+	// Status/All/Assignee/Type; an ancestor the other filters drop still
+	// links its descendants, because the parent chain is walked over
+	// every non-tombstoned row.
+	Under string
 	// Limit truncates the result set. <=0 means "no limit".
 	Limit int
 	// Sort is a comma-separated list of sort fields, each optionally
@@ -105,9 +114,14 @@ type ListResult struct {
 }
 
 // ListErrorOutput is the structured shape returned on failure.
+// Details and Candidates are set only on the --under resolution errors;
+// Candidates is mirrored under Details["candidates"], as on
+// ReadyErrorOutput.
 type ListErrorOutput struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error      string         `json:"error"`
+	Message    string         `json:"message"`
+	Details    map[string]any `json:"details,omitempty"`
+	Candidates []string       `json:"-"`
 }
 
 // validSortFields enumerates the keys understood by the sort key parser.
@@ -139,7 +153,8 @@ type sortKey struct {
 // Returns:
 //   - output: ListResult on success, ListErrorOutput on failure.
 //   - exitCode: 0 success; 2 bad flag (unknown sort, malformed status,
-//     --all with --status); 3 missing .act/.
+//     --all with --status) or an ambiguous --under; 3 missing .act/ or
+//     an --under that matches no issue.
 func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 	paths := config.Layout(repoRoot)
 
@@ -240,6 +255,52 @@ func RunList(repoRoot string, opts ListOptions) (output any, exitCode int) {
 		}, 1
 	}
 	rows = filterByStatuses(rows, statuses)
+
+	// Step 4b: --under. Resolve against every non-tombstoned row, not the
+	// filtered set, so the subtree is the same whatever --status/--type
+	// say: a closed child still links its open grandchild to the root.
+	if opts.Under != "" {
+		all, err := idx.ListAll(index.Filter{})
+		if err != nil {
+			return ListErrorOutput{
+				Error:   "index_query_failed",
+				Message: err.Error(),
+			}, 1
+		}
+		byID := make(map[string]index.Row, len(all))
+		allIDs := make([]string, 0, len(all))
+		for _, r := range all {
+			allIDs = append(allIDs, r.ID)
+		}
+		full, ambiguous, found := ids.ResolvePrefix(allIDs, opts.Under)
+		if ambiguous {
+			candidates := ambiguousCandidates(allIDs, opts.Under)
+			return ListErrorOutput{
+				Error:   "id_ambiguous",
+				Message: fmt.Sprintf("act list: --under %q matches %d issues", opts.Under, len(candidates)),
+				Details: map[string]any{
+					"prefix":     opts.Under,
+					"candidates": candidates,
+				},
+				Candidates: candidates,
+			}, 2
+		}
+		if !found {
+			return ListErrorOutput{
+				Error:   "issue_not_found",
+				Message: fmt.Sprintf("act list: --under %q: no matching issue", opts.Under),
+				Details: map[string]any{"query": opts.Under},
+			}, 3
+		}
+		descendants := descendantSet(full, byID)
+		filtered := rows[:0]
+		for _, r := range rows {
+			if descendants[r.ID] {
+				filtered = append(filtered, r)
+			}
+		}
+		rows = filtered
+	}
 
 	// Step 5: sort + limit. `total` is captured BEFORE the cap so the
 	// result can report what the caller did not see (act-b50d81).

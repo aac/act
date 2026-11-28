@@ -992,6 +992,7 @@ func allTools() []toolDescriptor {
 				"all":      schemaBool("Include closed issues (sorted last). Mutually exclusive with status."),
 				"assignee": schemaString("Exact-match assignee filter."),
 				"type":     schemaString("Issue type filter (task|bug|epic|chore)."),
+				"under":    schemaString("Restrict to descendants (any depth) of this issue id/prefix; composes with status/all."),
 				"limit":    schemaInteger("Maximum issues to return (default 200)."),
 				"sort":     schemaString("Comma-separated sort keys; prefix '-' for desc."),
 			}, nil),
@@ -1256,6 +1257,7 @@ func (s *Server) callList(raw json.RawMessage) (any, bool) {
 		All      bool   `json:"all"`
 		Assignee string `json:"assignee"`
 		Type     string `json:"type"`
+		Under    string `json:"under"`
 		Limit    int    `json:"limit"`
 		Sort     string `json:"sort"`
 	}
@@ -1270,6 +1272,7 @@ func (s *Server) callList(raw json.RawMessage) (any, bool) {
 		All:      args.All,
 		Assignee: args.Assignee,
 		Type:     args.Type,
+		Under:    args.Under,
 		Limit:    args.Limit,
 		Sort:     args.Sort,
 		AsJSON:   true,

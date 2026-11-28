@@ -432,6 +432,14 @@ THE LOOP IN DETAIL
     whatever --sort says: the grouping is fixed so live work is
     never pushed below finished work.
 
+    'act list --under <id>' scopes the listing to the descendants of
+    <id> at any depth, the same subtree 'act ready --under' uses, with
+    list's status filters in place of the ready test. A closed child
+    still links its open grandchild, so one call answers "does this
+    epic have any open work left?":
+
+      $ act list --under <epic> --json --limit 0   # every non-closed descendant
+
   COUNTING FROM A LISTING
     'act list' caps its output at 200 rows by default. A capped
     listing prints a WARNING to stderr naming how many issues were

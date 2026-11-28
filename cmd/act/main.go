@@ -838,6 +838,7 @@ func runList(args []string) int {
 	all := fs.Bool("all", false, "include closed issues too; closed rows sort after everything still open. Mutually exclusive with --status")
 	assignee := fs.String("assignee", "", "exact-match assignee filter")
 	typ := fs.String("type", "", "issue type filter (task|bug|epic|chore)")
+	under := fs.String("under", "", "restrict to descendants of the given issue id (prefix ok), at any depth; composes with --status/--all, so the default lists every non-closed descendant")
 	limit := fs.Int("limit", 200, "maximum number of issues to return; --limit 0 means no limit (return every match). A capped listing prints a WARNING to stderr naming how many issues were hidden.")
 	sortFlag := fs.String("sort", "", "comma-separated sort keys; prefix with - for desc; default priority,-created_at")
 	asJSON := fs.Bool("json", false, "emit JSON output instead of human-friendly text")
@@ -866,6 +867,7 @@ func runList(args []string) int {
 		All:      *all,
 		Assignee: *assignee,
 		Type:     *typ,
+		Under:    *under,
 		Limit:    *limit,
 		Sort:     *sortFlag,
 		AsJSON:   *asJSON,

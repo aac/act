@@ -819,13 +819,14 @@ Those seven keys are always present. `prefix` is the id cut to `act-` plus six h
 
 ### `act list`
 
-**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--json] [--limit N] [--sort field] [--no-fetch]`
+**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--under <id>] [--json] [--limit N] [--sort field] [--no-fetch]`
 
 **Flags:**
 - `--status X` (csv string, e.g. `open,in_progress`). Default: all non-closed — the working set. `--status closed` reaches finished work.
 - `--all` (bool). Lists every status, closed included. Mutually exclusive with `--status` (the pair is exit 2).
 - `--assignee Y` (string, exact match). Default: any.
 - `--type T` (enum). Default: any.
+- `--under <id>` (string, optional; prefix ok). Restrict output to the descendants of this id at any depth, via `parent` edges — the subtree `act ready --under` uses. The id itself is not listed. The parent chain is walked over every issue, so a descendant whose parent is filtered out (a closed child, under the default working set) is still listed: with an epic E, a closed child C and an open grandchild G under C, `act list --under E` lists G and not C. Composes with every other filter.
 - `--json` (bool).
 - `--limit N` (int, default 200).
 - `--sort field` (string). One or more sort keys, comma-separated, each one of `priority`, `created_at`, `closed_at`, `id`. A bare key sorts ascending; a `-` prefix makes it descending (`-created_at`). The suffix form does the same thing: `created_at:desc` is `-created_at`, and `:asc` (or a `+` prefix) is the bare key. Default: `priority,-created_at`. `id` ascending is added as the last key whenever the keys do not name `id`. An unknown field, an unknown direction suffix or an empty key is exit 2.
@@ -848,7 +849,7 @@ Those seven keys are always present. `prefix` is the id cut to `act-` plus six h
 
 The object has five top-level keys: `issues`, `count`, `total`, `truncated` and `refresh`. There is no `ok` key. `count` is the number of rows returned and `total` the number that matched before `--limit`; `truncated` is true exactly when the limit dropped rows. `refresh` reports what the read path did before answering (`reason` is `no_remote` in a tracker with no `origin`, `no_fetch` under `--no-fetch`). Each row always has `id`, `title`, `status`, `priority` and `type`; `assignee`, `created_at` and `claimed_at` are omitted when empty, and `short_id` appears only when it differs from `id`. A row has no `prefix` and no `parent` key.
 
-**Exit codes:** 0, including an empty result; 1 when the index cannot be opened, brought up to date with the op log, or queried (`index_open_failed`, `index_rebuild_failed`, `index_query_failed`) — an op file the fold rejects, such as one with an unknown `op_version`, lands here; 2 on a usage error — an unknown flag, a positional argument, `--all` with `--status`, an unknown `--status` value or `--sort` field; 3 outside a git working tree (`not_in_git`), or when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`). In a git repo with no `.act/` and no tracker remote, `act list` prints the no-state line and exits 0. `act list` never exits 4: an op with a newer `writer_version` is applied like any other, and a refresh from `origin` that fails is a stderr warning, not a failure.
+**Exit codes:** 0, including an empty result; 1 when the index cannot be opened, brought up to date with the op log, or queried (`index_open_failed`, `index_rebuild_failed`, `index_query_failed`) — an op file the fold rejects, such as one with an unknown `op_version`, lands here; 2 on a usage error — an unknown flag, a positional argument, `--all` with `--status`, an unknown `--status` value or `--sort` field, an ambiguous `--under` prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), or when `--under` matches no issue (`issue_not_found`). In a git repo with no `.act/` and no tracker remote, `act list` prints the no-state line and exits 0. `act list` never exits 4: an op with a newer `writer_version` is applied like any other, and a refresh from `origin` that fails is a stderr warning, not a failure.
 
 **Edge cases:** empty result returns `count: 0` and exit 0; unknown sort field or `--all` combined with `--status` → exit 2. `--limit 0` means "no limit" (every match). `claimed_at` is present on rows that have been claimed and omitted on the rest, so claim age is readable from a listing without one `act show` per in-progress id.
 

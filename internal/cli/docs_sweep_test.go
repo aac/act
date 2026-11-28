@@ -96,6 +96,53 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`act list` prints the no-state line and exits 0",
 		testName:     "TestDocClaim_ExitCodes_List",
 	},
+	// act-59175a: `act list --under <id>` — transitive descendants under
+	// list's status filters, so a closed child still links an open
+	// grandchild. Drift shape: --under starts walking only the filtered
+	// rows (G vanishes), stops resolving prefixes, or changes its error
+	// codes; asserted in cmd/act/list_under_docclaim_test.go.
+	{
+		name:         "spec-list-under-flag",
+		docFile:      "docs/spec.md",
+		claimPattern: "with an epic E, a closed child C and an open grandchild G under C, `act list --under E` lists G and not C",
+		testName:     "TestDocClaim_ListUnder_ClosedChildLinksOpenGrandchild",
+	},
+	{
+		name:         "spec-exit-codes-list-under",
+		docFile:      "docs/spec.md",
+		claimPattern: "an ambiguous `--under` prefix (`id_ambiguous`); 3 outside a git working tree (`not_in_git`), when a configured tracker remote holds a tracker this checkout has not cloned (`tracker_not_checked_out`), or when `--under` matches no issue (`issue_not_found`). In a git repo with no `.act/` and no tracker remote, `act list`",
+		testName:     "TestDocClaim_ListUnder_ExitCodes",
+	},
+	{
+		name:         "list-under-flag-help",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "restrict to descendants of the given issue id (prefix ok), at any depth; composes with --status/--all, so the default lists every non-closed descendant",
+		testName:     "TestDocClaim_ListUnder_FlagHelp",
+	},
+	{
+		name:         "list-under-flag-help-semantics",
+		docFile:      "cmd/act/main.go",
+		claimPattern: "so the default lists every non-closed descendant",
+		testName:     "TestDocClaim_ListUnder_ClosedChildLinksOpenGrandchild",
+	},
+	{
+		name:         "help-workflow-list-under",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "A closed child\n    still links its open grandchild, so one call answers",
+		testName:     "TestDocClaim_ListUnder_ClosedChildLinksOpenGrandchild",
+	},
+	{
+		name:         "help-workflow-list-under-printed",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act list --under <id>' scopes the listing to the descendants of",
+		testName:     "TestDocClaim_ListUnder_HelpWorkflow",
+	},
+	{
+		name:         "mcp-act-list-under",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "Restrict to descendants (any depth) of this issue id/prefix; composes with status/all.",
+		testName:     "TestDocClaim_ListUnder_MCP",
+	},
 	{
 		name:         "spec-exit-codes-list-never-4",
 		docFile:      "docs/spec.md",
@@ -3091,7 +3138,7 @@ var docClaimRegistry = []docClaim{
 	{
 		name:         "spec-synopsis-list-names-no-fetch",
 		docFile:      "docs/spec.md",
-		claimPattern: "**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--json] [--limit N] [--sort field] [--no-fetch]`",
+		claimPattern: "**Synopsis:** `act list [--status X] [--all] [--assignee Y] [--type T] [--under <id>] [--json] [--limit N] [--sort field] [--no-fetch]`",
 		testName:     "TestDocClaim_Spec_EverySynopsisNamesEveryFlag",
 	},
 	{
