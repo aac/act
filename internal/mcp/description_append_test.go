@@ -13,6 +13,39 @@ import (
 // --description-append; act_update gains the matching `description_append`
 // so an MCP agent isn't pushed back to the read-modify-write.
 
+// hintDocToolDescription returns a tool's description from tools/list.
+func hintDocToolDescription(t *testing.T, name string) string {
+	t.Helper()
+	root := makeRepo(t)
+	resp := runOne(t, root, false, map[string]any{
+		"jsonrpc": "2.0", "id": "d", "method": "tools/list", "params": map[string]any{},
+	})
+	m, _ := resp.Result.(map[string]any)
+	tools, _ := m["tools"].([]any)
+	for _, raw := range tools {
+		td, _ := raw.(map[string]any)
+		if n, _ := td["name"].(string); n == name {
+			d, _ := td["description"].(string)
+			return d
+		}
+	}
+	t.Fatalf("%s not found in tools/list", name)
+	return ""
+}
+
+// TestDocClaim_MCP_ReadyNextDescribeFreedBy pins that act_ready and act_next
+// descriptions explain the freed_by row field (act-613ae5).
+func TestDocClaim_MCP_ReadyNextDescribeFreedBy(t *testing.T) {
+	for _, name := range []string{"act_ready", "act_next"} {
+		d := hintDocToolDescription(t, name)
+		for _, want := range []string{"`freed_by`", "resolved ask", "close the ticket as moot", "remove the dep"} {
+			if !strings.Contains(d, want) {
+				t.Errorf("%s description missing %q: %s", name, want, d)
+			}
+		}
+	}
+}
+
 // TestDocClaim_MCP_UpdateDescriptionAppend pins the act_update schema claim
 // at the wire boundary (tools/list) AND exercises the append through a real
 // tools/call, so a schema that advertises the parameter while the handler

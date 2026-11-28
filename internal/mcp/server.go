@@ -1054,7 +1054,7 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_ready",
-			Description: "Escape hatch: list the ready set: open issues with no unclosed blocking deps, and no pin to a different machine. Prefer act_next which combines ready + claim + show. The result's `machine` object says which machine this is, whether the pin filter ran, and how many rows are pinned elsewhere — read it before concluding a queue is empty.",
+			Description: "Escape hatch: list the ready set: open issues with no unclosed blocking deps, and no pin to a different machine. Prefer act_next which combines ready + claim + show. The result's `machine` object says which machine this is, whether the pin filter ran, and how many rows are pinned elsewhere — read it before concluding a queue is empty. Rows may carry `freed_by`, naming the resolved ask and its answer (the ask on the row's external dep was resolved): read the answer, then either close the ticket as moot or remove the dep and work it.",
 			InputSchema: schemaObject(map[string]any{
 				"under":        schemaString("Restrict to descendants of this issue id/prefix."),
 				"limit":        schemaInteger("Maximum issues to return (default 50). The result carries total+truncated, so a capped answer is detectable."),
@@ -1095,7 +1095,7 @@ func allTools() []toolDescriptor {
 		},
 		{
 			Name:        "act_next",
-			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue. A `claimed: true` result may also carry `warnings`. When origin has not seen the claim (unreachable, or it refused the push) the result is an error, `claim_unconfirmed`, carrying `push_deferred` and `push_deferred_reason`: the issue is not yours yet, so do not work it — call again later to confirm (a re-claim writes no second op) or take other work. Any other claim failure (e.g. `claim_failed`) is returned as an error, not retried on the next candidate.",
+			Description: "Recommended: pick the next ready issue, claim it, and return its rendered state (ready + claim + show, with bounded retry on claim loss). Returns `commit_marker` — embed it verbatim as a trailer in the BODY of every work-commit for the issue. A `claimed: true` result may also carry `warnings`. When origin has not seen the claim (unreachable, or it refused the push) the result is an error, `claim_unconfirmed`, carrying `push_deferred` and `push_deferred_reason`: the issue is not yours yet, so do not work it — call again later to confirm (a re-claim writes no second op) or take other work. Any other claim failure (e.g. `claim_failed`) is returned as an error, not retried on the next candidate. The returned row may carry `freed_by`, naming the resolved ask and its answer (the ask on its external dep was resolved): read the answer, then either close the ticket as moot or remove the dep and work it.",
 			InputSchema: schemaObject(map[string]any{
 				"under": schemaString("Optional id prefix; restrict to descendants."),
 			}, nil),

@@ -3987,6 +3987,18 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_List_TruncationHintMentionsUnder",
 	},
 	{
+		name:         "mcp-ready-description-freed-by",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "Rows may carry `freed_by`, naming the resolved ask and its answer",
+		testName:     "TestDocClaim_MCP_ReadyNextDescribeFreedBy",
+	},
+	{
+		name:         "mcp-next-description-freed-by",
+		docFile:      "internal/mcp/server.go",
+		claimPattern: "The returned row may carry `freed_by`, naming the resolved ask and its answer",
+		testName:     "TestDocClaim_MCP_ReadyNextDescribeFreedBy",
+	},
+	{
 		name:         "spec-update-claim-flag-publishes-on-win",
 		docFile:      "docs/spec.md",
 		claimPattern: "On win the claim commit is published like any other write (see \"Auto-publish on write\"); `--push` is redundant when `origin` is set.",
