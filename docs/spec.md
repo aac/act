@@ -158,7 +158,7 @@ Fold determinism requires that two writers given the same logical op produce byt
 7. Booleans/null lowercase.
 8. Empty arrays and objects emitted as `[]` / `{}`.
 
-A reference `act fmt-op` subcommand emits this exact form; `act doctor --check op-canonical` re-serializes every op file and fails on any byte mismatch.
+There is no `act fmt-op` subcommand and no `op-canonical` doctor check: `act` writes this form itself, and nothing re-serializes existing op files to compare bytes.
 
 ### Op type payloads
 
