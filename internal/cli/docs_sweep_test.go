@@ -70,6 +70,24 @@ type docClaim struct {
 // Order is alphabetical by `name` for readability; the sweep does not
 // depend on it.
 var docClaimRegistry = []docClaim{
+	// act-3331ff (docs/redaction-design.md §10 U1): the fold's slot rule.
+	// An op file beside the copy a redaction re-issued from it is
+	// superseded, and `act log` / `act show --include-ops` — which walk op
+	// files themselves — apply the same rule. Drift shape: the fold or the
+	// log walk stops filtering and the planted original's text reappears;
+	// asserted in cmd/act/redact_slot_docclaim_test.go.
+	{
+		name:         "spec-slot-rule-fold-equals-reissued-only",
+		docFile:      "docs/spec.md",
+		claimPattern: "So a checkout that\nholds both an original op file and the copy re-issued from it folds exactly\nlike one that holds only the re-issued copy.",
+		testName:     "TestDocClaim_Redact_LogOmitsSupersededFiles",
+	},
+	{
+		name:         "spec-slot-rule-log-omits-superseded",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act log` and `act show\n--include-ops` read op files themselves and apply the same rule, so neither\nprints a superseded file's payload.",
+		testName:     "TestDocClaim_Redact_LogOmitsSupersededFiles",
+	},
 	// act-675b59: fifth stale pass over docs/spec.md. Nine per-command
 	// "Exit codes" lines promised exit 4 on version skew; only
 	// `act version --check-repo` reports version_skew. Each line now lists

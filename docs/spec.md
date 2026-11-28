@@ -437,6 +437,16 @@ fold(ops_root) -> {issues, index}:
     op.op_hash = sha256(canonical_json(op.payload || op.hlc || op.node_id))
     parsed.append(op)
 
+  # (2b) Slot rule: in a shared slot, the highest redaction generation is the op
+  slots = group(parsed, key = (op) -> (op.issue_id, op.op_type,
+                                       op.hlc.wall, op.hlc.logical, op.node_id))
+  for members in slots:
+    if len(members) < 2: continue               # a lone op is never inspected
+    m = max(generation(op) for op in members)   # payload "redacted", see below
+    if m == 0: continue                         # unmarked slot mates: as before
+    for op in members:
+      if generation(op) < m: parsed.remove(op)  # superseded: never applied
+
   # (3) Sort: HLC ascending, op_hash tiebreaker
   parsed.sort(key = (op) -> (op.hlc.wall, op.hlc.logical, op.op_hash))
 
@@ -461,6 +471,29 @@ it, and every other op folds as usual. A tracker that holds ops written by a
 newer `act` therefore stays readable by an older binary — `act list`, `act
 show` and `act ready` keep answering, minus the effect of the ops they do not
 understand. The same skip covers the legacy parse-only `redact` type.
+
+**Superseded op files (the slot rule, step 2b).** Redaction removes a string
+from stored op files by re-issuing each affected op: the same envelope, the
+string replaced in the payload's text, one added payload key `"redacted": N`
+(the generation, an integer ≥ 1), written under the file name its new content
+hash gives, and the old file deleted (design: `docs/redaction-design.md`). A
+checkout that has not yet synced the deletion holds the original and the
+re-issued file side by side, so the fold groups ops by **slot** —
+`(issue_id, op_type, hlc.wall, hlc.logical, node_id)`, the envelope fields a
+re-issue keeps — and among two or more ops in one slot the highest generation
+is the op. Every member below it is **superseded**: dropped before the sort,
+never applied, not counted as consumed. `generation(op)` is the payload's
+`redacted` value; a key that is absent, or whose value is not a JSON integer
+≥ 1, reads as 0. A slot whose maximum is 0 folds exactly as before (the one
+shared-slot shape seen in real trackers is one op stored byte-for-byte under
+both the legacy colon file name and the dash name). Members at the same
+non-zero generation are all live and fold like any ops. So a checkout that
+holds both an original op file and the copy re-issued from it folds exactly
+like one that holds only the re-issued copy. `act log` and `act show
+--include-ops` read op files themselves and apply the same rule, so neither
+prints a superseded file's payload. The marker is in the payload, not the
+envelope or the file name, so the op hash, `Envelope` and file-name grammar
+are unchanged and an older binary reads a re-issued op as an ordinary op.
 
 **Version fields on read.** An op whose schema_version is not the one this binary writes aborts the fold with an
 error naming the op file and `schema_version`. `act list` and `act ready` fold
@@ -489,7 +522,7 @@ below are normative.
 | `acceptance_criteria` | Grow-shrink set keyed by criterion hash, plus an LWW replace. `add_accept` is idempotent set-add; `remove_accept` requires a referenced criterion hash and is set-remove. Adds and removes are commutative; on tie at the same hash, the op with greater HLC wins (remove-wins for equal HLC is impossible because op_hashes differ). `set_accept` REPLACES the whole list via an LWW gate on the `accept` field and clears the removed-set; later-stamped add/remove ops resume grow-shrink from the new baseline. |
 | `deps` | Grow-shrink set keyed by `(target_id, edge_type)`. `add_dep` is set-add; `remove_dep` is set-remove. Same tie semantics as acceptance. |
 | `closed_at`, `closed_reason` | Set when status becomes `closed`; LWW thereafter, but only writable by ops whose payload also carries `status=closed`. |
-| `redact` | Tombstone-style: marks named fields for redaction. Subsequent fold renders those fields as `"<redacted>"`. Never mutates prior payloads on disk. |
+| `redact` | Never applied: the fold skips it. Redaction takes effect in the op files themselves (each affected op is re-issued with the text replaced), and the fold only chooses among an op's copies — see "Superseded op files (the slot rule)" in §2. The fold-time field masking this row once described was removed with the old command (act-8d1d). |
 | `delete` | Issue-level tombstone. After applying, all subsequent reads of the issue return only the tombstone marker; further ops on that `issue_id` are parsed but ignored for state (still counted for compaction stats). |
 
 Every per-field LWW comparison uses the full tuple `(wall, logical, op_hash)`;
@@ -627,6 +660,10 @@ are. CI enforces:
    whose post-import canonical state matches the source modulo id-mapping.
 5. **HLC monotonicity test.** Across 10k random op sequences, no fold ever
    observes `last_hlc` decrease for a given `(issue_id, field)`.
+
+The slot rule (§2, step 2b) keeps this contract: which op files in a slot are
+superseded depends only on their payloads' `redacted` generations within the
+set `S`, never on file order, file name or machine.
 
 A failure of any of these is a release blocker; `act doctor --check
 fold-determinism` exposes (1) and (3) for local invocation.
@@ -1574,7 +1611,7 @@ Fold behavior post-compaction: when a snapshot exists and the snapshot's `tree_h
 - **Two terminals on the same machine claim the same issue.** Both write distinct claim-op files (filenames include op-payload hash and node_id, so the two ops have different filenames even with identical wall-clock seconds because of payload nonce). Fold orders by HLC then op-hash; one wins, the other observes `claim_lost`.
 - **`act close` on an already-closed issue.** Idempotent. The op is still written (audit trail), but fold sees status already `closed` and the post-state is unchanged. Exit 0 with `{"changed": false}`.
 - **Concurrent `act create` of the same title.** IDs derive from `(payload + nonce)`, never from title. Two creates produce two distinct ids; no conflict, no error. Operators sort it out via dep edges later.
-- **Redact of an already-redacted field.** Idempotent. A second redact op is written; fold output unchanged. Exit 0 with `{"changed": false}`.
+- **An op file beside its re-issued copy.** The fold ignores the lower-generation copy; see "Superseded op files (the slot rule)" in §Op-fold algorithm. (This entry used to describe redacting an already-redacted field with the fold-time `redact` command removed in act-8d1d.)
 - **Prefix collision at create time.** The new id is checked against all existing ids. If the chosen 4-hex prefix already maps to a different id, `act` extends the displayed prefix length one hex at a time until unique, and stores the longer form in the per-session prefix map. The full id is unchanged.
 - **No squash, and no `version_skew` refusal on write.** No command squashes `act-op:` commits: each op write is its own commit in the nested `.act/` repo and stays that way. A tracker holding an op from a newer writer still accepts writes — `act update` and `act close` commit as usual while `act version --check-repo` reports the skew.
 - **`act doctor --check unknown-op-version`** is about `op_version`, not `writer_version` (see the doctor check table): it emits one finding per op file with a newer `op_version`, naming the file. It does not report writer-version skew. Plain `act doctor` reports it too: such an op aborts the fold, so the run returns the `fold-error` finding followed by the findings of the fold-free read-only checks (`unknown-op-version` among them; the `fold-error` row of the doctor check table lists them), and the checks that need the fold do not run.
@@ -1655,8 +1692,8 @@ All three jobs must pass. Each job posts a single PASS/FAIL summary to the run; 
 ### 5.A.1 Stamped op `issue_id` is the on-disk hash; display computes shortest unique prefix
 The op envelope `issue_id` MUST be the on-disk stamped id from the collision-extension procedure, with a minimum length of 4 hex characters. The display layer MUST recompute the shortest-unique prefix per invocation purely for printing; the stamped id is never rewritten for display purposes.
 
-### 5.A.2 `redact` indices refer to post-fold current index space at the redact's HLC
-A `redact` op's `field_path` indices (e.g. `acceptance_criteria[2].text`) MUST be resolved against the post-fold current index space at the redact op's HLC. Folding a later `remove_accept` does not retroactively renumber prior redacts; the redact's effect MUST be recomputed against current indices on each fold.
+### 5.A.2 `redact` indices refer to post-fold current index space at the redact's HLC (superseded)
+_Superseded._ This resolution was for the fold-time `redact` op removed in act-8d1d. A `redact` op is now a record the fold never applies, and redaction rewrites op files rather than addressing fields by index, so there is nothing to resolve; see "Superseded op files (the slot rule)" in §Op-fold algorithm. The original text, kept for history: a `redact` op's `field_path` indices (e.g. `acceptance_criteria[2].text`) MUST be resolved against the post-fold current index space at the redact op's HLC. Folding a later `remove_accept` does not retroactively renumber prior redacts; the redact's effect MUST be recomputed against current indices on each fold.
 
 ### 5.A.3 HLC ordering uses parsed milliseconds; RFC3339 string MUST round-trip exactly
 HLC ordering MUST use parsed milliseconds-since-epoch derived from the RFC3339 `hlc.wall` string. The RFC3339 string is the wire format and MUST round-trip exactly to the int64 ms value. Sub-millisecond precision is not allowed in the wire form.

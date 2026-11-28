@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/ids"
 	"github.com/aac/act/internal/op"
 )
@@ -467,7 +468,28 @@ func readIssueOps(opsDir, issueID string) ([]loggedOp, error) {
 	if walkErr != nil {
 		return nil, walkErr
 	}
-	return out, nil
+	return dropSupersededLogged(out), nil
+}
+
+// dropSupersededLogged removes the op files the fold's slot rule ignores —
+// an original left beside the copy `act redact` re-issued from it
+// (docs/redaction-design.md §4). `act log` and `act show --include-ops`
+// read op files with this walk rather than through the fold, so without
+// the filter they would print the payload the redaction removed. The slot
+// is per issue, so one issue's ops are the whole set the rule needs.
+func dropSupersededLogged(ops []loggedOp) []loggedOp {
+	envs := make([]op.Envelope, len(ops))
+	for i, o := range ops {
+		envs[i] = o.env
+	}
+	mask := fold.Superseded(envs)
+	out := ops[:0]
+	for i, o := range ops {
+		if !mask[i] {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // sortLogOps sorts ops by (HLC.Wall, HLC.Logical, fullHash) ascending. This is
