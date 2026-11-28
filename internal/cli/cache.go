@@ -327,11 +327,19 @@ func MaybeRefresh(repoRoot string, opts MaybeRefreshOptions) (MaybeRefreshResult
 	postHead, _ := gops.HeadSHA()
 	if preHead != postHead {
 		_ = fold.InvalidateCheckpoint(paths.FoldCheckpoint)
-		_ = os.Remove(paths.IndexDB)
+		removeIndexDB(paths.IndexDB)
 		res.Invalidated = true
 	}
 
 	return res, nil
+}
+
+// removeIndexDB deletes index.db and its SQLite sidecars (-wal, -shm,
+// -journal) so a stale sidecar can never sit beside the rebuilt database.
+func removeIndexDB(path string) {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		_ = os.Remove(path + suffix)
+	}
 }
 
 // fetchHeadAge reports how long ago the store's FETCH_HEAD was touched.

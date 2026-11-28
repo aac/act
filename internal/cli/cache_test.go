@@ -264,6 +264,41 @@ func TestReadCache_PostRebaseInvalidatesCheckpoint(t *testing.T) {
 	}
 }
 
+// TestReadCache_walCleanPostRebaseRemovesIndexSidecars — the post-rebase
+// removal of index.db must also remove its -wal/-shm siblings, and the
+// next read must rebuild a working index.
+func TestReadCache_walCleanPostRebaseRemovesIndexSidecars(t *testing.T) {
+	root, remote := makeRepoWithRemoteOrigin(t)
+	paths := config.Layout(root)
+
+	planted := []string{paths.IndexDB, paths.IndexDB + "-wal", paths.IndexDB + "-shm"}
+	for _, p := range planted {
+		if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
+			t.Fatalf("plant %s: %v", p, err)
+		}
+	}
+
+	remote.AdvanceCommits(1)
+	touchFetchHead(t, root, time.Now().Add(-60*time.Second))
+
+	res, err := MaybeRefresh(root, MaybeRefreshOptions{})
+	if err != nil {
+		t.Fatalf("MaybeRefresh: %v", err)
+	}
+	if !res.Invalidated {
+		t.Fatalf("expected Invalidated=true, got %+v", res)
+	}
+	for _, p := range planted {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived post-rebase removal: err=%v", filepath.Base(p), err)
+		}
+	}
+
+	if _, code := RunReady(root, ReadyOptions{}); code != 0 {
+		t.Fatalf("RunReady after removal code=%d", code)
+	}
+}
+
 // TestReadCache_NoRemoteIsNoop — sanity: a repo with no `origin` remote
 // is a silent no-op for the cache layer (no fetch, no FETCH_HEAD
 // creation, no error).
