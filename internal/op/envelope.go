@@ -43,12 +43,16 @@ type Envelope struct {
 // edge_type to a closed set, while external refs are unstructured strings
 // the orchestrator owns the lifecycle of.
 //
-// "redact" is retained as a parse-only legacy entry (act-8d1d removed the
-// command, payload, and apply path). Envelope.Validate continues to accept
-// historical redact op files so existing .act/ops/ trees fold cleanly; the
-// fold dispatch returns nil for "redact" and applyAll silently skips it.
-// Writers must not emit new redact ops; the only path for true secret
-// removal is git-filter-repo.
+// "redact" is a record with no apply path. Redaction
+// (docs/redaction-design.md, internal/redaction) writes one per touched issue
+// to say that, when and from which checkout op files were re-issued with a
+// string removed; its payload is RedactPayload. The effect of a redaction is
+// in the re-issued op files themselves, never in the fold: the fold dispatch
+// returns nil for "redact" and applyAll silently skips it, for the new record
+// and for the pre-act-8d1d tombstone payload ({field_path, new_value}) that
+// historical trees still carry. That older payload is accepted on read —
+// nothing validates payloads on read — and refused by ValidatePayload, so no
+// writer can emit it again.
 var ValidOpTypes = map[string]bool{
 	"create":              true,
 	"update_field":        true,
@@ -63,7 +67,7 @@ var ValidOpTypes = map[string]bool{
 	"unclaim":             true,
 	"close":               true,
 	"reopen":              true,
-	"redact":              true, // legacy, parse-only; no writer or apply path
+	"redact":              true, // a record written by redaction; no apply path
 	"import":              true,
 	"migrate":             true,
 	"tombstone":           true,

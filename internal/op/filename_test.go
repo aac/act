@@ -312,11 +312,11 @@ func TestProbeAndWrite_ReadBackConfirmsPersistence(t *testing.T) {
 }
 
 // TestAtomicWrite_ReadBackFailureIsLoud asserts the read-back branch of
-// atomicWrite fails loud with ErrPersistenceUnconfirmed (act-40fce0). It uses
+// WriteAtomic fails loud with ErrPersistenceUnconfirmed (act-40fce0). It uses
 // a writeReadBack seam (a package var defaulting to os.ReadFile) to inject a
 // read-back that returns the wrong bytes — simulating the silent-loss
 // signature where the rename "succeeded" but the op is not durably present
-// with the expected content. atomicWrite must refuse to claim success.
+// with the expected content. WriteAtomic must refuse to claim success.
 func TestAtomicWrite_ReadBackFailureIsLoud(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "op.json")
@@ -329,9 +329,9 @@ func TestAtomicWrite_ReadBackFailureIsLoud(t *testing.T) {
 	}
 	defer func() { readBackForTest = orig }()
 
-	err := atomicWrite(dir, target, body)
+	err := WriteAtomic(dir, target, body)
 	if !errors.Is(err, ErrPersistenceUnconfirmed) {
-		t.Fatalf("atomicWrite err = %v, want ErrPersistenceUnconfirmed", err)
+		t.Fatalf("WriteAtomic err = %v, want ErrPersistenceUnconfirmed", err)
 	}
 	// The unconfirmed op file must be removed so a later read/harvest never
 	// sees a half-confirmed write.
@@ -340,7 +340,7 @@ func TestAtomicWrite_ReadBackFailureIsLoud(t *testing.T) {
 	}
 }
 
-// TestAtomicWrite_ReadBackErrorIsLoud asserts atomicWrite surfaces
+// TestAtomicWrite_ReadBackErrorIsLoud asserts WriteAtomic surfaces
 // ErrPersistenceUnconfirmed when the read-back itself errors (file not
 // readable), not just when bytes differ.
 func TestAtomicWrite_ReadBackErrorIsLoud(t *testing.T) {
@@ -354,9 +354,9 @@ func TestAtomicWrite_ReadBackErrorIsLoud(t *testing.T) {
 	}
 	defer func() { readBackForTest = orig }()
 
-	err := atomicWrite(dir, target, body)
+	err := WriteAtomic(dir, target, body)
 	if !errors.Is(err, ErrPersistenceUnconfirmed) {
-		t.Fatalf("atomicWrite err = %v, want ErrPersistenceUnconfirmed", err)
+		t.Fatalf("WriteAtomic err = %v, want ErrPersistenceUnconfirmed", err)
 	}
 }
 

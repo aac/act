@@ -541,6 +541,37 @@ func (p TombstonePayload) Validate() error {
 	return nil
 }
 
+// RedactPayload is the payload for op_type=redact: the record a redaction
+// writes on each issue in which it re-issued at least one op file
+// (docs/redaction-design.md §5.5). It is a record, not an instruction — the
+// fold never applies it — and it deliberately holds no pattern, no hash of
+// one, and no hash or name of any file it replaced: each of those would be a
+// function of the removed text published beside everything else.
+//
+// The pre-act-8d1d redact payload ({field_path, new_value}) decodes into this
+// struct as two zero counts and so fails Validate; that is what keeps a writer
+// from ever emitting the old shape again.
+type RedactPayload struct {
+	// OpsRewritten is the number of op files re-issued in this issue by the
+	// pass that wrote the record.
+	OpsRewritten int `json:"ops_rewritten"`
+	// Replacements is the number of occurrences replaced in those files.
+	Replacements int `json:"replacements"`
+}
+
+// Validate implements the redact write-time rules: both counts are >= 1,
+// since a record is written only for an issue in which something was
+// re-issued and a re-issue happens only where a string was replaced.
+func (p RedactPayload) Validate() error {
+	if p.OpsRewritten < 1 {
+		return fmt.Errorf("op: redact.ops_rewritten %d: must be >= 1", p.OpsRewritten)
+	}
+	if p.Replacements < 1 {
+		return fmt.Errorf("op: redact.replacements %d: must be >= 1", p.Replacements)
+	}
+	return nil
+}
+
 // nonceLooksValid reports whether s is a 32-char lowercase-hex nonce.
 func nonceLooksValid(s string) bool {
 	if len(s) != 2*ids.NonceBytes {
@@ -657,6 +688,12 @@ func ValidatePayload(opType string, payload []byte) error {
 		var p TombstonePayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("op: unmarshal tombstone payload: %w", err)
+		}
+		return p.Validate()
+	case "redact":
+		var p RedactPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("op: unmarshal redact payload: %w", err)
 		}
 		return p.Validate()
 	}

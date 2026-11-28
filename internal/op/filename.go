@@ -148,7 +148,7 @@ func ProbeAndWrite(rootOps string, env Envelope, body []byte, fsLock func() (rel
 			return "", 0, fmt.Errorf("op: ProbeAndWrite: stat %s: %w", candidate, statErr)
 		}
 		// Free slot: write atomically.
-		if err := atomicWrite(shard, candidate, body); err != nil {
+		if err := WriteAtomic(shard, candidate, body); err != nil {
 			return "", 0, err
 		}
 		return candidate, hashLen, nil
@@ -156,7 +156,7 @@ func ProbeAndWrite(rootOps string, env Envelope, body []byte, fsLock func() (rel
 	return "", 0, ErrOpHashCollision
 }
 
-// atomicWrite writes body to a temp file in dir and renames it onto target,
+// WriteAtomic writes body to a temp file in dir and renames it onto target,
 // then guarantees the write is durably persisted and observable:
 //
 //  1. write body to a temp file in the same directory,
@@ -176,7 +176,13 @@ func ProbeAndWrite(rootOps string, env Envelope, body []byte, fsLock func() (rel
 // it.
 //
 // On any error the temp file is removed so no `.tmp` file is left behind.
-func atomicWrite(dir, target string, body []byte) error {
+//
+// Exported for internal/redaction, which writes re-issued op files under a
+// name it computes itself (op.Filename of the re-issued envelope) rather than
+// probing for one, and must get the same durability and read-back guarantee
+// as every other op write rather than a second copy of this function. dir
+// must already exist and be the directory that holds target.
+func WriteAtomic(dir, target string, body []byte) error {
 	f, err := os.CreateTemp(dir, ".op-*.json.tmp")
 	if err != nil {
 		return fmt.Errorf("op: ProbeAndWrite: create temp: %w", err)
@@ -232,7 +238,7 @@ func atomicWrite(dir, target string, body []byte) error {
 	return nil
 }
 
-// readBackForTest is the read-back used by atomicWrite's persistence
+// readBackForTest is the read-back used by WriteAtomic's persistence
 // confirmation. It defaults to os.ReadFile; tests override it to inject a
 // failed or mismatched read-back and exercise the ErrPersistenceUnconfirmed
 // branch deterministically. Production code never reassigns it.
@@ -240,7 +246,7 @@ var readBackForTest = os.ReadFile
 
 // syncDir best-effort fsyncs a directory so a preceding rename into it is
 // durable. Errors are swallowed: directory fsync is unsupported on some
-// platforms (notably Windows) and the read-back in atomicWrite is the
+// platforms (notably Windows) and the read-back in WriteAtomic is the
 // authoritative persistence check, not this.
 func syncDir(dir string) {
 	d, err := os.Open(dir)

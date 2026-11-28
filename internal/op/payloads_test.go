@@ -430,6 +430,47 @@ func TestTombstonePayload_Validate_NotRFC3339(t *testing.T) {
 	}
 }
 
+// RedactPayload --------------------------------------------------------------
+
+func TestRedactPayload_Validate(t *testing.T) {
+	for _, tc := range []struct {
+		p     RedactPayload
+		valid bool
+	}{
+		{RedactPayload{OpsRewritten: 1, Replacements: 1}, true},
+		{RedactPayload{OpsRewritten: 2, Replacements: 3}, true},
+		{RedactPayload{OpsRewritten: 0, Replacements: 1}, false},
+		{RedactPayload{OpsRewritten: 1, Replacements: 0}, false},
+		{RedactPayload{OpsRewritten: -1, Replacements: 5}, false},
+	} {
+		if err := tc.p.Validate(); (err == nil) != tc.valid {
+			t.Errorf("%+v.Validate() = %v, want valid=%v", tc.p, err, tc.valid)
+		}
+	}
+}
+
+// TestDocClaim_RedactRecord_PayloadIsTwoCountsAtLeastOne pins the spec's
+// "Op type payloads" entry for the redact record: two integers, both >= 1.
+// It goes through ValidatePayload, the dispatcher every write path calls,
+// not the struct method alone, and checks that the pre-act-8d1d shape the
+// same entry describes as read-only is refused for writing.
+func TestDocClaim_RedactRecord_PayloadIsTwoCountsAtLeastOne(t *testing.T) {
+	if err := ValidatePayload("redact", []byte(`{"ops_rewritten":1,"replacements":1}`)); err != nil {
+		t.Fatalf("ValidatePayload(redact, 1/1) = %v, want nil", err)
+	}
+	for _, bad := range []string{
+		`{"ops_rewritten":0,"replacements":1}`,
+		`{"ops_rewritten":1,"replacements":0}`,
+		`{"ops_rewritten":1}`,
+		`{"ops_rewritten":"1","replacements":1}`,
+		`{"field_path":"description","new_value":"<redacted>"}`,
+	} {
+		if err := ValidatePayload("redact", []byte(bad)); err == nil {
+			t.Errorf("ValidatePayload(redact, %s) = nil, want an error", bad)
+		}
+	}
+}
+
 // ValidatePayload dispatcher -------------------------------------------------
 
 func TestValidatePayload_AllOpTypes(t *testing.T) {
@@ -453,21 +494,25 @@ func TestValidatePayload_AllOpTypes(t *testing.T) {
 		{"import", `{"source_ref":"github:owner/repo#1"}`},
 		{"migrate", `{"from_version":1,"to_version":2}`},
 		{"tombstone", `{"deleted_at":"2026-04-29T12:00:00Z"}`},
+		{"redact", `{"ops_rewritten":2,"replacements":3}`},
 	}
-	// "redact" stays in ValidOpTypes as a parse-only legacy entry (see
-	// envelope.go and act-8d1d): historical .act/ops/ files must continue
-	// to parse, but the command + payload + apply path were removed and
-	// ValidatePayload has no case for it. Subtract from the count so the
-	// dispatcher-coverage assertion still catches a missing live op type.
-	wantCases := len(ValidOpTypes) - 1 // -1 for "redact"
-	if len(cases) != wantCases {
-		t.Fatalf("dispatcher smoke test covers %d types, want %d (ValidOpTypes=%d minus 1 legacy)",
-			len(cases), wantCases, len(ValidOpTypes))
+	// Every op type has a validator, "redact" included: redaction writes a
+	// record op again (docs/redaction-design.md §5.5), so the count is the
+	// whole of ValidOpTypes and a missing case for any type fails here.
+	if len(cases) != len(ValidOpTypes) {
+		t.Fatalf("dispatcher smoke test covers %d types, want %d (every type in ValidOpTypes)",
+			len(cases), len(ValidOpTypes))
 	}
-	// Verify ValidatePayload still rejects "redact" — no writer should
-	// ever emit one again, and the dispatcher must not silently accept it.
-	if err := ValidatePayload("redact", []byte(`{"field_path":"x"}`)); err == nil {
-		t.Fatal("ValidatePayload(redact): want error (legacy op type, no validator)")
+	// The pre-act-8d1d redact payload is still accepted on read (nothing
+	// validates on read) but must never pass the write-time validator, so
+	// no writer can emit the removed tombstone shape again.
+	for _, legacy := range []string{
+		`{"field_path":"x"}`,
+		`{"field_path":"description","new_value":"<redacted>"}`,
+	} {
+		if err := ValidatePayload("redact", []byte(legacy)); err == nil {
+			t.Fatalf("ValidatePayload(redact, %s): want error (pre-act-8d1d payload)", legacy)
+		}
 	}
 	for _, tc := range cases {
 		t.Run(tc.opType, func(t *testing.T) {
