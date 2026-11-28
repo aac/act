@@ -303,6 +303,77 @@ func TestPlan_ResidualWrittenWithJSONEscapes(t *testing.T) {
 	}
 }
 
+// redEscSecret is redSecret with every '-' written as the JSON escape
+// -, so its bytes match neither raw form.
+func redEscSecret() string {
+	return strings.ReplaceAll(redSecret, "-", "\\"+"u002d")
+}
+
+// TestPlan_ResidualInDuplicateKeyAndAfterGarbage covers the two shapes a
+// decode-into-a-value check reads as clean: a duplicate key whose earlier
+// value holds the pattern (a map keeps only the last), and a file that is
+// valid JSON followed by garbage holding the pattern (decoding stops at
+// the garbage). Both are planted \u-escaped, so the raw check alone cannot
+// see them, and both must be found by the plan and by Scan.
+func TestPlan_ResidualInDuplicateKeyAndAfterGarbage(t *testing.T) {
+	root := t.TempDir()
+	E := redEscSecret()
+
+	// An op whose payload repeats "assignee": the first value holds the
+	// pattern, the second (the one json.Unmarshal keeps) does not.
+	claim := redEnv(t, redIssue, "claim", redWall, 0, redNode, `{"assignee":"alice"}`)
+	body := strings.Replace(string(redMarshal(t, claim)), `"assignee":"alice"`, `"assignee":"`+E+`","assignee":"alice"`, 1)
+	if env, err := op.UnmarshalTolerant([]byte(body)); err != nil || !strings.Contains(body, E) {
+		t.Fatalf("fixture: duplicate-key op does not parse or lacks the pattern: %v", err)
+	} else if strings.Contains(string(env.Payload), redSecret) {
+		t.Fatalf("fixture: decoded payload holds the pattern; the duplicate is not the earlier one")
+	}
+	dupRel := redWriteAt(t, root,
+		filepath.Join(op.ShardDir(filepath.Join(root, "ops"), redIssue, redWall), op.Filename(claim)), []byte(body))
+	// The same in a plain JSON file.
+	dupCfgRel := redWriteAt(t, root, filepath.Join(root, "config.json"), []byte(`{"label":"`+E+`","label":"x"}`))
+	// Valid JSON, then garbage that holds the pattern in a quoted literal:
+	// in an other file, and in a quarantined .json that act cannot parse.
+	garbage := []byte(`{"ok":true} @@not json@@ "note: ` + E + `" }`)
+	garbageRel := redWriteAt(t, root, filepath.Join(root, ".sync-log"), garbage)
+	qRel := redWriteAt(t, root, filepath.Join(root, ".collisions", "s", "bad.json"), garbage)
+
+	want := []string{dupRel, dupCfgRel, garbageRel, qRel}
+	sort.Strings(want)
+	if p := redPlan(t, root, []string{redSecret}, nil); !reflect.DeepEqual(p.Residuals, want) {
+		t.Errorf("Plan residuals = %v, want %v", p.Residuals, want)
+	}
+	if paths, err := Scan(root, []string{redSecret}); err != nil || !reflect.DeepEqual(paths, want) {
+		t.Errorf("Scan = %v, %v; want %v", paths, err, want)
+	}
+}
+
+func TestHolds_FailClosedUnion(t *testing.T) {
+	E := redEscSecret()
+	pats := []string{redSecret}
+	forms := rawForms(pats)
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"raw bytes", "x " + redSecret + " y", true},
+		{"escaped value", `{"a":"` + E + `"}`, true},
+		{"escaped key", `{"` + E + `":1}`, true},
+		{"earlier duplicate key", `{"a":"` + E + `","a":"b"}`, true},
+		{"value stream", `{"a":1}` + "\n" + `["` + E + `"]`, true},
+		{"after garbage", `{"a":1} }}} "` + E + `"`, true},
+		{"truncated json", `{"a":["x","` + E + `"`, true},
+		{"binary around a literal", "\x00\x01\"" + E + "\"\xff", true},
+		{"clean json", `{"a":"b","c":["d"]}`, false},
+		{"clean garbage", `{"a":1} }}} "nothing here"`, false},
+	} {
+		if got := holds([]byte(tc.in), pats, forms); got != tc.want {
+			t.Errorf("%s: holds(%q) = %v, want %v", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestPlan_QuarantinedFiles(t *testing.T) {
 	root := t.TempDir()
 	// A stranded op with a hit and no copy under ops/: re-issued in place.

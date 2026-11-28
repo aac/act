@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -142,49 +143,69 @@ func containsAny(b []byte, forms [][]byte) bool {
 	return false
 }
 
-// holds reports whether file bytes b hold a pattern in any form: one of the
-// raw forms in the bytes, or — when b is JSON (one value or a stream of
-// values) — a pattern inside any decoded string or object key. The decoded
-// check is what makes the answer independent of how the file escapes the
+// holds reports whether file bytes b hold a pattern in any form. It is a
+// fail-closed union of three checks, and a hit in any one is a hit:
+//
+//  1. a raw form of a pattern in the bytes;
+//  2. a pattern inside any string token — keys and values alike — of b
+//     read as a stream of JSON values, walked token by token with no maps
+//     built, so a duplicate key's earlier value is still read;
+//  3. when that walk fails at any point (b is partly JSON, or not JSON at
+//     all), a pattern inside any quoted string literal found anywhere in b
+//     that unescapes as a JSON string.
+//
+// Checks 2 and 3 make the answer independent of how a file escapes the
 // text (\u escapes, an escaped '/', escapes canonicaljson would not emit),
-// so a file written by hand or by another tool cannot slip past a raw-byte
-// comparison. A file that is not JSON gets the raw check alone.
+// and check 3 means a file is never reported clean because decoding
+// stopped part-way.
 func holds(b []byte, patterns []string, forms [][]byte) bool {
-	return containsAny(b, forms) || decodedHolds(b, patterns)
+	if containsAny(b, forms) {
+		return true
+	}
+	found, complete := tokensHold(b, patterns)
+	if found {
+		return true
+	}
+	if !complete {
+		return literalsHold(b, patterns)
+	}
+	return false
 }
 
-// decodedHolds decodes b as a stream of JSON values and reports whether a
-// pattern occurs in any string or key. Decoding stops at the first error;
-// what decoded before it is still checked.
-func decodedHolds(b []byte, patterns []string) bool {
+// tokensHold walks b as a stream of JSON values with json.Decoder.Token and
+// reports whether any string token holds a pattern. complete is false when
+// the walk stopped on an error before the end of b.
+func tokensHold(b []byte, patterns []string) (found, complete bool) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	for {
-		var v any
-		if err := dec.Decode(&v); err != nil {
-			return false
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return false, true
 		}
-		if valueHolds(v, patterns) {
-			return true
+		if err != nil {
+			return false, false
+		}
+		if s, ok := tok.(string); ok && stringHolds(s, patterns) {
+			return true, true
 		}
 	}
 }
 
-func valueHolds(v any, patterns []string) bool {
-	switch x := v.(type) {
-	case string:
-		return stringHolds(x, patterns)
-	case []any:
-		for _, e := range x {
-			if valueHolds(e, patterns) {
-				return true
-			}
-		}
-	case map[string]any:
-		for k, e := range x {
-			if stringHolds(k, patterns) || valueHolds(e, patterns) {
-				return true
-			}
+// jsonStringLiteral matches a double-quoted JSON-style string literal: a
+// quote, then any run of non-quote non-backslash bytes or backslash escapes,
+// then a quote.
+var jsonStringLiteral = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// literalsHold is the fallback for bytes the token walk could not finish:
+// every quoted literal in b that decodes as a JSON string is checked. A
+// literal that does not decode is skipped; the raw check already covered
+// its bytes.
+func literalsHold(b []byte, patterns []string) bool {
+	for _, lit := range jsonStringLiteral.FindAll(b, -1) {
+		var s string
+		if json.Unmarshal(lit, &s) == nil && stringHolds(s, patterns) {
+			return true
 		}
 	}
 	return false
