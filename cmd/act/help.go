@@ -614,6 +614,17 @@ EXTERNAL DEPS
   external). An issue may carry both kinds; either keeps it out of
   'act ready' until cleared.
 
+  One kind of ref act does look up: an ask id. A dep whose whole ref
+  is 'ask-XXXX' or 'ask:ask-XXXX' (this repo's ask store) or
+  '<repo>:ask-XXXX' (the store of a sibling repo) stops blocking once
+  'ask show' reports that ask resolved — act checks at read time and
+  never removes the dep. An unknown is not a yes: no ask binary, a
+  timeout, an open ask, or an ask closed without being resolved all
+  keep it blocking. The freed ticket is marked in 'act ready' and
+  'act next' output (freed_by in --json) with the ask's answer. Read
+  it first: close the ticket if the answer made it moot, otherwise
+  clear the dep with --ext-rm and work it.
+
 ESCAPE HATCHES
   Halt the loop and surface to the human when:
     - acceptance criteria are ambiguous or conflict

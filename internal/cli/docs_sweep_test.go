@@ -4287,6 +4287,77 @@ var docClaimRegistry = []docClaim{
 		claimPattern: "`node_id` is this checkout's claim identity — the `node_id` its claims and op files carry.",
 		testName:     "TestDocClaim_Identity_InitDoesNotWriteNodeIDToConfig",
 	},
+	// act-3731ab: an external dep naming an answered ask stops blocking at
+	// read time (ready, next, and the claim/close gate), the freed row
+	// carries the answer, and every unknown keeps blocking. Asserted in
+	// internal/cli/askfreed_test.go, the CLI surfaces at the binary
+	// boundary with a stand-in `ask` on PATH.
+	{
+		name:         "spec-ask-refs-answered-ask-no-longer-blocks",
+		docFile:      "docs/spec.md",
+		claimPattern: "an external dep naming an answered ask no longer blocks",
+		testName:     "TestDocClaim_AskFreed_ReadyAdmitsResolvedAsk",
+	},
+	{
+		name:         "spec-ask-refs-unknown-is-not-a-yes",
+		docFile:      "docs/spec.md",
+		claimPattern: "**An unknown is not a yes:** a missing `ask` binary, a timeout, a non-zero exit",
+		testName:     "TestDocClaim_AskFreed_UnknownKeepsBlocking",
+	},
+	{
+		name:         "spec-ask-refs-gates-agree-with-ready",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act close` and `act update --claim` apply the same rule, so a ticket `act ready` offers can be claimed",
+		testName:     "TestDocClaim_AskFreed_GatesAgreeWithReady",
+	},
+	{
+		name:         "spec-dep-add-external-ask-exception",
+		docFile:      "docs/spec.md",
+		claimPattern: "and the envelope's `external_deps` lists only the deps still blocking",
+		testName:     "TestDocClaim_AskFreed_GatesAgreeWithReady",
+	},
+	{
+		name:         "spec-ask-refs-freed-by-row",
+		docFile:      "docs/spec.md",
+		claimPattern: "In `--json` it carries `freed_by`, one object per freeing ask",
+		testName:     "TestDocClaim_AskFreed_CLINamesFreeingAsk",
+	},
+	{
+		name:         "spec-next-freed-by",
+		docFile:      "docs/spec.md",
+		claimPattern: "`act next --json` and the `act_next` MCP tool add the row's `freed_by` list",
+		testName:     "TestDocClaim_AskFreed_CLINamesFreeingAsk",
+	},
+	{
+		name:         "help-ask-refs-stop-blocking",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'<repo>:ask-XXXX' (the store of a sibling repo) stops blocking once",
+		testName:     "TestDocClaim_AskFreed_ReadyAdmitsResolvedAsk",
+	},
+	{
+		name:         "help-ask-refs-unknown-is-not-a-yes",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "An unknown is not a yes: no ask binary, a",
+		testName:     "TestDocClaim_AskFreed_UnknownKeepsBlocking",
+	},
+	{
+		name:         "help-ask-refs-freed-by",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act next' output (freed_by in --json) with the ask's answer",
+		testName:     "TestDocClaim_AskFreed_CLINamesFreeingAsk",
+	},
+	{
+		name:         "skill-ask-refs-clear-themselves",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "**Ask refs clear themselves.**",
+		testName:     "TestDocClaim_AskFreed_ReadyAdmitsResolvedAsk",
+	},
+	{
+		name:         "skill-ask-refs-freed-by",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "**A ticket freed this way carries `freed_by`**",
+		testName:     "TestDocClaim_AskFreed_CLINamesFreeingAsk",
+	},
 }
 
 // TestDocSweep_AllClaimsHaveAssertingTests is the meta-test that drives

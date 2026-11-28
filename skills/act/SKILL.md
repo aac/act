@@ -290,6 +290,16 @@ one is a CLI call (`act dep add` is not an MCP tool); clearing one is the `ext_r
 may carry both internal and external blockers; either one keeps it out of `act ready` until
 cleared.
 
+**Ask refs clear themselves.** When the blocker is a human answer filed with `ask`, attach the
+ask id itself: `ask-XXXX` (or `ask:ask-XXXX`) for this repo's store, `<repo>:ask-XXXX` for a
+sibling repo's. Once `ask show` reports that ask resolved, act stops counting the dep as a
+blocker — it checks at read time and never removes the dep. Free text that only mentions an
+ask, an open ask, an ask closed without being resolved, or an `ask` that can't be read all
+keep blocking. **A ticket freed this way carries `freed_by`** (in `act ready --json` rows and
+in `act next` / `act_next` results; human output tags the row `[freed: ask-XXXX]` and prints
+the answer): read the ask's answer before you work it. If the answer made the ticket moot,
+close it with a reason; otherwise clear the dep (`act update <id> --ext-rm <ref>`) and work it.
+
 ## Commit discipline
 
 - Every work commit includes the issue's `Act-Id: act-XXXXXX` trailer in the commit body
