@@ -100,9 +100,9 @@ id         = "act-" + short_hex                                               //
 ```
 
 - `nonce_bytes` is 16 bytes of crypto-random, embedded in the create-op payload as `"nonce": "<32 hex chars>"`. The nonce is fixed at create time and never changes; it is what guarantees two identical-titled issues created in the same wall second produce different ids.
-- `N` starts at 4 and may grow up to 16 if collisions force extension; see the protocol below. Everything on disk — directory names, op envelope `issue_id`, folded issue `id`, references in `parent` and `deps` — uses the short form `act-` + `full_hex[0:N]`. The 64-hex `full_hex` itself is never persisted.
+- `N` starts at 6 (4-hex ids minted before that floor was raised remain valid) and may grow up to 16 if collisions force extension; see the protocol below. Everything on disk — directory names, op envelope `issue_id`, folded issue `id`, references in `parent` and `deps` — uses the short form `act-` + `full_hex[0:N]`. The 64-hex `full_hex` itself is never persisted.
 - Collision-extension protocol at create time:
-  1. Compute `full_hex`. Set `N = 4`.
+  1. Compute `full_hex`. Set `N = 6`.
   2. Candidate id = `"act-" + full_hex[0:N]`.
   3. Acquire `.act/.lock` (advisory file lock). Scan `.act/ops/` for any directory whose name equals the candidate id (i.e. a real id collision; the 64-hex digest is not stored, so the check is on the short id alone).
   4. If a collision exists, `N += 1` and goto 2. (Practically `N` will not exceed 8 before 2^32 issues exist; the hard cap is `N = 16`.)

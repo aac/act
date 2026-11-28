@@ -61,3 +61,17 @@ func TestDocClaim_Spec_ClaimCommitSubjectUsesSixHexShortID(t *testing.T) {
 		t.Errorf("nested .act HEAD subject after close = %q, want %q", got, want)
 	}
 }
+
+// TestDocClaim_Spec_NewIssueIDStartsAtSixHex pins the spec's "N starts at 6":
+// a freshly created issue's id is `act-` plus exactly six hex characters.
+func TestDocClaim_Spec_NewIssueIDStartsAtSixHex(t *testing.T) {
+	root := makeCreateRepo(t)
+	out, code := RunCreate(root, CreateOptions{Title: "short id width probe", Type: "task"})
+	if code != 0 {
+		t.Fatalf("RunCreate: code=%d out=%+v", code, out)
+	}
+	id := out.(CreateResult).ID
+	if ok, _ := regexp.MatchString(`^act-[0-9a-f]{6}$`, id); !ok {
+		t.Errorf("new issue id %q, want act- plus exactly 6 hex chars", id)
+	}
+}

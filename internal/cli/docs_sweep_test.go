@@ -2902,6 +2902,14 @@ var docClaimRegistry = []docClaim{
 		claimPattern: `git commit --no-verify -m "act-op: (<short-id>) claim"`,
 		testName:     "TestDocClaim_Spec_ClaimCommitSubjectUsesSixHexShortID",
 	},
+	// act-0d97fd: the spec said the short-id length N starts at 4; new ids
+	// start at ids.MinShortHexLen (6).
+	{
+		name:         "spec-short-id-n-starts-at-six",
+		docFile:      "docs/spec.md",
+		claimPattern: "- `N` starts at 6 (4-hex ids minted before that floor was raised remain valid)",
+		testName:     "TestDocClaim_Spec_NewIssueIDStartsAtSixHex",
+	},
 	// act-77b411: `act version --check-repo` used the working directory as
 	// the repo root and reported no_repo from a subdirectory.
 	{
