@@ -55,10 +55,11 @@ is in the output); `act doctor` is clean, so nothing reports it.
 Three further facts measured for this design:
 
 - **The index holds it too, while it is the current value.** After `act create` + `act list`,
-  `grep -rla --exclude-dir=.git PLANTED-… .act` lists `.act/index.db` beside the op file. After the
-  description edit and another read it no longer matched in that probe — the row happened to be
-  overwritten in place. SQLite makes no such promise (freed pages and FTS segments are not zeroed),
-  so §7 deletes and rebuilds rather than relying on it.
+  `grep -rla --exclude-dir=.git PLANTED-… .act` lists `.act/index.db` beside the op file, and a
+  second checkout that has read once holds it in its own `index.db` as well. After the description
+  edit and another read it no longer matched in that probe — the row happened to be overwritten in
+  place. SQLite makes no such promise (freed pages and FTS segments are not zeroed), so §7 deletes
+  and rebuilds rather than relying on it.
 - **Today's fold picks arbitrarily between an op and a rewritten copy of it.** Four scratch
   trackers, each with the original create op plus a hand-made twin (same envelope, the string
   replaced by a different token, a new file name) left beside it: `act show` rendered the
@@ -74,19 +75,34 @@ Three further facts measured for this design:
 
 ## 2. Why the removed `act redact` is not this
 
-`act redact` existed in 0.1.0 and was removed (act-8d1d; `CHANGELOG.md`, and the comment on
-`op.ValidOpTypes`: "Writers must not emit new redact ops; the only path for true secret removal is
-git-filter-repo"). Its op said "render this field as `<redacted>` from this HLC forward" and, per the
-spec row that survives it, "never mutates prior payloads on disk". It masked at fold time: the text
-stayed in every op file, and act-0d5d records that even the mask did not hold (`act show` still
-displayed the old value). The op type is still in the enum as a parse-only entry with no writer and
-no apply path.
+`act redact <id> -field <path> -value <text>` shipped in 0.1.0 and was removed seventeen days later.
+The two ids are not in `git log` (this repo's history starts at the public release); what survives
+is the tickets' own text in this repo's tracker, `CHANGELOG.md` ("Removed: `act redact` command and
+op type (act-8d1d)") and the comment on `op.ValidOpTypes`.
 
-This design reuses the command name and the op type because both now mean what the words say, and
-because the op type is the one name every existing binary already parses and skips. It does **not**
-reuse the mechanism. The `redact` op written here is a record, never an instruction to the fold:
-`fold.ApplyDispatch("redact")` stays `nil`. What changes the folded state is that the op files
-themselves hold different text.
+- **What it was.** A tombstone: the op said "render this field as `<redacted>` (or `-value`) from
+  this HLC forward" and, per the spec row that outlives it, "never mutates prior payloads on disk".
+  The text stayed in every op file by design.
+- **act-0d5d.** Used to change an acceptance criterion in place, it wrote its op, reported success,
+  and `act show` went on displaying the old value: the fold never applied a redact op to that field.
+  The bug had been there since the day it landed.
+- **act-8d1d.** Removed outright: no real use in those seventeen days, the one use it did get was
+  that off-label edit, and the verb was confusing to see. The ticket left `git filter-repo` as "the
+  only path for true secret removal".
+
+Four things this design takes from that:
+
+1. It is built for a need that has now happened, not for one imagined at bootstrap.
+2. **It cannot be used to edit.** There is no field target and no replacement value: the only thing
+   the command can write is `[redacted]` over a string the caller already holds. The old command's
+   only real use was as an edit primitive, and that is how it broke.
+3. **There is no fold apply path to get wrong.** The effect is in the op files themselves; the
+   `redact` op written here is a record, and `fold.ApplyDispatch("redact")` stays `nil`. The
+   act-0d5d class of bug — op recorded, state unchanged — has nowhere to live.
+4. Nothing sensitive is taken on the command line (the old one took its value as a flag).
+
+The command name and the op type are reused because both now mean what the words say, and because
+`redact` is the one op-type name every existing binary already parses and skips.
 
 ## 3. Decision 1 — a redaction re-issues op files and records that it did
 
@@ -140,8 +156,13 @@ blank every stored value of a field except the one in force, no pattern needed).
 motivating tickets, whose descriptions were already edited, and it never asks anyone to handle the
 secret. It loses to patterns as the *first* mode because only a pattern can answer "is this string
 anywhere in the tracker" — other tickets, titles, close reasons, quarantined files — and prove it
-with a scan (§5.6). The machinery below supports it as a second `apply` function over the same
-slot re-issue; build it when an agent needs to redact without being able to extract the string.
+with a scan (§5.6), and because a command that targets a field is one flag away from the edit
+primitive of §2. The machinery below supports it as a second `apply` function over the same slot
+re-issue; build it when an agent needs to redact without being able to extract the string.
+
+**Rejected: a `--replacement TEXT` flag.** A caller-chosen replacement is an edit command again,
+and two checkouts redacting the same op would no longer produce the same bytes (§6.3 relies on
+that). The replacement is the constant `[redacted]`.
 
 ## 4. Decision 2 — the fold: the highest generation in a slot is the op
 
@@ -241,7 +262,7 @@ Matching and replacement run on the **decoded string**, so a pattern containing 
 or non-ASCII text matches whatever its JSON escaping in the file. Everything else in the op is
 copied through: the payload is decoded to `map[string]any` and re-encoded exactly the way
 `Envelope.Marshal` already round-trips every op, so an op with no hit re-marshals to its original
-bytes (U2 asserts this over the golden ops). An allowlist, not "every string in the payload",
+bytes (U2 asserts this for one op of every type). An allowlist, not "every string in the payload",
 because the other strings are structure — `nonce`, `parent`, `field`, `edge_type`, ids — and a
 replacement inside one corrupts the op. A listed string found anywhere outside these fields is a
 **residual** (§5.6), never silently skipped. Length caps are not re-applied: `[redacted]` can be
@@ -313,7 +334,7 @@ fire once per logical op on the writer that originated it, and a re-issued creat
 
 ```jsonc
 // redact — written by `act redact`; a record, never applied by the fold
-{ "ops_rewritten": 2, "replacements": 3 }      // both integers >= 1; per issue, per run
+{ "ops_rewritten": 2, "replacements": 3 }      // both integers >= 1; one op per issue, per pass that re-issued something in it
 ```
 
 Ordinary envelope: this checkout's `node_id`, an HLC from one `hlc.Clock` created for the run,
@@ -344,6 +365,8 @@ pattern, no hash of one, and no hash or name of any file it replaced.
      envelope), in an op type with no text fields, or in any other regular file under `.act/`
      outside `.git/` and outside the derived set of §7. Refusing whole is the safe failure — a
      pattern like a date would otherwise blank prose across the tracker and still be everywhere.
+     A residual first seen in a later round (it arrived with the rebase) does not stop the round;
+     step 8 reports it.
    - Execute, record, stage, commit (§5.4). `n` = files re-issued plus files removed.
    - If `n == 0` and nothing is unpublished (`gops.Unpublished()` false, or no `origin`): stop.
    - `PublishCommittedOp(gops, "redact", "", stderr)` — the existing flush / fetch / rebase / push /
@@ -524,7 +547,9 @@ the derived files are **removed and rebuilt**:
   row, `redact_key`, written by `Rebuild` in the same transaction as `ops_build_key`.
   `EnsureCurrent` compares before anything else: stored row (absent reads as `""`) ≠ current key →
   close the handle, `ScrubDerived`, reopen, `ApplySchema`, full `Rebuild`. A tracker with no redact
-  records never scrubs; one carrying pre-act-8d1d records scrubs once on upgrade.
+  records never scrubs; one carrying pre-act-8d1d records scrubs once on upgrade. Two readers
+  racing the scrub is safe: the key lives in the database it describes, so a reader left holding an
+  unlinked file simply rebuilds again on its next open.
 
 **Rejected: `PRAGMA secure_delete` and FTS5's `secure-delete`.** They would zero freed content as
 it goes, with no trigger at all, but they change every index write for every tracker to serve a
@@ -536,17 +561,18 @@ test can assert where "every freed page was zeroed" is not.
 Said plainly, here and in `act help redact`:
 
 1. **The nested repo's git history.** Every commit made before the redaction — in this checkout's
-   `.act/.git`, in the tracker's bare on the mini, in any `origin-upstream`, in every other clone —
+   `.act/.git`, in the tracker's bare `origin`, in any `origin-upstream`, in every other clone —
    still contains the original op file; `git -C .act log -p -S<string> -- ops` prints it and
    reflogs keep it reachable. `act redact` does not rewrite history. That is out of scope for this
-   ticket and held on Andrew's answer elsewhere; until it is done, treat the string as readable by
-   anyone who can read those repositories, and rotate it if it can be rotated.
+   ticket and held on the maintainer's decision elsewhere; until it is done, treat the string as
+   readable by anyone who can read those repositories, and rotate it if it can be rotated.
 2. **Backups** of any of those repositories and of any checkout taken before it synced.
 3. **Checkouts that have not synced**, and worker copies or stale clones that never will. The
    command reports on the checkout it ran in and on origin, nothing else.
 4. **The issue id**, when the string was in an issue's *create* op. The id is the first 6 hex
-   digits (24 bits) of a hash over the original create payload, and after redaction everything else
-   in that payload is in the re-issued file. Candidates can be tested against it: of the 10^10
+   digits (24 bits; 4 digits on ids minted before act-f9a0) of a hash over the original create
+   payload (`ids.DeriveID`), and after redaction everything else in that payload is in the
+   re-issued file. Candidates can be tested against it: of the 10^10
    ten-digit numbers about 600 fit a given id; of the 10^8 eight-digit ones, about 6. It cannot be
    removed without retiring the id, which host-repo `Act-Id:` trailers and other tickets' edges
    point at. Strings that entered through a later `act update` leave no such trace.
@@ -707,7 +733,8 @@ Accept: `go test ./internal/redaction ./internal/op` passes, including
 `TestLoadPatterns_TrimsSkipsBlanksAndDedupes`, `TestLoadPatterns_RejectsShortPatternByLineNumber`
 (asserts the error text does not contain the pattern), `TestLoadPatterns_RejectsPatternInsideReplacement`,
 `TestApply_TextFieldsPerOpType` (one row per row of §5.2, plus a structural field left alone),
-`TestApply_NoHitRoundTripsByteIdentical` (every op under `internal/fold/testdata/golden/`),
+`TestApply_NoHitRoundTripsByteIdentical` (one op of every type in `op.ValidOpTypes`, built with
+`Envelope.Marshal`: `Apply` with a pattern that matches nothing, then `Marshal`, gives the same bytes),
 `TestApply_MatchesAcrossJSONEscapes` (a pattern with a quote and a non-ASCII rune),
 `TestPlan_ReissuesEveryLiveSlotMemberAtNextGeneration`, `TestPlan_TwoPathsOfOneOpCollapse`,
 `TestPlan_OwnStaleYieldsToForeign`, `TestPlan_ResidualInStructuralField`,
@@ -722,6 +749,10 @@ commit, result and error shapes of §5.7), `cmd/act/main.go` (dispatch, `bareUsa
 `internal/cli/errors.go` (three codes), `internal/cli/publish.go` (`emitPublishDeferredWarning`
 case for `redact`), `cmd/act/help.go` (§9). `internal/cli/log.go` summary note for a `redact` op:
 `re-issued <N> op file(s)`. Until U4 lands, step 7 removes and rebuilds `index.db` inline.
+
+A help claim lands with the test that asserts it, so two sentences of §9's OTHER MACHINES paragraph
+are held back from this unit: "and rebuilds its index on its next read" goes in with U4, and the
+`act doctor` sentence goes in with U5.
 
 Docs: spec — a new `### act redact` command section (surface, §5.2 table, §5.3 rules, §5.6
 guarantee, output, exit codes), the error table rows and the `remote_unreachable` sentence, exit
@@ -752,8 +783,9 @@ Code: `internal/fold/signature.go` (`Signatures.RedactKey`), `internal/index/ind
 (`ScrubDerived`, the `redact_key` row in `Rebuild`, the comparison at the top of `EnsureCurrent`),
 `internal/cli/redact.go` (step 7 calls `ScrubDerived`).
 
-Docs: spec `index.db` schema paragraph (`index_state` has two keys; what `redact_key` is for) and
-the `act redact` section's "other checkouts" paragraph.
+Docs: spec `index.db` schema paragraph (`index_state` has two keys; what `redact_key` is for), the
+`act redact` section's "other checkouts" paragraph, and one sentence in "`index-malformed` recovery
+semantics": a redaction also removes the kept `index.db.malformed-*` copies.
 
 Accept: `go test ./internal/index -run 'TestRedactKey|TestScrubDerived' -v` passes —
 `TestRedactKey_ChangeRecreatesTheIndexFile` (create a sentinel table through `idx.DB()`, add a
@@ -789,37 +821,42 @@ a second `act doctor` reports 0 findings), `TestDoctor_RedactionConflict_Positiv
 ### 10.6 Ticket acceptance script
 
 Run from the repo root after `go build -o bin/act-dev ./cmd/act`; prints `PASS` and exits 0 only if
-all four ticket criteria hold. The last check asserts the stated limit, not a goal.
+all four ticket criteria hold. The last check asserts the stated limit, not a goal. Every line that
+does not need `act redact` was run against today's binary while writing this note (the setup, the
+premise, the A/B comparisons and the history check pass; the `redact` line exits 2, unknown
+subcommand). The checks avoid `! cmd` and `cmd | grep -q` on purpose: under `set -e` the first
+never stops the script, and under `pipefail` the second fails when `grep` exits before its writer.
 
 ```bash
 set -euo pipefail
 ACT=$PWD/bin/act-dev; R=$(mktemp -d); export XDG_CONFIG_HOME=$R/xdg; unset ACT_TRACKER_REMOTE
 S=PLANTED-4417-9902-7731
-mk() { mkdir "$1"; git -C "$1" init -q .; git -C "$1" commit -q --allow-empty -m init; }
-has() { grep -rqa --exclude-dir=.git "$S" "$1"; }
+mk()    { mkdir "$1"; git -C "$1" init -q .; git -C "$1" commit -q --allow-empty -m init; }
+has()   { grep -rqa --exclude-dir=.git "$S" "$1"; }                         # some file under $1 holds it
+hasnt() { if grep -rqa --exclude-dir=.git "$S" "$@"; then return 1; fi; }   # none does, or the script stops
 mk $R/A; cd $R/A; $ACT init >/dev/null
 git init -q --bare $R/origin.git; git -C $R/A/.act remote add origin $R/origin.git
 git -C $R/A/.act push -q -u origin main
 ID=$($ACT create "Statement for $S" --description "Wire from account $S." --json | jq -r .id)
 $ACT update $ID --description "Wire from account $S to savings." >/dev/null   # create AND a later update hold it
 mk $R/B; cd $R/B; $ACT state import --from-remote $R/origin.git $R/B >/dev/null; $ACT list >/dev/null
-has $R/B/.act                                                # premise: B holds it
+has $R/B/.act/ops; has $R/B/.act/index.db                    # premise: B holds it, in its index too
 cd $R/A; printf '%s\n' "$S" > $R/patterns
 $ACT redact --patterns-file $R/patterns --json > $R/out.json 2> $R/err.txt
 jq -e '.ok and .ops_rewritten==2 and .replacements==3 and .published' $R/out.json >/dev/null
-! grep -q "$S" $R/out.json $R/err.txt                        # (3) counts only
-! has $R/A/.act/ops; ! has $R/A/.act                         # (1) op files, and everything else outside .git
-$ACT show $ID | grep -qF 'Wire from account [redacted] to savings.'      # (1)
+hasnt $R/out.json $R/err.txt                                 # (3) counts only
+hasnt $R/A/.act/ops; hasnt $R/A/.act                         # (1) op files, and everything else outside .git
+test "$($ACT show $ID | grep -cF 'Wire from account [redacted] to savings.')" = 1   # (1)
 $ACT doctor >/dev/null                                       # (1) exit 0
 cd $R/B; $ACT ready --fresh >/dev/null                       # B syncs
-! has $R/B/.act                                              # (2)
+hasnt $R/B/.act                                              # (2)
 diff <(cd $R/A; $ACT list --json --no-fetch | jq -S .issues) <(cd $R/B; $ACT list --json --no-fetch | jq -S .issues)
 diff <(cd $R/A; $ACT show $ID --json --no-fetch | jq -S 'del(.refresh)') <(cd $R/B; $ACT show $ID --json --no-fetch | jq -S 'del(.refresh)')
 cd $R/A; set +e; $ACT redact "$S" > $R/pos.txt 2>&1; rc=$?; set -e
-test $rc -eq 2; ! grep -q "$S" $R/pos.txt                    # (3) never on the command line
-$ACT help redact | grep -qF 'does not rewrite git history'   # (4)
-$ACT help | grep -qF 'act help redact'                       # (4)
-git --git-dir $R/origin.git log --oneline -S"$S" -- ops | grep -q .   # the limit: history still has it
+test $rc -eq 2; hasnt $R/pos.txt                             # (3) never on the command line, never echoed
+$ACT help redact | grep -F 'does not rewrite git history' >/dev/null      # (4)
+$ACT help | grep -F 'act help redact' >/dev/null                          # (4)
+test -n "$(git --git-dir $R/origin.git log --oneline -S"$S" main -- ops)" # the limit: history still has it
 echo PASS
 ```
 
@@ -844,7 +881,7 @@ echo PASS
 
 ## 12. Asks
 
-None. Every call above is technical and can be revised in a later build. The one thing that is
-Andrew's — whether the nested repo's history is rewritten — is already held elsewhere and is out of
-scope here; §8 states what stays readable until then, including the id fingerprint that only
-matters once history is gone.
+None. Every call above is technical and can be revised in a later build. The one decision that is
+not a design call — whether the nested repo's history is rewritten — is already held elsewhere and
+is out of scope here; §8 states what stays readable until then, including the id fingerprint that
+only matters once history is gone.
