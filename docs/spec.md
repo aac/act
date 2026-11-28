@@ -104,15 +104,15 @@ id         = "act-" + short_hex                                               //
 - Collision-extension protocol at create time:
   1. Compute `full_hex`. Set `N = 4`.
   2. Candidate id = `"act-" + full_hex[0:N]`.
-  3. Acquire `.act/.lock` (advisory file lock). Scan `.act/ops/` for any directory whose name equals the candidate id but whose stored create-op `full_hex` differs (i.e. a real id collision, not the same issue).
+  3. Acquire `.act/.lock` (advisory file lock). Scan `.act/ops/` for any directory whose name equals the candidate id (i.e. a real id collision; the 64-hex digest is not stored, so the check is on the short id alone).
   4. If a collision exists, `N += 1` and goto 2. (Practically `N` will not exceed 8 before 2^32 issues exist; the hard cap is `N = 16`.)
-  5. Write the create op with `issue_id = "act-" + full_hex[0:N]` and a sidecar `full_id = full_hex` field in the create payload (the only place the 64-hex digest is persisted, to support post-hoc collision verification). Release lock.
+  5. Write the create op with `issue_id = "act-" + full_hex[0:N]`. The create payload carries no `full_id` field; the 64-hex digest is not persisted anywhere. Release lock.
 - Display: the CLI computes the shortest unique prefix across all currently-known issues per invocation (git-style). Ties are lengthened one hex at a time; the shortest unique form is what `act show`, `act list`, `act ready` print. Internally everything is keyed off the on-disk id (which already encodes the collision-extension result).
 - Prefix resolution on input: a user-supplied prefix matching exactly one stored id resolves; matching zero or two-or-more is an error with a structured `{"error":"ambiguous-id","candidates":[...]}` payload.
 
 ### Op envelope
 
-Every op file's top-level object has exactly these keys, in this order:
+Every op file's top-level object has exactly these keys (shown in logical order; on disk they are sorted lexicographically, see the serialization rules below):
 
 ```jsonc
 {
@@ -150,13 +150,13 @@ older payload; they are accepted on read and skipped the same way. An op whose
 Fold determinism requires that two writers given the same logical op produce byte-identical files. The canonical form is:
 
 1. UTF-8, no BOM.
-2. Top-level keys in the exact order listed above (`op_version`, `schema_version`, `writer_version`, `op_type`, `issue_id`, `node_id`, `hlc`, `payload`).
-3. Nested object keys sorted lexicographically by Unicode code point.
+2. Top-level keys sorted lexicographically by UTF-8 byte order (`hlc`, `issue_id`, `node_id`, `op_type`, `op_version`, `payload`, `schema_version`, `writer_version`), not in the order of the envelope listing above.
+3. Nested object keys sorted lexicographically by the same rule.
 4. Strings: minimal JSON escaping (`\"`, `\\`, `\b`, `\f`, `\n`, `\r`, `\t`, `\u00xx` for other C0/C1; non-ASCII printable code points emitted raw).
 5. Numbers: integers as bare digits; no floats anywhere in the schema.
-6. Whitespace: single space after `:` and `,`, no leading whitespace, no other whitespace. Two-space indent on each nested level. Newline `\n` (LF) after every `,` and after every `{` / `[` that has children. **No trailing newline at end of file.**
+6. Whitespace: none. The file is a single line of minified JSON, with no space after `:` or `,`, no indentation and no newlines. **No trailing newline at end of file.**
 7. Booleans/null lowercase.
-8. Empty arrays and objects emitted as `[]` / `{}` on a single line.
+8. Empty arrays and objects emitted as `[]` / `{}`.
 
 A reference `act fmt-op` subcommand emits this exact form; `act doctor --check op-canonical` re-serializes every op file and fails on any byte mismatch.
 
@@ -166,7 +166,7 @@ A reference `act fmt-op` subcommand emits this exact form; `act doctor --check o
 // create
 { "title": "string", "description": "string?", "priority": 2,
   "type": "task", "parent": "act-...?", "accept": ["criterion", ...]?,
-  "nonce": "32 hex", "full_id": "64 hex" }
+  "nonce": "32 hex" }
 
 // update_field — single-field mutation; field MUST be one of the listed names
 { "field": "title|description|priority|assignee|status|type|parent",

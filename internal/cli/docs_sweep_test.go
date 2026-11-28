@@ -70,6 +70,22 @@ type docClaim struct {
 // Order is alphabetical by `name` for readability; the sweep does not
 // depend on it.
 var docClaimRegistry = []docClaim{
+	// act-3d919a: the spec said op files are indented multi-line JSON and
+	// that the create payload stores full_id; real files are one line of
+	// canonical JSON with no full_id. Asserted in
+	// internal/cli/opfile_format_docclaim_test.go.
+	{
+		name:         "spec-opfile-single-line-canonical",
+		docFile:      "docs/spec.md",
+		claimPattern: "The file is a single line of minified JSON",
+		testName:     "TestDocClaim_OpFile_SingleLineNoFullID",
+	},
+	{
+		name:         "spec-create-payload-no-full-id",
+		docFile:      "docs/spec.md",
+		claimPattern: "The create payload carries no `full_id` field",
+		testName:     "TestDocClaim_OpFile_SingleLineNoFullID",
+	},
 	// act-3331ff (docs/redaction-design.md §10 U1): the fold's slot rule.
 	// An op file beside the copy a redaction re-issued from it is
 	// superseded, and `act log` / `act show --include-ops` — which walk op
