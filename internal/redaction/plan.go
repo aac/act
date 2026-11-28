@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/op"
 )
 
@@ -87,21 +88,21 @@ type member struct {
 }
 
 // splitLive applies the fold's slot rule (docs/redaction-design.md §4) to
-// the members of one slot: with m the highest generation present, every
-// member below m is dead (superseded) when m > 0; otherwise every member
-// is live. members is not modified.
-//
-// This is the same rule internal/fold applies in discoverAndParse; it is
-// re-stated here, over the plan's own parsed members, until the fold
-// package exports its slot helper (see the package follow-up note).
+// the members of one slot, through fold.Superseded so the plan and the fold
+// share one definition: with m the highest generation present, every member
+// below m is dead (superseded) when m > 0; otherwise every member is live.
+// members is not modified.
 func splitLive(members []member) (live, dead []member, maxGen int) {
-	for _, m := range members {
+	envs := make([]op.Envelope, len(members))
+	for i, m := range members {
+		envs[i] = m.env
 		if m.gen > maxGen {
 			maxGen = m.gen
 		}
 	}
-	for _, m := range members {
-		if maxGen > 0 && m.gen < maxGen {
+	superseded := fold.Superseded(envs)
+	for i, m := range members {
+		if superseded[i] {
 			dead = append(dead, m)
 		} else {
 			live = append(live, m)
@@ -289,7 +290,7 @@ func parseMember(rel string, body []byte) (member, error) {
 	if err != nil {
 		return member{}, fmt.Errorf("redaction: parse %s: %w", rel, err)
 	}
-	return member{rel: rel, env: env, body: body, canon: string(canon), gen: Generation(env)}, nil
+	return member{rel: rel, env: env, body: body, canon: string(canon), gen: fold.Generation(env)}, nil
 }
 
 func (p *Plan) bump(issue string, c Counts) {

@@ -3,7 +3,6 @@ package redaction
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/aac/act/internal/canonicaljson"
 	"github.com/aac/act/internal/op"
@@ -13,28 +12,9 @@ import (
 // N >= 1. It lives in the payload, not the envelope, so it is covered by the
 // op hash with no change to op.Envelope or its hash input, and every payload
 // decoder that does not look for it ignores it (docs/redaction-design.md §3).
+// Reading it back is fold.Generation's job: the fold, `act log` and this
+// package share that one definition of the marker.
 const GenerationKey = "redacted"
-
-// Generation returns env's redaction generation: the payload's "redacted"
-// value when it is an integer >= 1, otherwise 0 (absent, not a number, not
-// an integer, or below 1 all read as 0, per docs/redaction-design.md §4).
-//
-// This mirrors the generation read in the fold's slot rule. Both must agree
-// on every input; see the package's follow-up note on consolidating with
-// internal/fold once its slot helper is exported.
-func Generation(env op.Envelope) int {
-	var peek struct {
-		Redacted json.RawMessage `json:"redacted"`
-	}
-	if err := json.Unmarshal(env.Payload, &peek); err != nil || len(peek.Redacted) == 0 {
-		return 0
-	}
-	n, err := strconv.ParseInt(string(peek.Redacted), 10, 64)
-	if err != nil || n < 1 {
-		return 0
-	}
-	return int(n)
-}
 
 // Apply replaces every pattern in env's payload text fields with
 // Replacement (docs/redaction-design.md §5.2) and returns the rewritten

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/op"
 )
 
@@ -91,7 +92,7 @@ func TestPlan_ReissuesEveryLiveSlotMemberAtNextGeneration(t *testing.T) {
 			t.Errorf("old file %s still present", rel)
 		}
 		env := redRead(t, root, rel)
-		if g := Generation(env); g != 2 {
+		if g := fold.Generation(env); g != 2 {
 			t.Errorf("%s: generation %d, want 2", rel, g)
 		}
 		if strings.Contains(string(env.Payload), b) {
@@ -116,7 +117,7 @@ func TestPlan_ReissuesEveryLiveSlotMemberAtNextGeneration(t *testing.T) {
 	p2 := redPlan(t, root2, []string{redSecret}, nil)
 	redExecute(t, p2)
 	files2 := redFiles(t, root2, "ops")
-	if len(files2) != 1 || Generation(redRead(t, root2, files2[0])) != 1 {
+	if len(files2) != 1 || fold.Generation(redRead(t, root2, files2[0])) != 1 {
 		t.Errorf("single slot: files %v, want one file at generation 1", files2)
 	}
 }
@@ -427,7 +428,7 @@ func TestPlan_QuarantinedFiles(t *testing.T) {
 		}
 	}
 	q := redFiles(t, root, ".failed-ops")
-	if len(q) != 1 || redDir(q[0]) != redDir(strandedRel) || Generation(redRead(t, root, q[0])) != 1 {
+	if len(q) != 1 || redDir(q[0]) != redDir(strandedRel) || fold.Generation(redRead(t, root, q[0])) != 1 {
 		t.Errorf(".failed-ops after = %v, want one re-issued file beside the old one's path", q)
 	}
 	paths, _ := Scan(root, []string{redSecret})
@@ -463,7 +464,11 @@ func TestExecute_WritesBeforeDeleting(t *testing.T) {
 		t.Fatalf("files when the first delete ran = %v, want both originals and both re-issued files", atFirstDelete)
 	}
 	// The tree, old and new side by side, folds redacted.
-	st := redFoldLive(t, root)[redIssue]
+	res, err := fold.Fold(filepath.Join(root, "ops"), fold.ApplyDispatch)
+	if err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	st := res.Issues[redIssue]
 	if st == nil {
 		t.Fatal("issue missing from fold")
 	}
@@ -578,8 +583,8 @@ func TestDocClaim_Redaction_ReissuedOpCarriesGenerationUnderNewName(t *testing.T
 		if err != nil || !ts.Equal(time.UnixMilli(redWall).UTC()) || opType != "update_field" {
 			t.Errorf("gen %d: Parse(%s) = %v, %q, %v; want the original time and op type", step.gen, newRel, ts, opType, err)
 		}
-		if Generation(env) != step.gen {
-			t.Errorf("gen %d: payload %s carries generation %d", step.gen, env.Payload, Generation(env))
+		if fold.Generation(env) != step.gen {
+			t.Errorf("gen %d: payload %s carries generation %d", step.gen, env.Payload, fold.Generation(env))
 		}
 		if env.OpVersion != orig.OpVersion || env.SchemaVersion != orig.SchemaVersion ||
 			env.WriterVersion != orig.WriterVersion || env.OpType != orig.OpType ||

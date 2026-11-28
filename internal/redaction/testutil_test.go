@@ -7,10 +7,8 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
-	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/hlc"
 	"github.com/aac/act/internal/op"
 )
@@ -115,43 +113,6 @@ func redRead(t *testing.T, stateRoot, rel string) op.Envelope {
 		t.Fatalf("parse %s: %v", rel, err)
 	}
 	return env
-}
-
-// redFoldLive folds stateRoot/ops the way a fold with the slot rule of
-// docs/redaction-design.md §4 does: superseded slot members are dropped,
-// then the real fold runs over what is left. The slot rule lives in
-// internal/fold (U1, built in parallel); until this package can call it,
-// the test drops superseded files itself, using splitLive, and folds the
-// rest with fold.Fold and the real dispatch.
-func redFoldLive(t *testing.T, stateRoot string) map[string]*fold.IssueState {
-	t.Helper()
-	slots := map[slotKey][]member{}
-	for _, rel := range redFiles(t, stateRoot, "ops") {
-		if !strings.HasSuffix(rel, ".json") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(stateRoot, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		m, err := parseMember(rel, b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		slots[keyOf(m.env)] = append(slots[keyOf(m.env)], m)
-	}
-	tmp := t.TempDir()
-	for _, ms := range slots {
-		live, _, _ := splitLive(ms)
-		for _, m := range live {
-			redWriteAt(t, tmp, filepath.Join(tmp, filepath.FromSlash(m.rel)), m.body)
-		}
-	}
-	res, err := fold.Fold(filepath.Join(tmp, "ops"), fold.ApplyDispatch)
-	if err != nil {
-		t.Fatalf("fold: %v", err)
-	}
-	return res.Issues
 }
 
 // redDir is path.Dir for a slash path.

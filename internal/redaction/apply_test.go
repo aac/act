@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aac/act/internal/canonicaljson"
+	"github.com/aac/act/internal/fold"
 	"github.com/aac/act/internal/op"
 )
 
@@ -200,8 +201,8 @@ func TestReissue_SetsGenerationAndRejectsBadInput(t *testing.T) {
 	if got, want := string(re.Payload), `{"reason":"x","redacted":2}`; got != want {
 		t.Errorf("payload = %s, want %s", got, want)
 	}
-	if Generation(re) != 2 {
-		t.Errorf("Generation = %d, want 2", Generation(re))
+	if fold.Generation(re) != 2 {
+		t.Errorf("Generation = %d, want 2", fold.Generation(re))
 	}
 	if _, err := Reissue(env, 0); err == nil {
 		t.Errorf("Reissue(gen 0) = nil error, want error")
@@ -228,8 +229,8 @@ func TestGeneration_OnlyPositiveIntegersCount(t *testing.T) {
 		`{"redacted":12345678901}`: 12345678901,
 	} {
 		env := redEnv(t, redIssue, "close", redWall, 0, redNode, payload)
-		if got := Generation(env); got != want {
-			t.Errorf("Generation(%s) = %d, want %d", payload, got, want)
+		if got := fold.Generation(env); got != want {
+			t.Errorf("fold.Generation(%s) = %d, want %d", payload, got, want)
 		}
 	}
 }
