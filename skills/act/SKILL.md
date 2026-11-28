@@ -297,7 +297,8 @@ blocker — it checks at read time and never removes the dep. Free text that onl
 ask, an open ask, an ask closed without being resolved, or an `ask` that can't be read all
 keep blocking. **A ticket freed this way carries `freed_by`** (in `act ready --json` rows and
 in `act next` / `act_next` results; human output tags the row `[freed: ask-XXXX]` and prints
-the answer): read the ask's answer before you work it. If the answer made the ticket moot,
+the answer), and `act show` reports it too, marking the freed dep and printing the answer: read
+the ask's answer before you work it. If the answer made the ticket moot,
 close it with a reason; otherwise clear the dep (`act update <id> --ext-rm <ref>`) and work it.
 
 ## Commit discipline

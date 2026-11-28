@@ -51,6 +51,12 @@ type ShowOptions struct {
 	// ACT_NO_FETCH=1 has the same effect process-wide. Mutually
 	// exclusive with Fresh — the CLI rejects both together.
 	NoFetch bool
+	// AskFreed, when true, looks up the issue's ask-form external deps
+	// (askfreed.go) and reports the answered ones as FreedBy (act-b9adc9).
+	// Opt-in because it may exec `ask`: `act show` and the act_show MCP
+	// tool set it; internal callers that only want the issue body (act
+	// next, which already carries the ready row's freed_by) leave it off.
+	AskFreed bool
 }
 
 // ShowResult is the success-shape returned by RunShow on a live (non-
@@ -88,6 +94,11 @@ type ShowResult struct {
 	// (yet) the one the committed op log supports (act-fec192).
 	// ShowJSON emits it under `durability`; cmd/act echoes a WARNING.
 	Durability *DurabilityInfo
+	// FreedBy lists the external deps that name an answered ask, with the
+	// answer (act-b9adc9) — the same objects `act ready` rows carry. Nil
+	// unless ShowOptions.AskFreed was set and some ask-form dep is
+	// answered. ShowJSON emits it under `freed_by` only when non-empty.
+	FreedBy []AskFreed
 }
 
 // ShowTombstoned is the success-shape returned by RunShow when the resolved
@@ -236,6 +247,15 @@ func RunShow(repoRoot string, opts ShowOptions) (output any, exitCode int) {
 	// (act-fec192); nil whenever the question cannot be answered, so a
 	// repo without a nested git repo behaves exactly as before.
 	res.Durability = issueDurability(paths, full)
+
+	// Step 6d: which external deps name an ask that has been answered
+	// (act-b9adc9)? Same resolver and fail-closed rule as `act ready`;
+	// the deps themselves stay listed under external_deps.
+	if opts.AskFreed {
+		if refs := showExternalDeps(rendered); len(refs) > 0 {
+			_, res.FreedBy = newAskFreedResolver(repoRoot).split(refs)
+		}
+	}
 
 	// Step 6a: list work commits attributed to this issue via the
 	// `(act-XXXX)` marker. Read-side, no caching, single git invocation;
@@ -405,19 +425,22 @@ func formatShowFields(res ShowResult) string {
 			}
 		}
 	}
-	if refs, ok := f["external_deps"]; ok {
-		switch xs := refs.(type) {
-		case []string:
-			for _, r := range xs {
-				fmt.Fprintf(&b, "external_dep: %s\n", r)
-			}
-		case []any:
-			for _, r := range xs {
-				if s, ok := r.(string); ok {
-					fmt.Fprintf(&b, "external_dep: %s\n", s)
-				}
-			}
+	// An external dep naming an answered ask is marked on its own line
+	// and followed by the answer (act-b9adc9): the reader who ran show to
+	// learn why a ticket is (or is not) in ready sees that the human has
+	// replied, and what they said, without a separate `ask show`.
+	freedByRef := map[string]AskFreed{}
+	for _, fb := range res.FreedBy {
+		freedByRef[fb.Ref] = fb
+	}
+	for _, r := range showExternalDeps(f) {
+		fb, freed := freedByRef[r]
+		if !freed {
+			fmt.Fprintf(&b, "external_dep: %s\n", r)
+			continue
 		}
+		fmt.Fprintf(&b, "external_dep: %s [freed: %s was %s; no longer blocks]\n", r, fb.AskID, fb.Status)
+		b.WriteString(askFreedIndent("  answer: ", fb.Resolution))
 	}
 	if created, ok := f["created_at"].(string); ok {
 		fmt.Fprintf(&b, "created_at: %s\n", created)
@@ -570,7 +593,28 @@ func (r ShowResult) ShowJSON() map[string]any {
 	if !r.Durability.Clean() {
 		out["durability"] = r.Durability
 	}
+	if len(r.FreedBy) > 0 {
+		out["freed_by"] = r.FreedBy
+	}
 	return out
+}
+
+// showExternalDeps returns the rendered external_deps as strings, in
+// order, whichever slice type the fold produced.
+func showExternalDeps(f map[string]any) []string {
+	switch xs := f["external_deps"].(type) {
+	case []string:
+		return xs
+	case []any:
+		out := make([]string, 0, len(xs))
+		for _, r := range xs {
+			if s, ok := r.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // listIssueIDs and readIssueOps live in log.go (same package) and are

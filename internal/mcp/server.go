@@ -1292,6 +1292,7 @@ func (s *Server) callShow(raw json.RawMessage) (any, bool) {
 		ID:         args.ID,
 		AsJSON:     true,
 		IncludeOps: args.IncludeOps,
+		AskFreed:   true,
 	})
 	if code == 0 {
 		// Match cmd/act/main.go's JSON rendering: surface the rendered map.

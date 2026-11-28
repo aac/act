@@ -4371,6 +4371,24 @@ var docClaimRegistry = []docClaim{
 		testName:     "TestDocClaim_AskFreed_ReadyAdmitsResolvedAsk",
 	},
 	{
+		name:         "spec-show-freed-by",
+		docFile:      "docs/spec.md",
+		claimPattern: "**An external dep naming an answered ask is reported (act-b9adc9).**",
+		testName:     "TestDocClaim_AskFreed_ShowNamesFreeingAsk",
+	},
+	{
+		name:         "help-show-freed-by",
+		docFile:      "cmd/act/help.go",
+		claimPattern: "'act show' marks the freed dep's line and prints the answer",
+		testName:     "TestDocClaim_AskFreed_ShowNamesFreeingAsk",
+	},
+	{
+		name:         "skill-show-freed-by",
+		docFile:      "skills/act/SKILL.md",
+		claimPattern: "and `act show` reports it too, marking the freed dep and printing the answer",
+		testName:     "TestDocClaim_AskFreed_ShowNamesFreeingAsk",
+	},
+	{
 		name:         "skill-ask-refs-freed-by",
 		docFile:      "skills/act/SKILL.md",
 		claimPattern: "**A ticket freed this way carries `freed_by`**",

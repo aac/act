@@ -1039,6 +1039,7 @@ func runShow(args []string) int {
 		IncludeOps: *includeOps,
 		Full:       *full,
 		NoFetch:    *noFetch,
+		AskFreed:   true,
 	})
 	if code != 0 {
 		m, _ := toMap(out)
