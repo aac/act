@@ -113,6 +113,7 @@ var nx2TopLevel = map[string]nx2Entry{
 	".act.bootstrap":     {class: nx2NotTopLevel, why: "bootstrap-worker staging dir, a sibling of .act/ in the host tree"},
 	".git":               {class: nx2NotTopLevel, why: "git's own directory"},
 	".gitignore":         {class: nx2NotTopLevel, why: "the host repo's ignore file"},
+	".ask":               {class: nx2NotTopLevel, why: "the sibling ask tool's store in the host tree; act only stats it to pick where `ask show` runs (askfreed.go)"},
 	".gitkeep":           {class: nx2NotTopLevel, why: "ops/.gitkeep, one level down and tracked"},
 	".config":            {class: nx2NotTopLevel, why: "XDG config dir under $HOME"},
 	".json":              {class: nx2NotTopLevel, why: "file extension"},
