@@ -71,8 +71,19 @@ const (
 	// DNS, missing remote). It is a bootstrap-path code, not a
 	// write-path one — except for `act redact`, which refuses to start
 	// (exit 3, nothing changed) when its first fetch does not reach
-	// origin. The three redact_* codes live in redact.go.
+	// origin.
 	ErrRemoteUnreachable = "remote_unreachable"
+	// `act redact` (docs/redaction-design.md §5.7).
+	// ErrRedactResidual (exit 1): a listed string is somewhere act does
+	// not rewrite. Details: `paths` (relative to .act/), `changed`.
+	ErrRedactResidual = "redact_residual"
+	// ErrRedactFailed (exit 1): a step of the run failed; the message
+	// names the step. A re-run finishes a partial pass.
+	ErrRedactFailed = "redact_failed"
+	// ErrRedactUnconfirmed (exit 6): redacted and committed here, not on
+	// origin. Printed as the result object, not an envelope, like
+	// claim_unconfirmed.
+	ErrRedactUnconfirmed = "redact_unconfirmed"
 	// ErrUpstreamNotConfigured is emitted by `act remote sync` (Phase 2
 	// ticket 6a) when `origin-upstream` is not configured in the
 	// orchestrator's `.act/.git/config`. The envelope is paired with an

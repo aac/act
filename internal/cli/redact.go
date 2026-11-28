@@ -31,20 +31,6 @@ import (
 // failing step, counts and paths (relative to .act/). The redaction package
 // keeps the same promise for everything it returns.
 
-// Error codes `act redact` adds (docs/redaction-design.md §5.7).
-const (
-	// ErrRedactResidual (exit 1): a listed string is somewhere act does
-	// not rewrite. Details: `paths` (relative to .act/), `changed`.
-	ErrRedactResidual = "redact_residual"
-	// ErrRedactFailed (exit 1): a step of the run failed; the message
-	// names the step. A re-run finishes a partial pass.
-	ErrRedactFailed = "redact_failed"
-	// ErrRedactUnconfirmed (exit 6): redacted and committed here, not on
-	// origin. Printed as the result object, not an envelope, like
-	// claim_unconfirmed.
-	ErrRedactUnconfirmed = "redact_unconfirmed"
-)
-
 // redactMaxRounds bounds the plan/execute/publish rounds of one run
 // (docs/redaction-design.md §5.6 step 6).
 const redactMaxRounds = 5
